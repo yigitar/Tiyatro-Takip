@@ -19,13 +19,11 @@ _TR_MONTHS = {
     "temmuz": 7, "ağustos": 8, "eylül": 9, "ekim": 10, "kasım": 11, "aralık": 12,
 }
 
-_ROW_RE = re.compile(r'<div class="row" id="seans-(\d+)">')
-_LD_RE = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re.S)
-_BUTTON_RE = re.compile(r"<button\b[^>]*\bseanceSelect\b[^>]*>", re.S)
-_ATTR_RE = re.compile(r'([\w-]+)(?:="([^"]*)")?')
-_VENUE_LINK_RE = re.compile(
-    r'<a class="hpv2-event-card__visual" href="(/tr-tr/tiyatro/([^"?/]+))[^"]*"([^>]*)>'
-)
+_TAG_RE = re.compile(r"<(div|script|button|a)\b([^>]*)>", re.I | re.S)
+_SCRIPT_END_RE = re.compile(r"</script\b", re.I)
+_SECTION_END_RE = re.compile(r"</section\b", re.I)
+_ATTR_RE = re.compile(r"""([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?""")
+_PLAY_HREF_RE = re.compile(r"^(?:https?://[^/]+)?(/tr-tr/tiyatro/([^/?#]+))(?:/?)(\?[^#]*)?(?:#.*)?$", re.I)
 
 
 class ParseError(Exception):
@@ -47,27 +45,51 @@ def _title_from_slug(slug: str) -> str:
     return slug.replace("-", " ").title()
 
 
+def _attrs(raw: str) -> dict[str, str | None]:
+    out: dict[str, str | None] = {}
+    for m in _ATTR_RE.finditer(raw):
+        val = next((g for g in m.group(2, 3, 4) if g is not None), None)
+        out.setdefault(m.group(1).lower(), htmlmod.unescape(val) if val is not None else None)
+    return out
+
+
+def _tags(html: str, name: str):
+    for m in _TAG_RE.finditer(html):
+        if m.group(1).lower() == name:
+            yield m, _attrs(m.group(2))
+
+
 def parse_venue(html: str, base: str = "https://biletinial.com") -> list[PlayRef]:
-    refs: list[PlayRef] = []
-    seen: set[str] = set()
-    for m in _VENUE_LINK_RE.finditer(html):
-        slug = m.group(2)
-        if slug in seen:
+    found: dict[str, tuple[str, str, bool]] = {}  # slug -> (path, title, own)
+    for _, at in _tags(html, "a"):
+        hm = _PLAY_HREF_RE.match((at.get("href") or "").strip())
+        if not hm:
             continue
-        seen.add(slug)
-        tm = re.search(r'\btitle="([^"]*)"', m.group(3))
-        title = htmlmod.unescape(tm.group(1)).strip() if tm else ""
-        refs.append(PlayRef(slug, title or _title_from_slug(slug), urljoin(base, m.group(1))))
-    if not refs:
+        path, slug, query = hm.group(1), hm.group(2), hm.group(3) or ""
+        own = "cinemabranchid=" in query.lower()
+        title = (at.get("title") or "").strip()
+        old = found.get(slug)
+        found[slug] = (path, title or (old[1] if old else ""), own or (old[2] if old else False))
+    own_only = {k: v for k, v in found.items() if v[2]}
+    chosen = own_only or found
+    if not chosen:
         raise ParseError("no play links found on venue page")
-    return refs
+    return [
+        PlayRef(slug, title or _title_from_slug(slug), urljoin(base, path))
+        for slug, (path, title, _) in chosen.items()
+    ]
 
 
 def _json_ld_events(html: str) -> list[dict]:
     events: list[dict] = []
-    for m in _LD_RE.finditer(html):
+    for m, at in _tags(html, "script"):
+        if (at.get("type") or "").strip().lower() != "application/ld+json":
+            continue
+        em = _SCRIPT_END_RE.search(html, m.end())
+        if not em:
+            continue
         try:
-            data = json.loads(m.group(1))
+            data = json.loads(html[m.end():em.start()])
         except ValueError:
             continue
         for item in data if isinstance(data, list) else [data]:
@@ -89,43 +111,49 @@ def _iso(value: str | None) -> datetime | None:
 
 
 def _button_state(block: str) -> tuple[Status, datetime | None]:
-    m = _BUTTON_RE.search(block)
-    if not m:
+    at = None
+    for _, cand in _tags(block, "button"):
+        if "seanceselect" in (cand.get("class") or "").lower().split():
+            at = cand
+            break
+    if at is None:
         return Status.UNKNOWN, None
-    tag = m.group(0)[len("<button"):-1]
-    attrs: dict[str, str | None] = {}
-    for am in _ATTR_RE.finditer(tag):
-        attrs[am.group(1)] = am.group(2)
-    classes = set((attrs.get("class") or "").split())
-    disabled = "disabled" in attrs
+    classes = set((at.get("class") or "").lower().split())
+    disabled = "disabled" in at
+    acilis = at.get("data-acilis")
     if "sold-out" in classes:
         return Status.SOLD_OUT, None
-    if "off" in classes and disabled:
-        acilis = attrs.get("data-acilis")
-        if acilis and re.fullmatch(r"\d{12}", acilis):
-            opens = datetime.strptime(acilis, "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
-            return Status.UPCOMING, opens.astimezone(ISTANBUL)
-        return Status.UNKNOWN, None
+    if "off" in classes and disabled and acilis and re.fullmatch(r"\d{12}", acilis.strip()):
+        try:
+            opens = datetime.strptime(acilis.strip(), "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
+        except ValueError:
+            return Status.UNKNOWN, None
+        return Status.UPCOMING, opens.astimezone(ISTANBUL)
     # PROVISIONAL: never observed on a real page yet.
-    if classes == {"cta", "seanceSelect"} and not disabled:
+    if classes == {"cta", "seanceselect"} and not disabled and acilis is None:
         return Status.ON_SALE, None
     return Status.UNKNOWN, None
 
 
 def _row_blocks(html: str) -> list[tuple[str, str]]:
-    marks = list(_ROW_RE.finditer(html))
+    marks = []
+    for m, at in _tags(html, "div"):
+        rm = re.fullmatch(r"seans-(\d+)", (at.get("id") or "").strip())
+        if rm and "row" in (at.get("class") or "").lower().split():
+            marks.append((m, rm.group(1)))
     blocks = []
-    for i, m in enumerate(marks):
-        end = marks[i + 1].start() if i + 1 < len(marks) else html.find("</section>", m.end())
-        blocks.append((m.group(1), html[m.end(): end if end != -1 else len(html)]))
+    for i, (m, sid) in enumerate(marks):
+        limit = marks[i + 1][0].start() if i + 1 < len(marks) else len(html)
+        sec = _SECTION_END_RE.search(html, m.end(), limit)
+        blocks.append((sid, html[m.end(): sec.start() if sec else limit]))
     return blocks
 
 
 def _visible_start(sid: str, block: str, ld_start: datetime) -> datetime:
     """Start from the visible date/time; year from JSON-LD (its hour is ignored:
     some pages carry a wrong JSON-LD hour). Month/day must agree with JSON-LD."""
-    d = re.search(r'<span class="d">\s*(\d{1,2})\s+([^\W\d_]+)', block)
-    t = re.search(r'<span class="tm">\s*(\d{1,2}):(\d{2})', block)
+    d = re.search(r'''<span\b[^>]*\bclass=["'][^"']*\bd\b[^"']*["'][^>]*>\s*(\d{1,2})\s+([^\W\d_]+)''', block, re.I)
+    t = re.search(r'''<span\b[^>]*\bclass=["'][^"']*\btm\b[^"']*["'][^>]*>\s*(\d{1,2}):(\d{2})''', block, re.I)
     if not d or not t:
         raise ParseError(f"seans-{sid}: date/time not found in block")
     month = _TR_MONTHS.get(htmlmod.unescape(d.group(2)).lower())
@@ -141,6 +169,25 @@ def _visible_start(sid: str, block: str, ld_start: datetime) -> datetime:
 def _fact(html: str, label: str) -> str | None:
     m = re.search(rf"<dt>{label}</dt>\s*<dd>(.*?)</dd>", html, re.S)
     return _text(m.group(1)) if m else None
+
+
+def _min_price(events: list[dict]) -> float | None:
+    prices: list[float] = []
+    for ev in events:
+        offers = ev.get("offers")
+        for off in offers if isinstance(offers, list) else [offers]:
+            if not isinstance(off, dict):
+                continue
+            raw = off.get("price")
+            if isinstance(raw, bool):
+                continue
+            try:
+                val = float(raw.strip().replace(",", ".")) if isinstance(raw, str) else float(raw)
+            except (TypeError, ValueError):
+                continue
+            if val == val and val >= 0:
+                prices.append(val)
+    return min(prices) if prices else None
 
 
 def parse_play(html: str, url: str) -> Play:
@@ -162,8 +209,8 @@ def parse_play(html: str, url: str) -> Play:
         ld_end = _iso(ev.get("endDate"))
         end = start + (ld_end - ld_start) if ld_end is not None else None
         status, opens_at = _button_state(block)
-        share = re.search(r'data-url="([^"]+)"', block)
-        venue_m = re.search(r'<div class="vl">.*?<a [^>]*>(.*?)</a>', block, re.S)
+        share = re.search(r"""data-url\s*=\s*["']([^"']+)["']""", block, re.I)
+        venue_m = re.search(r'''<div\b[^>]*\bclass=["'][^"']*\bvl\b[^"']*["'][^>]*>.*?<a\b[^>]*>(.*?)</a>''', block, re.S | re.I)
         venue = _text(venue_m.group(1)) if venue_m else (ev.get("location") or {}).get("name", "")
         sessions.append(Session(
             id=sid,
@@ -172,14 +219,14 @@ def parse_play(html: str, url: str) -> Play:
             status=status,
             opens_at=opens_at,
             url=htmlmod.unescape(share.group(1)) if share else f"{url}/{sid}",
-            venue=htmlmod.unescape(venue),
+            venue=venue,
         ))
 
-    h1 = re.search(r'<h1 class="hero-v3__title">(.*?)</h1>', html, re.S)
+    h1 = re.search(r'<h1\b[^>]*\bhero-v3__title\b[^>]*>(.*?)</h1>', html, re.S | re.I)
     title = _text(h1.group(1)) if h1 else ""
     dur = re.match(r"(\d+)", _fact(html, "Süre") or "")
     age = re.match(r"(\d+)", _fact(html, "Yaş Sınırı") or "")
-    price = (events[0].get("offers") or {}).get("price")
+    price = _min_price(events)
     return Play(
         slug=slug,
         title=title or _title_from_slug(slug),
@@ -187,6 +234,6 @@ def parse_play(html: str, url: str) -> Play:
         genre=_fact(html, "Etkinlik Türü"),
         duration_min=int(dur.group(1)) if dur else None,
         age_limit=int(age.group(1)) if age else None,
-        price_from=float(price) if price is not None else None,
+        price_from=price,
         sessions=sessions,
     )
