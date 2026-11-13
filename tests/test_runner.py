@@ -927,7 +927,7 @@ def test_main_runs_pc_watch_after_burst_crash(monkeypatch, capsys):
     monkeypatch.setattr(runner, "pc_watch", lambda *a, **k: calls.append("pc") or [])
     monkeypatch.setattr(runner.ClaimStore, "purge", lambda self, *a: calls.append("purge"))
     runner.main()
-    assert calls == ["pc", "purge"]
+    assert calls == ["pc", "pc", "purge"]  # run-start check + post-burst check
     assert "RuntimeError" in capsys.readouterr().err
 
 
@@ -1250,3 +1250,99 @@ def test_burst_dirty_state_is_reported(monkeypatch):
                      rand=lambda a, b: 0.0)
     assert res.save_error == "RuntimeError" and res.dirty is True
     assert env.saved_state()["plays"]["p"]["sessions"]["s1"]["status"] == "upcoming"
+
+
+
+# ==== fix round 3: GitHub cadence checked once, at run start =======================
+
+class CadenceStore(FakeStore):
+    """Realistic run list: the current in-progress run (id 999 = GITHUB_RUN_ID) on top,
+    then completed scan runs with fixed start/end times."""
+
+    def __init__(self, now, previous_ends):
+        super().__init__(now=now)
+        self.run_start = now
+        self.previous_ends = previous_ends  # completion times, newest first
+
+    def ensure_branch(self):
+        pass
+
+    def runs(self, per_page=10):
+        out = [{"id": 999, "path": ".github/workflows/scan.yml", "status": "in_progress",
+                "conclusion": None, "created_at": self.run_start.isoformat(),
+                "updated_at": self.now.isoformat()}]
+        for i, end in enumerate(self.previous_ends):
+            out.append({"id": 900 - i, "path": ".github/workflows/scan.yml",
+                        "status": "completed", "conclusion": "success",
+                        "created_at": (end - timedelta(minutes=1)).isoformat(),
+                        "updated_at": end.isoformat()})
+        return out
+
+
+def _main_burst_run(monkeypatch, previous_end_before_start_min):
+    """main() starting 10 min before an opening (burst), PC never active."""
+    _main_env(monkeypatch)
+    monkeypatch.setenv("GITHUB_RUN_ID", "999")
+    start = datetime(2026, 11, 16, 9, 50, tzinfo=ISTANBUL)
+    opens = start + timedelta(minutes=10)
+    clock = [start]
+
+    class FakeDT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock[0]
+
+    prev_end = start - timedelta(minutes=previous_end_before_start_min)
+    store = CadenceStore(start, [prev_end, prev_end - timedelta(minutes=5)])
+    store.files["config.json"] = (WATCH_CFG, "c")
+    web = Web(monkeypatch, [mkplay(sessions=[sess(opens_at=opens)])])
+    # earlier runs already saw the play (not a first scan)
+    seed = FakeStore(now=start)
+    run_once(seed, FakeTG(), ClaimStore(seed, "github", lambda: start),
+             start - timedelta(hours=1), fetch_fn=web.fetch, sleep=lambda s: None)
+    store.files["state.json"] = seed.files["state.json"]
+
+    def sleep(s):
+        clock[0] += timedelta(seconds=s)
+        store.now = clock[0]
+        if clock[0] >= opens + timedelta(minutes=2):
+            web.set(mkplay(sessions=[sess(status=Status.ON_SALE)]))
+
+    tgs = []
+    monkeypatch.setattr(runner, "datetime", FakeDT)
+    monkeypatch.setattr(runner, "Store", lambda *a, **k: store)
+    monkeypatch.setattr(runner, "Telegram", lambda *a, **k: tgs.append(FakeTG()) or tgs[-1])
+    monkeypatch.setattr(runner, "fetch", web.fetch)
+    monkeypatch.setattr(runner.time, "sleep", sleep)
+    code = runner.main()
+    return code, store, tgs[0], clock[0] - start
+
+
+def test_healthy_cadence_burst_has_no_gh_lagging(monkeypatch):
+    # previous scan ended 14 min before the opening = 4 min before this run started
+    code, store, tg, elapsed = _main_burst_run(monkeypatch, 4)
+    assert elapsed >= timedelta(minutes=10)  # the burst ran past the opening
+    emitted = store.files["state.json"][0]["emitted"]
+    assert not any(k.startswith("GH_LAGGING") for k in emitted)
+    assert not any("GitHub taraması gecikiyor" in m for m in tg.sent)
+    assert sum("Bilet alınabilir" in m for m in tg.sent) == 1
+    assert sum("PC uygulaması aktif değil" in m for m in tg.sent) == 1  # :2 only
+    assert code == 0
+
+
+def test_late_cadence_gh_lagging_once(monkeypatch):
+    # previous scan ended 40 min before this run started: genuinely late
+    code, store, tg, _ = _main_burst_run(monkeypatch, 40)
+    emitted = store.files["state.json"][0]["emitted"]
+    assert len([k for k in emitted if k.startswith("GH_LAGGING")]) == 1
+    assert sum("GitHub taraması gecikiyor" in m for m in tg.sent) == 1
+
+
+def test_pc_watch_check_gh_false_skips_github_check():
+    opens = NOW + timedelta(minutes=30)
+    store = RunsStore(runs_age_min=40)  # would be unhealthy
+    st, cfg, tg, claims = _pc_env(store, opens)
+    ev = pc_watch(store, st, cfg, NOW, claims, tg, check_gh=False)
+    assert [e.kind for e in ev] == ["PC_INACTIVE"]  # PC checks still run
+    ev = pc_watch(store, st, cfg, NOW, claims, tg)
+    assert [e.kind for e in ev] == ["GH_LAGGING"]

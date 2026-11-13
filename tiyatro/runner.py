@@ -638,7 +638,7 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
                                     or now - last_watch >= BURST_WATCH_EVERY):
                 last_watch = now
                 watched = copy.deepcopy(state)
-                pc_watch(store, watched, config, now, claims, tg)
+                pc_watch(store, watched, config, now, claims, tg, check_gh=False)
                 state = watched
             fp = _fingerprint(state)
             if persist_state and fp != saved_fp:
@@ -680,8 +680,14 @@ def scan_runs(runs, run_id: str | None = None,
     return out
 
 
-def pc_watch(store, state: dict, config: Config, now: datetime, claims, tg) -> list[Event]:
+def pc_watch(store, state: dict, config: Config, now: datetime, claims, tg,
+             check_gh: bool = True) -> list[Event]:
     """Opening-window liveness checks (PC heartbeat, own GitHub schedule).
+
+    ``check_gh``: the GitHub check measures the scan cadence (time since the previous
+    run ended), which is only meaningful at the START of a run; later in the same run
+    the gap grows by the run's own elapsed time. ``main`` checks it once at run start;
+    the in-burst and post-burst calls pass ``check_gh=False``.
 
     Mutates ``state`` in place (emitted keys, outbox); the caller saves it. The GitHub
     check ignores the current run (env ``GITHUB_RUN_ID``), runs still in progress and
@@ -707,11 +713,14 @@ def pc_watch(store, state: dict, config: Config, now: datetime, claims, tg) -> l
     elif status == "diverged":
         candidates.append(_emit(state, "PC_DIVERGED", f"PC_DIVERGED:{iso}",
                                 {"detail": f"PC farklı görüyor (açılış {at})"}, now))
-    try:
-        runs = scan_runs(store.runs(per_page=30), os.environ.get("GITHUB_RUN_ID") or None)
-        gh = github_run_status(runs, now)
-    except Exception:
-        gh = None  # the run list itself is unavailable: nothing reliable to report
+    gh = None
+    if check_gh:
+        try:
+            runs = scan_runs(store.runs(per_page=30),
+                             os.environ.get("GITHUB_RUN_ID") or None)
+            gh = github_run_status(runs, now)
+        except Exception:
+            gh = None  # the run list itself is unavailable: nothing reliable to report
     if gh is not None and not gh["healthy"]:
         candidates.append(_emit(state, "GH_LAGGING", f"GH_LAGGING:{iso}",
                                 {"detail": f"Son çalışma {gh['gap_s'] // 60} dk önce "
@@ -772,6 +781,15 @@ def main() -> int:
         state, errors = res.state, [res.save_error]
         problems: list[str] = []
         config = load_config(store)
+        watch_events: list[Event] = []
+        before = _fingerprint(state)
+        try:  # GitHub cadence: once per run, measured at run start
+            watch_events += pc_watch(store, state, config, started, claims, tg,
+                                     check_gh=True)
+        except Exception as exc:
+            problems.append(f"pc_watch failed: {type(exc).__name__}")
+        if _fingerprint(state) != before:
+            errors.append(save_state(store, state))
         mode, until = plan_mode(state, config, now_fn())
         if mode == "burst":
             try:
@@ -785,10 +803,10 @@ def main() -> int:
                     print(f"burst tick errors: {', '.join(br.errors)}", file=sys.stderr)
             except Exception as exc:
                 problems.append(f"burst failed: {type(exc).__name__}")
-        watch_events: list[Event] = []
         before = _fingerprint(state)
         try:
-            watch_events = pc_watch(store, state, config, now_fn(), claims, tg)
+            watch_events += pc_watch(store, state, config, now_fn(), claims, tg,
+                                     check_gh=False)
         except Exception as exc:
             problems.append(f"pc_watch failed: {type(exc).__name__}")
         if _fingerprint(state) != before:
