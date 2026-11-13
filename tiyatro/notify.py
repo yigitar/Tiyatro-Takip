@@ -276,7 +276,7 @@ class Telegram:
     def send(self, text: str) -> int:
         url = f"https://api.telegram.org/bot{self._token}/sendMessage"
         payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML",
-                   "disable_web_page_preview": False}
+                   "disable_web_page_preview": True}
         for attempt in range(1, MAX_ATTEMPTS + 1):
             # Errors are recorded inside `except` and raised outside it, so the token can
             # never survive in an exception's __context__.

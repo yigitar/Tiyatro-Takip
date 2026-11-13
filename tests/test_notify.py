@@ -136,7 +136,7 @@ def test_send_ok_payload():
     url, payload = tr.calls[0]
     assert url.endswith("/sendMessage")
     assert payload["parse_mode"] == "HTML" and payload["chat_id"] == "42"
-    assert payload["disable_web_page_preview"] is False and payload["text"] == "hi"
+    assert payload["disable_web_page_preview"] is True and payload["text"] == "hi"
 
 
 def test_429_retry_then_success():
