@@ -118,8 +118,55 @@ def test_mark_sent_error_after_send_is_swallowed(store):
 def test_clock_fallback_when_server_now_fails(store):
     fixed = datetime(2026, 11, 13, 12, 0, tzinfo=timezone.utc)
     cs = ClaimStore(store, "gh", lambda: fixed)
+
+    def down():
+        raise RuntimeError("no Date header")
+
+    store.server_now = down
+    assert cs.claim("k") is True
+    data, _ = store.get(claim_path("k"))
+    assert datetime.fromisoformat(data["claimed_at"]) == fixed
+    assert datetime.fromisoformat(data["lease_until"]) == fixed + timedelta(seconds=45)
+
+
+def test_late_mark_failed_does_not_flip_sent(store):
+    a, b = make(store, "gh"), make(store, "pc")
+    a.claim("k")
+    store.advance(60)
+    assert b.claim("k") is True
+    b.mark_sent("k", 9)
+    a.mark_failed("k", "late")  # stale owner
+    assert store.get(claim_path("k"))[0]["status"] == "sent"
+    assert make(store, "third").claim("k") is False
+
+
+def test_mark_failed_noop_when_not_owner(store):
+    a, b = make(store, "gh"), make(store, "pc")
+    a.claim("k")
+    store.advance(60)
+    b.claim("k")  # pc owns it now, status claimed
+    a.mark_failed("k", "late")
+    data, _ = store.get(claim_path("k"))
+    assert data["status"] == "claimed" and data["claimed_by"] == "pc"
+
+
+def test_purge_survives_store_errors(store):
+    cs = make(store)
+    cs.claim("old1")
+    cs.claim("old2")
+    store.advance(49 * 3600)
+    real_delete, n = store.delete, [0]
+
+    def flaky(path, sha):
+        n[0] += 1
+        if n[0] == 2:
+            raise RuntimeError("boom")
+        real_delete(path, sha)
+
+    store.delete = flaky
+    assert cs.purge(48) == 1
     store.fail = True
-    assert cs._now() == fixed
+    assert cs.purge(48) == 0
 
 
 def test_claim_path_is_injective_and_safe():

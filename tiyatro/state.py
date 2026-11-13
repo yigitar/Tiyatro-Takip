@@ -23,6 +23,7 @@ from datetime import datetime, time, timedelta
 from tiyatro.models import ISTANBUL, Config, Event, Play, PlayWatch, Session, Status
 from tiyatro.rules import matching_targets
 from tiyatro.tags import apply_overrides, derive_tags
+from tiyatro.timeutil import parse_iso
 
 ON_SALE_GAP = timedelta(minutes=30)
 OPENING_SOON_LEAD = timedelta(minutes=10)
@@ -45,8 +46,7 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def _dt(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value) if value is not None else None
+_dt = parse_iso
 
 
 def _normalize(old: dict) -> dict:

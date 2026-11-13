@@ -9,11 +9,19 @@ import urllib.request
 from datetime import datetime
 from typing import Callable
 
+import re
+
 from tiyatro.models import ISTANBUL, Config, Event, Play
+from tiyatro.timeutil import parse_iso
 
 MAX_LEN = 4096
 FOLD_NEW_PLAYS_ABOVE = 3
 MAX_ATTEMPTS = 3
+MAX_RETRY_AFTER = 60
+TITLE_MAX = 200
+NAME_MAX = 100
+DETAIL_MAX = 500
+URL_MAX = 1000
 
 DAYS = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
 MONTHS = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz",
@@ -33,12 +41,19 @@ DAY_BEFORE_TEXT = "\U0001f514 Satış açılış hatırlatması: "
 
 
 def _dt(value: str | None) -> datetime | None:
-    if not value:
-        return None
     try:
-        return datetime.fromisoformat(value).astimezone(ISTANBUL)
+        d = parse_iso(value)
     except ValueError:
         return None
+    return d.astimezone(ISTANBUL) if d else None
+
+
+def _esc(value, limit: int) -> str:
+    """Truncate (with an ellipsis) BEFORE escaping so entities are never cut."""
+    text = str(value)
+    if len(text) > limit:
+        text = text[:limit - 1] + "…"
+    return html.escape(text)
 
 
 def _when(d: datetime) -> str:
@@ -62,7 +77,7 @@ def _title(ev: Event, plays: dict[str, Play]) -> str:
     title = ev.payload.get("title")
     if not title and ev.play_slug in plays:
         title = plays[ev.play_slug].title
-    return html.escape(str(title or ev.play_slug or ""))
+    return _esc(title or ev.play_slug or "", TITLE_MAX)
 
 
 def _targets(ev: Event, config: Config, ids: list[str]) -> str:
@@ -70,7 +85,7 @@ def _targets(ev: Event, config: Config, ids: list[str]) -> str:
     if watch is None:
         return ""
     by_id = {t.id: t for t in watch.targets}
-    return ", ".join(f"{html.escape(by_id[i].name)} ({by_id[i].people} kişi)"
+    return ", ".join(f"{_esc(by_id[i].name, NAME_MAX)} ({by_id[i].people} kişi)"
                      for i in ids if i in by_id)
 
 
@@ -88,30 +103,55 @@ def _entry(ev: Event, plays: dict[str, Play], config: Config, ids: list[str]) ->
         lines.append(f"\U0001f465 {people}")
     url = ev.payload.get("url") or ev.payload.get("play_url")
     if url:
-        lines.append(f"\U0001f517 {html.escape(str(url))}")
+        lines.append(f"\U0001f517 {_esc(url, URL_MAX)}")
     detail = ev.payload.get("detail")
     if detail:
-        lines.append(html.escape(str(detail)))
+        lines.append(_esc(detail, DETAIL_MAX))
     return "\n".join(lines)
 
 
-def _split(text: str, limit: int = MAX_LEN) -> list[str]:
-    """Split an over-long entry on line boundaries (hard-split lines that still exceed)."""
+_TOKEN = re.compile(r"<[^>]*>|&[#A-Za-z0-9]+;|.", re.S)
+_OPEN = re.compile(r"<([A-Za-z]+)(?:\s[^>]*)?>$")
+_CLOSE = re.compile(r"</([A-Za-z]+)>$")
+
+
+def _split_line(line: str, limit: int) -> list[str]:
+    """Split one over-long line without cutting a tag or entity.
+
+    An element cut in two is closed at the end of the part and re-opened in the next.
+    """
     out: list[str] = []
     cur = ""
+    stack: list[tuple[str, str]] = []  # (name, opening tag)
+
+    def closing() -> str:
+        return "".join(f"</{n}>" for n, _ in reversed(stack))
+
+    for tok in _TOKEN.findall(line):
+        if len(cur) + len(tok) + len(closing()) > limit and cur.strip("".join(t for _, t in stack)):
+            out.append(cur + closing())
+            cur = "".join(t for _, t in stack)
+        cur += tok
+        m = _OPEN.match(tok)
+        if m:
+            stack.append((m.group(1), tok))
+        else:
+            m = _CLOSE.match(tok)
+            if m and stack and stack[-1][0] == m.group(1):
+                stack.pop()
+    out.append(cur)
+    return out
+
+
+def _split(text: str, limit: int = MAX_LEN) -> list[str]:
+    """Split an over-long entry on line boundaries; tag/entity-safe for huge lines."""
     pieces: list[str] = []
-    for line in text.split("\n"):
-        while len(line) > limit:
-            cut = limit
-            chunk = line[:cut]
-            amp = chunk.rfind("&")
-            if amp > 0 and amp > chunk.rfind(";"):
-                cut = amp  # never cut inside an HTML entity
-            pieces.append(line[:cut])
-            line = line[cut:]
-        pieces.append(line)
+    for line in text.split(chr(10)):
+        pieces.extend(_split_line(line, limit) if len(line) > limit else [line])
+    out: list[str] = []
+    cur = ""
     for line in pieces:
-        cand = f"{cur}\n{line}" if cur else line
+        cand = cur + chr(10) + line if cur else line
         if len(cand) > limit:
             out.append(cur)
             cur = line
@@ -123,8 +163,8 @@ def _split(text: str, limit: int = MAX_LEN) -> list[str]:
 
 def format_message(events: list[Event], plays: dict[str, Play], config: Config) -> list[str]:
     entries: list[str] = []
-    groups: dict[tuple, int] = {}      # (kind, slug, sid) -> index in `entries_src`
-    entries_src: list = []             # ("ev", Event, ids) | ("new", [Event])
+    groups: dict[tuple, int] = {}  # (kind, slug, sid) -> position in entries_src
+    entries_src: list = []  # ("ev", Event, ids) | ("new", [Event])
     new_plays: list[Event] = []
     new_index: int | None = None
 
@@ -153,7 +193,7 @@ def format_message(events: list[Event], plays: dict[str, Play], config: Config) 
                 url = e.payload.get("url")
                 line = f"• {_title(e, plays)}"
                 if url:
-                    line += f" — {html.escape(str(url))}"
+                    line += f" — {_esc(url, URL_MAX)}"
                 lines.append(line)
             entries.append("\n".join(lines))
         else:
@@ -212,25 +252,44 @@ class Telegram:
     def _scrub(self, text: str) -> str:
         return text.replace(self._token, "***") if self._token else text
 
+    @staticmethod
+    def _retry_after(body: dict) -> float:
+        raw = (body.get("parameters") or {}).get("retry_after", 1)
+        try:
+            return max(0.0, float(raw))
+        except (TypeError, ValueError):
+            return 1.0
+
     def send(self, text: str) -> int:
         url = f"https://api.telegram.org/bot{self._token}/sendMessage"
         payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML",
                    "disable_web_page_preview": False}
         for attempt in range(1, MAX_ATTEMPTS + 1):
+            # Errors are recorded inside `except` and raised outside it, so the token can
+            # never survive in an exception's __context__.
+            failure: str | None = None
+            status, body = 0, {}
             try:
                 status, body = self._transport(url, payload)
             except TelegramError as exc:
-                raise TelegramError(self._scrub(str(exc))) from None
+                failure = self._scrub(str(exc))
             except Exception as exc:
-                raise TelegramError(
-                    f"telegram transport error: {type(exc).__name__}") from None
+                failure = f"telegram transport error: {type(exc).__name__}"
+            if failure is not None:
+                raise TelegramError(failure)
             body = body if isinstance(body, dict) else {}
-            if status == 429 and attempt < MAX_ATTEMPTS:
-                wait = (body.get("parameters") or {}).get("retry_after", 1)
-                self._sleep(wait if isinstance(wait, (int, float)) else 1)
-                continue
-            if status == 200 and body.get("ok"):
-                return int(body["result"]["message_id"])
+            if status == 429:
+                wait = self._retry_after(body)
+                if wait > MAX_RETRY_AFTER:
+                    raise TelegramError(f"telegram rate limited: retry_after={wait:g}s too long")
+                if attempt < MAX_ATTEMPTS:
+                    self._sleep(int(wait) if wait == int(wait) else wait)
+                    continue
+            if status == 200 and body.get("ok") is True:
+                result = body.get("result")
+                mid = result.get("message_id") if isinstance(result, dict) else None
+                # ok without an id: the message was most likely delivered; do not re-send.
+                return mid if isinstance(mid, int) else 0
             desc = self._scrub(str(body.get("description", "")))
             raise TelegramError(f"telegram error {status}: {desc}")
         raise TelegramError("telegram error: retries exhausted")  # pragma: no cover

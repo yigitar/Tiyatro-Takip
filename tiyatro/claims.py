@@ -8,6 +8,8 @@ import re
 from datetime import datetime, timedelta
 from typing import Callable
 
+from tiyatro.timeutil import parse_iso
+
 LEASE = timedelta(seconds=45)
 _SAFE = re.compile(r"[A-Za-z0-9.\-]")
 
@@ -24,10 +26,6 @@ def claim_path(key: str) -> str:
         else:
             out.extend(f"_{b:02x}" for b in ch.encode("utf-8"))
     return f"claims/{''.join(out)}.json"
-
-
-def _p(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value) if value else None
 
 
 class ClaimStore:
@@ -60,7 +58,7 @@ class ClaimStore:
             if status == "sent":
                 return False
             if status == "claimed":
-                lease = _p(cur.get("lease_until"))
+                lease = parse_iso(cur.get("lease_until"))
                 if lease is not None and lease > now:
                     return False
             return bool(self.store.put(
@@ -68,11 +66,13 @@ class ClaimStore:
         except Exception:
             return True
 
-    def _update(self, key: str, **fields) -> None:
+    def _update(self, key: str, skip=None, **fields) -> None:
         path = claim_path(key)
         now = self._now()
         for _ in range(3):
             cur, sha = self.store.get(path)
+            if cur is not None and skip is not None and skip(cur):
+                return
             if cur is None:
                 cur = self._new(key, now)
                 cur.update(fields)
@@ -89,20 +89,28 @@ class ClaimStore:
                      message_id=message_id, claimed_by=self.who)
 
     def mark_failed(self, key: str, note: str = "") -> None:
-        self._update(key, status="failed", note=note[:200])
+        """No-op if the record is already `sent` or now owned by someone else."""
+        self._update(key, skip=lambda c: c.get("status") == "sent"
+                     or c.get("claimed_by") != self.who,
+                     status="failed", note=note[:200])
 
     def purge(self, older_than_hours: int = 48) -> int:
-        cutoff = self._now() - timedelta(hours=older_than_hours)
+        """Delete claims older than the cutoff (server time); returns the number deleted.
+
+        Store errors never propagate: on a listing/delete failure the count deleted so
+        far is returned.
+        """
         count = 0
-        for path in self.store.list_paths("claims/"):
-            try:
+        try:
+            cutoff = self._now() - timedelta(hours=older_than_hours)
+            for path in self.store.list_paths("claims/"):
                 cur, sha = self.store.get(path)
-                at = _p(cur.get("claimed_at")) if cur else None
+                at = parse_iso(cur.get("claimed_at")) if cur else None
                 if at is not None and at < cutoff:
                     self.store.delete(path, sha)
                     count += 1
-            except Exception:
-                continue
+        except Exception:
+            pass
         return count
 
 
