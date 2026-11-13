@@ -61,7 +61,7 @@ from tiyatro.models import ISTANBUL, Config, Event, Play, Session, Status
 from tiyatro.notify import MONTHS, Telegram, default_transport, format_message
 from tiyatro.parser import ParseError, parse_play, parse_venue
 from tiyatro.rules import matching_targets
-from tiyatro.state import cleanup, diff, empty_state, next_opening
+from tiyatro.state import cleanup, diff, empty_state, next_opening, valid_session_record
 from tiyatro.store import Store
 from tiyatro.timeutil import parse_iso
 
@@ -85,6 +85,7 @@ BURST_INTERVAL_S = 12
 BURST_SLOW_INTERVAL_S = 30
 BURST_JITTER_S = 3
 BURST_MAX_SECONDS = 780
+BURST_WATCH_EVERY = timedelta(seconds=60)
 PC_WINDOW = timedelta(minutes=60)
 PC_SECOND_WARNING = timedelta(minutes=10)
 DAILY_AT = dtime(12, 0)
@@ -104,6 +105,7 @@ class RunResult:
     save_error: str | None = None
     daily: bool = False
     errors: list[str] = field(default_factory=list)  # burst: exception type names
+    dirty: bool = False  # burst: in-memory state newer than state.json
 
 
 # ---- (de)serialisation and loading ----------------------------------------
@@ -140,7 +142,7 @@ def _prepare(state) -> dict:
     for entry in plays.values():
         if not isinstance(entry.get("sessions"), dict):
             entry["sessions"] = {}
-        for sid in [s for s, r in entry["sessions"].items() if not isinstance(r, dict)]:
+        for sid in [s for s, r in entry["sessions"].items() if not valid_session_record(r)]:
             del entry["sessions"][sid]
     if not isinstance(state.get("emitted"), dict):
         state["emitted"] = {}
@@ -173,8 +175,13 @@ def save_state(store, state: dict) -> str | None:
 
 
 def _fingerprint(state: dict) -> str:
+    """State identity without the per-scan timestamps (``last_scan``/``last_seen``),
+    so a burst tick that only re-confirmed the page does not cause a write."""
     st = copy.deepcopy(state)
     st.get("meta", {}).pop("last_scan", None)
+    for entry in (st.get("plays") or {}).values():
+        if isinstance(entry, dict):
+            entry.pop("last_seen", None)
     return json.dumps(st, sort_keys=True, default=str)
 
 
@@ -587,9 +594,15 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
 
     Tick interval: ``interval`` (12 s), or 30 s once every targeted session is more
     than 30 min overdue; both with +-3 s jitter (``rand``). Stops at ``until``, after
-    ``max_seconds`` or when no watched session is in its window any more. State is saved only when an iteration changed something. A
-    failing tick (e.g. one store 502) is recorded by exception type name in
-    ``RunResult.errors`` and the loop goes on with the last good config/state.
+    ``max_seconds`` or when no watched session is in its window any more.
+
+    State is saved whenever it differs from the last successfully saved version (so a
+    failed save is retried on later ticks); ``save_error`` keeps the first failure and
+    ``dirty`` says the final state is not saved. For ``who="github"`` ``pc_watch`` runs
+    about every 60 s (heartbeat/run list only, no Biletinial requests) so the second
+    PC warning is not lost. A failing tick (e.g. one store 502) is recorded by
+    exception type name in ``RunResult.errors`` and the loop goes on with the last good
+    config/state.
     """
     start = now_fn()
     deadline = min(until, start + timedelta(seconds=max_seconds))
@@ -598,6 +611,9 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
     base = interval
     errors: list[str] = []
     result: RunResult | None = None
+    saved_fp = _fingerprint(state)
+    save_error: str | None = None
+    last_watch: datetime | None = None
     while True:
         now = now_fn()
         if now >= deadline:
@@ -614,19 +630,31 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
                 break
             slugs = sorted({slug for slug, _end, _fast in targets})
             base = interval if any(fast for *_x, fast in targets) else BURST_SLOW_INTERVAL_S
-            before = _fingerprint(state)
             result = run_once(store, tg, claims, now, who=who, fetch_fn=fetch_fn,
                               sleep=sleep, persist_state=False, state=state,
                               only_slugs=slugs, config=config)
             state = result.state
-            if persist_state and _fingerprint(state) != before:
-                result.save_error = save_state(store, state)
+            if who == "github" and (last_watch is None
+                                    or now - last_watch >= BURST_WATCH_EVERY):
+                last_watch = now
+                watched = copy.deepcopy(state)
+                pc_watch(store, watched, config, now, claims, tg)
+                state = watched
+            fp = _fingerprint(state)
+            if persist_state and fp != saved_fp:
+                err = save_state(store, state)
+                if err is None:
+                    saved_fp = fp
+                else:
+                    save_error = save_error or err
         except Exception as exc:
             errors.append(type(exc).__name__)
         sleep(max(1.0, base + rand(-BURST_JITTER_S, BURST_JITTER_S)))
     final = result or RunResult([], "burst", 0, state)
     final.state = state
     final.errors = errors
+    final.save_error = save_error
+    final.dirty = persist_state and _fingerprint(state) != saved_fp
     return final
 
 
@@ -717,7 +745,8 @@ def main() -> int:
     """GitHub entry point.
 
     Exit code 0, except 1 when: an unexpected exception escaped (message without
-    secrets), ``state.json`` could not be saved (the claims still prevent duplicates,
+    secrets), ``state.json`` could not be saved by any step, including a single burst
+    tick even if a later save succeeded (the claims still prevent duplicates,
     but a red run makes a persistent store fault visible), an alert was dropped from
     the outbox, or the burst / PC-watch step crashed. 2 when env variables are missing.
     """
@@ -750,6 +779,8 @@ def main() -> int:
                                 fetch_fn=fetch, state=state)
                 state = br.state
                 errors.append(br.save_error)
+                if br.dirty:  # retry the final burst state once more below
+                    errors.append(save_state(store, state))
                 if br.errors:
                     print(f"burst tick errors: {', '.join(br.errors)}", file=sys.stderr)
             except Exception as exc:

@@ -273,7 +273,9 @@ def test_burst_loop_scans_only_relevant_play_until_end(monkeypatch):
     # stops when the session leaves the burst window (opens_at cleared by ON_SALE)
     # or at `until`, never after max_seconds
     assert clock[0] <= NOW + timedelta(seconds=780 + 15)
-    assert len(env.tg.sent) == 1 and "Bilet alınabilir" in env.tg.sent[0]
+    # the in-burst pc_watch adds one PC_INACTIVE (no heartbeat in this fake store)
+    assert sum("Bilet alınabilir" in m for m in env.tg.sent) == 1
+    assert sum("PC uygulaması aktif değil" in m for m in env.tg.sent) == 1
     assert res.state["plays"]["p"]["sessions"]["s1"]["status"] == "on_sale"
     # persisted only when something changed (not every 12 s iteration)
     n_iter = len(env.web.calls)
@@ -880,7 +882,7 @@ def test_burst_survives_one_store_error(monkeypatch):
                      opens + timedelta(minutes=10), fetch_fn=env.web.fetch)
     assert len(config_gets) >= 3
     assert res.errors == ["RuntimeError"]
-    assert len(env.tg.sent) == 1 and "Bilet alınabilir" in env.tg.sent[0]
+    assert sum("Bilet alınabilir" in m for m in env.tg.sent) == 1
 
 
 def test_burst_sleeps_between_page_fetches(monkeypatch):
@@ -1090,3 +1092,161 @@ def test_burst_ends_after_90_min_overdue(monkeypatch):
     burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
                OPENS + timedelta(minutes=90), fetch_fn=env.web.fetch)
     assert clock[0] <= OPENS + timedelta(minutes=90, seconds=33)
+
+
+
+# ==== fix round 2 ==================================================================
+
+def test_garbage_session_record_does_not_crash_run(monkeypatch):
+    env = Env(monkeypatch, [mkplay()], WATCH_CFG)
+    env.run(NOW)
+    st = env.saved_state()
+    st["plays"]["p"]["sessions"]["junk"] = {}
+    env.store.files["state.json"] = (st, "x1")
+    res = env.run(NOW + timedelta(minutes=5))
+    assert res.scanned == 1 and "junk" not in env.saved_state()["plays"]["p"]["sessions"]
+
+
+def test_old_schema_on_sale_sessions_do_not_start_a_burst(monkeypatch):
+    env = Env(monkeypatch, [mkplay(sessions=[sess(status=Status.ON_SALE)])], WATCH_CFG)
+    env.run(NOW)
+    st = env.saved_state()
+    del st["plays"]["p"]["sessions"]["s1"]["status_since"]  # pre-deploy record
+    env.store.files["state.json"] = (st, "x1")
+    t = NOW + timedelta(hours=3)
+    res = env.run(t)
+    assert res.state["plays"]["p"]["sessions"]["s1"]["status_since"] is None
+    assert plan_mode(res.state, config_from_dict(WATCH_CFG), t) == ("normal", None)
+
+
+def test_pc_warnings_inside_burst_window(monkeypatch):
+    opens = NOW + timedelta(hours=1)
+    store = RunsStore()
+    env = Env(monkeypatch, [mkplay(sessions=[sess(opens_at=opens)])], WATCH_CFG,
+              store=store)
+    env.run(NOW)
+    env.tg.sent.clear()
+    cfg = config_from_dict(WATCH_CFG)
+    # a normal run 55 min before opening: first warning
+    t = opens - timedelta(minutes=55)
+    store.now = t
+    st = env.saved_state()
+    pc_watch(store, st, cfg, t, env.claims, env.tg)
+    runner.save_state(store, st)
+    assert [m for m in env.tg.sent if "PC uygulaması aktif değil" in m] != []
+    clock = [opens - timedelta(minutes=10)]
+
+    def sleep(s):
+        clock[0] += timedelta(seconds=s)
+        store.now = clock[0]
+
+    store.now = clock[0]
+    res = burst_loop(store, env.tg, env.claims, lambda: clock[0], sleep,
+                     opens + timedelta(minutes=90), fetch_fn=env.web.fetch,
+                     rand=lambda a, b: 0.0)
+    keys = sorted(k for k in res.state["emitted"] if k.startswith("PC_INACTIVE"))
+    assert keys == [f"PC_INACTIVE:{opens.isoformat()}:1", f"PC_INACTIVE:{opens.isoformat()}:2"]
+    pc_msgs = [m for m in env.tg.sent if "PC uygulaması aktif değil" in m]
+    assert len(pc_msgs) == 2
+    assert not any(k.startswith("GH_LAGGING") for k in res.state["emitted"])
+
+
+def test_pc_watch_runs_about_every_60_s_in_burst(monkeypatch):
+    opens = NOW + timedelta(minutes=5)
+    store = RunsStore()
+    env = Env(monkeypatch, [mkplay(sessions=[sess(opens_at=opens)])], WATCH_CFG,
+              store=store)
+    env.run(NOW)
+    calls = []
+    real = runner.pc_watch
+    monkeypatch.setattr(runner, "pc_watch",
+                        lambda *a, **k: (calls.append(a[3]), real(*a, **k))[1])
+    clock = [NOW]
+
+    def sleep(s):
+        clock[0] += timedelta(seconds=s)
+        store.now = clock[0]
+
+    burst_loop(store, env.tg, env.claims, lambda: clock[0], sleep,
+               opens + timedelta(minutes=90), fetch_fn=env.web.fetch,
+               rand=lambda a, b: 0.0, max_seconds=300)
+    assert 4 <= len(calls) <= 6
+    assert all(b - a >= timedelta(seconds=60) for a, b in zip(calls, calls[1:]))
+
+
+def test_burst_save_failure_reaches_exit_code_and_final_state_saved(monkeypatch, capsys):
+    _main_env(monkeypatch)
+    clock = [datetime(2026, 11, 16, 9, 52, tzinfo=ISTANBUL)]
+    opens = clock[0] + timedelta(minutes=5)
+
+    class FakeDT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock[0]
+
+    failed = []
+
+    class S(RunsStore):
+        def __init__(self, *a, **k):
+            super().__init__()
+            self.now = clock[0]
+
+        def ensure_branch(self):
+            pass
+
+        def update_json(self, path, mutate, retries=4):
+            if path == "state.json" and not failed:
+                new = mutate({})
+                if new["plays"]["p"]["sessions"]["s1"]["status"] == "on_sale":
+                    failed.append(1)
+                    raise RuntimeError("HTTP 502")
+            return super().update_json(path, mutate, retries)
+
+    made = []
+    web = Web(monkeypatch, [mkplay(sessions=[sess(opens_at=opens)])])
+
+    def make_store(*a, **k):
+        s = S()
+        s.files["config.json"] = (WATCH_CFG, "c")
+        made.append(s)
+        return s
+
+    def sleep(s):
+        clock[0] += timedelta(seconds=s)
+        made[0].now = clock[0]
+        if clock[0] >= opens:
+            web.set(mkplay(sessions=[sess(status=Status.ON_SALE)]))
+
+    tgs = []
+    monkeypatch.setattr(runner, "datetime", FakeDT)
+    monkeypatch.setattr(runner, "Store", make_store)
+    monkeypatch.setattr(runner, "Telegram", lambda *a, **k: tgs.append(FakeTG()) or tgs[-1])
+    monkeypatch.setattr(runner, "fetch", web.fetch)
+    monkeypatch.setattr(runner.time, "sleep", sleep)
+    assert runner.main() == 1
+    assert failed == [1]
+    saved = made[0].files["state.json"][0]
+    assert saved["plays"]["p"]["sessions"]["s1"]["status"] == "on_sale"
+    assert sum("Bilet alınabilir" in m for m in tgs[0].sent) == 1
+    assert "state not saved" in capsys.readouterr().err
+
+
+def test_burst_dirty_state_is_reported(monkeypatch):
+    opens = NOW + timedelta(minutes=5)
+    store = FlakyStateStore()
+    env = Env(monkeypatch, [mkplay(sessions=[sess(opens_at=opens)])], WATCH_CFG,
+              store=store)
+    env.run(NOW)
+    clock = [NOW]
+
+    def sleep(s):
+        clock[0] += timedelta(seconds=s)
+        if clock[0] >= opens:
+            env.web.set(mkplay(sessions=[sess(status=Status.ON_SALE)]))
+            store.fail_state = True
+
+    res = burst_loop(store, env.tg, env.claims, lambda: clock[0], sleep,
+                     opens + timedelta(minutes=10), fetch_fn=env.web.fetch,
+                     rand=lambda a, b: 0.0)
+    assert res.save_error == "RuntimeError" and res.dirty is True
+    assert env.saved_state()["plays"]["p"]["sessions"]["s1"]["status"] == "upcoming"
