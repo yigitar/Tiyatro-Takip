@@ -269,3 +269,35 @@ def test_venue_excludes_recommended_cards_without_branch_query():
 def test_venue_falls_back_to_all_links_without_branch_query():
     html = '<a href="/tr-tr/tiyatro/a-oyun">A</a><a href="https://biletinial.com/tr-tr/tiyatro/b-oyun">B</a>'
     assert {r.slug for r in parse_venue(html)} == {"a-oyun", "b-oyun"}
+
+
+def test_last_row_not_polluted_by_footer_when_section_missing():
+    no_venue = _row(2, 6, "Kasım", "20", "00", "").replace('<div class="vl"><a href="/m">Salon &amp; Sahne</a> · X</div>', "")
+    no_btn = no_venue.replace('<div class="right"></div>', '<div class="right"></div>')
+    rows = [_row(1, 5, "Kasım", "20", "00", SOLD), no_btn]
+    evs = [_event("2026-11-05T20:00:00+03:00"), _event("2026-11-06T20:00:00+03:00")]
+    footer = (
+        '<div class="footer"><span class="d">1 Aralık Salı</span><span class="tm">09:00</span>'
+        '<div class="vl"><a href="/z">Decoy Venue</a></div>'
+        '<button class="cta seanceSelect off sold-out" disabled>X</button></div>'
+    )
+    html = _page(rows, evs, section=False).replace("</html>", footer + "</html>")
+    p = parse_play(html, U)
+    last = p.sessions[-1]
+    # last row has no button/venue of its own: footer decoys must not leak in
+    assert last.status == Status.UNKNOWN
+    assert last.start == datetime(2026, 11, 6, 20, 0, tzinfo=ISTANBUL)
+    assert last.venue == "Loc"
+
+
+def test_valueless_data_acilis_is_unknown():
+    btn = '<button class="cta seanceSelect" data-acilis>Bilet Al</button>'
+    p = parse_play(_page([_row(1, 5, "Kasım", "20", "00", btn)], [_event("2026-11-05T20:00:00+03:00")]), U)
+    assert p.sessions[0].status == Status.UNKNOWN
+
+
+@pytest.mark.parametrize("bad", ["inf", "Infinity", "nan"])
+def test_price_rejects_non_finite(bad):
+    p = parse_play(_page([_row(1, 5, "Kasım", "20", "00", SOLD)],
+                         [_event("2026-11-05T20:00:00+03:00", offers={"price": bad})]), U)
+    assert p.price_from is None

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html as htmlmod
 import json
+import math
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -22,6 +23,7 @@ _TR_MONTHS = {
 _TAG_RE = re.compile(r"<(div|script|button|a)\b([^>]*)>", re.I | re.S)
 _SCRIPT_END_RE = re.compile(r"</script\b", re.I)
 _SECTION_END_RE = re.compile(r"</section\b", re.I)
+_DIV_TOKEN_RE = re.compile(r"</?div\b", re.I)
 _ATTR_RE = re.compile(r"""([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?""")
 _PLAY_HREF_RE = re.compile(r"^(?:https?://[^/]+)?(/tr-tr/tiyatro/([^/?#]+))(?:/?)(\?[^#]*)?(?:#.*)?$", re.I)
 
@@ -130,9 +132,19 @@ def _button_state(block: str) -> tuple[Status, datetime | None]:
             return Status.UNKNOWN, None
         return Status.UPCOMING, opens.astimezone(ISTANBUL)
     # PROVISIONAL: never observed on a real page yet.
-    if classes == {"cta", "seanceselect"} and not disabled and acilis is None:
+    if classes == {"cta", "seanceselect"} and not disabled and "data-acilis" not in at:
         return Status.ON_SALE, None
     return Status.UNKNOWN, None
+
+
+def _row_div_end(html: str, pos: int, limit: int) -> int:
+    """End of the row's own <div> container (depth counting); `limit` if unbalanced."""
+    depth = 1
+    for m in _DIV_TOKEN_RE.finditer(html, pos, limit):
+        depth += -1 if m.group(0).startswith("</") else 1
+        if depth == 0:
+            return m.start()
+    return limit
 
 
 def _row_blocks(html: str) -> list[tuple[str, str]]:
@@ -145,7 +157,10 @@ def _row_blocks(html: str) -> list[tuple[str, str]]:
     for i, (m, sid) in enumerate(marks):
         limit = marks[i + 1][0].start() if i + 1 < len(marks) else len(html)
         sec = _SECTION_END_RE.search(html, m.end(), limit)
-        blocks.append((sid, html[m.end(): sec.start() if sec else limit]))
+        if sec:
+            limit = sec.start()
+        limit = _row_div_end(html, m.end(), limit)
+        blocks.append((sid, html[m.end():limit]))
     return blocks
 
 
@@ -185,7 +200,7 @@ def _min_price(events: list[dict]) -> float | None:
                 val = float(raw.strip().replace(",", ".")) if isinstance(raw, str) else float(raw)
             except (TypeError, ValueError):
                 continue
-            if val == val and val >= 0:
+            if math.isfinite(val) and val >= 0:
                 prices.append(val)
     return min(prices) if prices else None
 
