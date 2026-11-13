@@ -93,12 +93,22 @@ def test_visible_time_matches_jsonld_elsewhere():
                    (11, 19, 20, 0), (11, 20, 20, 0), (11, 21, 20, 0)]
 
 
-def test_on_sale_PROVISIONAL():
-    # Synthetic fixture (button without off/disabled); replace with a real capture later.
+def test_on_sale_synthetic():
+    # Synthetic fixture: button without off/disabled/data-acilis.
     p = play("play_on_sale.html", HIC)
     by_id = {s.id: s for s in p.sessions}
     assert by_id["18699594"].status == Status.ON_SALE
     assert by_id["18699594"].opens_at is None
+    assert by_id["18699593"].status == Status.SOLD_OUT
+
+
+def test_on_sale_real():
+    p = play("play_on_sale_real.html", HIC)
+    by_id = {s.id: s for s in p.sessions}
+    s = by_id["18699594"]
+    assert s.status == Status.ON_SALE
+    assert s.opens_at is None
+    assert s.start == datetime(2026, 11, 25, 20, 0, tzinfo=ISTANBUL)
     assert by_id["18699593"].status == Status.SOLD_OUT
 
 

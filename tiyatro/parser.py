@@ -131,7 +131,7 @@ def _button_state(block: str) -> tuple[Status, datetime | None]:
         except ValueError:
             return Status.UNKNOWN, None
         return Status.UPCOMING, opens.astimezone(ISTANBUL)
-    # PROVISIONAL: never observed on a real page yet.
+    # Confirmed on a real on-sale page (plain cta seanceSelect button).
     if classes == {"cta", "seanceselect"} and not disabled and "data-acilis" not in at:
         return Status.ON_SALE, None
     return Status.UNKNOWN, None
