@@ -26,6 +26,9 @@ class FakeGH:
         self.before_put = None  # hook(path) run before a PUT is evaluated
         self.always_conflict = False
         self.status_override = None
+        self.runs = []
+        self.runs_status = 200
+        self.runs_query = None
 
     def _sha(self):
         self.n += 1
@@ -83,6 +86,9 @@ class FakeGH:
                     return 409, hdr, b"{}"
                 del self.files[fpath]
                 return 200, hdr, b"{}"
+        if path.endswith("/actions/runs") and method == "GET":
+            self.runs_query = u.query
+            return self.runs_status, hdr, json.dumps({"workflow_runs": self.runs}).encode()
         if path.startswith("/repos/") and path.count("/") == 3 and method == "GET":
             return 200, hdr, json.dumps({"default_branch": "main"}).encode()
         return 404, hdr, b"{}"
@@ -194,6 +200,37 @@ def test_update_json_retries_exhausted():
     assert len(n) == 3
 
 
+def test_update_json_non_dict_raises_before_writing():
+    s, gh = mk()
+    s.create_file("s.json", {"a": 1})
+    writes = len([c for c in gh.calls if c[0] == "PUT"])
+    for bad in (None, [1], "x"):
+        with pytest.raises(StoreError):
+            s.update_json("s.json", lambda d, bad=bad: bad)
+    assert len([c for c in gh.calls if c[0] == "PUT"]) == writes
+    assert s.get("s.json")[0] == {"a": 1}
+
+
+def test_runs_lists_workflow_runs():
+    s, gh = mk()
+    gh.runs = [{"id": 1, "created_at": "2026-11-13T09:00:00Z"}]
+    assert s.runs() == gh.runs
+    assert gh.runs_query == "per_page=10"
+    s.runs(per_page=3)
+    assert gh.runs_query == "per_page=3"
+
+
+def test_runs_errors_raise_store_error():
+    s, gh = mk()
+    gh.runs_status = 500
+    with pytest.raises(StoreError):
+        s.runs()
+    gh.runs_status = 200
+    gh.runs = "garbage"
+    with pytest.raises(StoreError):
+        s.runs()
+
+
 def test_server_now_from_date_header():
     s, _ = mk()
     s.get("x.json")
@@ -286,6 +323,11 @@ def test_fetch_ok_and_headers():
 def test_fetch_decodes_with_replacement():
     r = fetch("u", transport=lambda u, h, t: (200, b"ok \xff"))
     assert r.html.startswith("ok ")
+
+
+def test_fetch_strips_utf8_bom():
+    r = fetch("u", transport=lambda u, h, t: (200, "﻿<html>ş".encode("utf-8")))
+    assert r.html == "<html>ş"
 
 
 @pytest.mark.parametrize("status", [404, 500])

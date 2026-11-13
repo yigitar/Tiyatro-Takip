@@ -1,7 +1,7 @@
 """Home-PC heartbeat record and liveness / divergence judgements."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from tiyatro.timeutil import parse_iso
 
@@ -21,6 +21,19 @@ def read_heartbeat(store) -> dict | None:
     return data
 
 
+def _ts(value) -> datetime | None:
+    """Tolerant timestamp: None/garbled -> None; naive -> assumed UTC."""
+    if not isinstance(value, str):
+        return None
+    try:
+        d = parse_iso(value)
+    except ValueError:
+        return None
+    if d is not None and d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)
+    return d
+
+
 def _state_statuses(state: dict) -> dict[str, str]:
     out: dict[str, str] = {}
     for play in (state.get("plays") or {}).values():
@@ -30,11 +43,12 @@ def _state_statuses(state: dict) -> dict[str, str]:
 
 
 def pc_status(hb: dict | None, state: dict, now: datetime, max_age_s: int = 600) -> str:
-    ts = parse_iso(hb.get("ts")) if hb else None
+    ts = _ts(hb.get("ts")) if isinstance(hb, dict) else None
     if ts is None or (now - ts).total_seconds() > max_age_s:
         return "inactive"
     theirs = _state_statuses(state)
-    for sid, status in (hb.get("observed") or {}).items():
+    observed = hb.get("observed")
+    for sid, status in (observed.items() if isinstance(observed, dict) else ()):
         if sid in theirs and "gone" not in (status, theirs[sid]) and status != theirs[sid]:
             return "diverged"
     return "active"
@@ -43,13 +57,17 @@ def pc_status(hb: dict | None, state: dict, now: datetime, max_age_s: int = 600)
 def github_run_status(runs: list[dict], now: datetime, grid_s: int = 300) -> dict:
     if not runs:
         return {"last_run": None, "lag_s": 0, "gap_s": 0, "healthy": False}
-    latest = parse_iso(runs[0]["created_at"])
+    latest = _ts(runs[0].get("created_at")) if isinstance(runs[0], dict) else None
+    if latest is None:
+        return {"last_run": None, "lag_s": 0, "gap_s": 0, "healthy": False}
     gap_s = int((now - latest).total_seconds())
     lag_s = 0
-    if len(runs) > 1:
-        prev = parse_iso(runs[1]["created_at"])
+    prev = (_ts(runs[1].get("created_at"))
+            if len(runs) > 1 and isinstance(runs[1], dict) else None)
+    if prev is not None:
         lag_s = max(0, int((latest - prev).total_seconds()) - grid_s)
     both_failed = (len(runs) > 1
-                   and all(r.get("conclusion") == "failure" for r in runs[:2]))
+                   and all(isinstance(r, dict) and r.get("conclusion") == "failure"
+                           for r in runs[:2]))
     return {"last_run": latest.isoformat(), "lag_s": lag_s, "gap_s": gap_s,
             "healthy": gap_s <= 900 and not both_failed}

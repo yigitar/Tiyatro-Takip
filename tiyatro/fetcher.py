@@ -45,5 +45,5 @@ def fetch(url: str, transport: Callable | None = None) -> FetchResult:
         raise FetchError(f"fetch failed ({failure}): {url}")
     if status >= 400:
         raise FetchError(f"HTTP {status}: {url}")
-    return FetchResult(body.decode("utf-8", errors="replace"), status,
+    return FetchResult(body.decode("utf-8-sig", errors="replace"), status,
                        int((time.monotonic() - start) * 1000))

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import copy
 from datetime import datetime, time, timedelta
+from typing import Iterable
 
 from tiyatro.models import ISTANBUL, Config, Event, Play, PlayWatch, Session, Status
 from tiyatro.rules import matching_targets
@@ -133,8 +134,18 @@ def _session_payload(entry: dict, session: Session) -> dict:
     }
 
 
-def diff(old: dict, plays: list[Play], config: Config, now: datetime) -> tuple[dict, list[Event]]:
+def diff(old: dict, plays: list[Play], config: Config, now: datetime, *,
+         complete: bool = True,
+         unscanned: Iterable[str] = ()) -> tuple[dict, list[Event]]:
+    """Fold a scan into state and return (new_state, events).
+
+    ``complete=False``: ``plays`` is only a subset (e.g. a burst scan of a few plays),
+    so stored plays absent from it are not counted as missing.
+    ``unscanned``: slugs that are listed on the venue page but whose own page could not
+    be read this scan; their stored record is left untouched and never counted missing.
+    """
     state = _normalize(old)
+    skip_missing = set(unscanned)
     now_iso = now.isoformat()
     same_scan = state["meta"]["last_scan"] == now_iso
     emitted = state["emitted"]
@@ -155,7 +166,7 @@ def diff(old: dict, plays: list[Play], config: Config, now: datetime) -> tuple[d
                  {"title": play.title, "url": play.url})
 
     for slug, entry in state["plays"].items():
-        if slug in seen or same_scan:
+        if slug in seen or same_scan or not complete or slug in skip_missing:
             continue
         entry["missing_count"] = entry.get("missing_count", 0) + 1
         if entry["missing_count"] >= REMOVE_AFTER_MISSES and not entry.get("removed"):

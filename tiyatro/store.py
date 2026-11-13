@@ -166,10 +166,25 @@ class Store:
         for _ in range(retries):
             data, sha = self.get(path)
             new = mutate(data if data is not None else {})
+            if not isinstance(new, dict):
+                raise StoreError(f"update_json {path}: mutate returned "
+                                 f"{type(new).__name__}, not dict")
             ok = self.create_file(path, new) if sha is None else self.put(path, new, sha)
             if ok:
                 return new
         raise StoreError(f"update_json {path}: too many conflicts")
+
+    def runs(self, per_page: int = 10) -> list[dict]:
+        """Latest workflow runs of the repository (newest first)."""
+        status, data = self._request(
+            "GET", f"/repos/{self.repo}/actions/runs?per_page={int(per_page)}")
+        if status != 200:
+            self._fail("runs", status, data)
+        info = self._json(data)
+        runs = info.get("workflow_runs") if isinstance(info, dict) else None
+        if not isinstance(runs, list):
+            raise StoreError("runs: unreadable response")
+        return runs
 
     def ensure_branch(self) -> None:
         ref = f"/repos/{self.repo}/git/ref/heads/{urllib.parse.quote(self.branch, safe='')}"

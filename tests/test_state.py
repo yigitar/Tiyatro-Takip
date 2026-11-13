@@ -364,3 +364,28 @@ def test_watch_added_while_already_on_sale_alerts_once():  # I1
     assert [e.key for e in ev] == ["ON_SALE:s1:1"]
     st, ev = diff(st, p, WATCH, later + timedelta(minutes=5))
     assert ev == []
+
+
+def test_diff_incomplete_scan_does_not_count_missing():
+    st, _ = diff(empty_state(), [play("a"), play("b")], NOWATCH, T0)
+    for i in range(1, 4):
+        st, ev = diff(st, [play("a")], NOWATCH, T0 + timedelta(minutes=5 * i),
+                      complete=False)
+        assert ev == []
+    assert st["plays"]["b"]["missing_count"] == 0
+    assert st["plays"]["b"]["removed"] is False
+    # default (complete=True) behaviour unchanged
+    st, _ = diff(st, [play("a")], NOWATCH, T0 + timedelta(minutes=30))
+    st, ev = diff(st, [play("a")], NOWATCH, T0 + timedelta(minutes=35))
+    assert kinds(ev) == ["REMOVED_PLAY"]
+
+
+def test_diff_unscanned_slugs_are_not_missing():
+    st, _ = diff(empty_state(), [play("a"), play("b"), play("c")], NOWATCH, T0)
+    before = copy.deepcopy(st["plays"]["b"])
+    for i in range(1, 4):
+        st, ev = diff(st, [play("a")], NOWATCH, T0 + timedelta(minutes=5 * i),
+                      unscanned={"b"})
+    assert kinds(ev) == []
+    assert st["plays"]["b"] == before  # untouched
+    assert st["plays"]["c"]["removed"] is True

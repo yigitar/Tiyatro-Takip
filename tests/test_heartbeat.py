@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from tests.conftest import FakeStore
 from tiyatro.heartbeat import github_run_status, pc_status, read_heartbeat, write_heartbeat
 
@@ -77,3 +79,36 @@ def test_run_status_lag_math_and_healthy():
 def test_run_status_two_failures_unhealthy():
     assert github_run_status([run(2, "failure"), run(7, "failure")], NOW)["healthy"] is False
     assert github_run_status([run(2, "failure"), run(7)], NOW)["healthy"] is True
+
+
+def test_pc_status_naive_timestamp_assumed_utc():
+    naive = (NOW - timedelta(seconds=60)).replace(tzinfo=None).isoformat()
+    assert pc_status({"ts": naive, "observed": {}}, state(), NOW) == "active"
+    old = (NOW - timedelta(minutes=20)).replace(tzinfo=None).isoformat()
+    assert pc_status({"ts": old, "observed": {}}, state(), NOW) == "inactive"
+
+
+@pytest.mark.parametrize("ts", [None, "", "garbled", 12345, [1]])
+def test_pc_status_bad_timestamp_inactive(ts):
+    assert pc_status({"ts": ts, "observed": {}}, state(), NOW) == "inactive"
+    assert pc_status({"observed": {}}, state(), NOW) == "inactive"
+
+
+def test_pc_status_garbled_observed_does_not_raise():
+    h = hb(60, None)
+    assert pc_status(h, state(s1="on_sale"), NOW) == "active"
+    assert pc_status({**hb(60, {}), "observed": "x"}, state(), NOW) == "active"
+
+
+def test_run_status_naive_and_bad_timestamps():
+    naive = (NOW - timedelta(minutes=2)).replace(tzinfo=None).isoformat()
+    r = github_run_status([{"created_at": naive, "conclusion": "success"}], NOW)
+    assert r["healthy"] is True and r["gap_s"] == 120
+    for bad in (None, "garbled", 5):
+        r = github_run_status([{"created_at": bad}], NOW)
+        assert r["healthy"] is False
+    r = github_run_status([{}], NOW)
+    assert r["healthy"] is False
+    # a garbled previous run must not break the lag computation
+    r = github_run_status([run(2), {"created_at": "bad"}], NOW)
+    assert r["healthy"] is True and r["lag_s"] == 0
