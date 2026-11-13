@@ -50,9 +50,28 @@ def _iso(value: datetime | None) -> str | None:
 _dt = parse_iso
 
 
+def valid_session_record(rec) -> bool:
+    """A stored session needs a known status and a parseable start."""
+    if not isinstance(rec, dict) or rec.get("status") not in _STATUS_VALUES:
+        return False
+    try:
+        start = _dt(rec.get("start"))
+    except (TypeError, ValueError):
+        return False
+    return start is not None and start.tzinfo is not None
+
+
+_STATUS_VALUES = {s.value for s in Status}
+
+
 def _normalize(old: dict) -> dict:
     state = copy.deepcopy(old) if old else empty_state()
     state.setdefault("plays", {})
+    for entry in state["plays"].values():
+        sessions = entry.get("sessions") if isinstance(entry, dict) else None
+        if isinstance(sessions, dict):
+            for sid in [k for k, r in sessions.items() if not valid_session_record(r)]:
+                del sessions[sid]
     state.setdefault("emitted", {})
     meta = state.setdefault("meta", {})
     meta.setdefault("last_scan", None)
@@ -108,8 +127,10 @@ def _merge_play(state: dict, play: Play, config: Config, now_iso: str) -> bool:
             "last_on_sale_notified": None, "on_sale_count": 0, "on_sale_pending": False,
             "first_seen": now_iso,
         }
-        if prev is None or prev_status != s.status.value or "status_since" not in rec:
+        if prev is None or prev_status != s.status.value:
             rec["status_since"] = now_iso
+        elif "status_since" not in rec:
+            rec["status_since"] = None  # pre-field record: change time unknown
         rec.update(status=s.status.value, opens_at=_iso(s.opens_at), start=_iso(s.start),
                    url=s.url, gone=False)
         if s.status in (Status.ON_SALE, Status.SOLD_OUT):

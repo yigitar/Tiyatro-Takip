@@ -402,3 +402,27 @@ def test_status_since_tracks_status_changes():
     st, _ = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, t2)
     rec = st["plays"]["p"]["sessions"]["s1"]
     assert rec["status_since"] == t2.isoformat() and rec["first_seen"] == T0.isoformat()
+
+
+
+def test_dict_shaped_garbage_session_is_dropped():
+    st, _ = diff(empty_state(), [play(sessions=[sess()])], WATCH, T0)
+    st["plays"]["p"]["sessions"]["junk"] = {}
+    st["plays"]["p"]["sessions"]["bad"] = {"status": "nope", "start": "x"}
+    st["plays"]["p"]["sessions"]["s9"] = {"status": "upcoming"}
+    st2, _ = diff(st, [play(sessions=[sess()])], WATCH, T0 + timedelta(minutes=5))
+    assert set(st2["plays"]["p"]["sessions"]) == {"s1"}
+    st2, _ = diff(st, [], WATCH, T0 + timedelta(minutes=5))
+    assert "junk" not in st2["plays"]["p"]["sessions"]
+    assert next_opening(st2, WATCH, T0) == OPENS
+    cleanup(st2, WATCH, T0)
+
+
+def test_old_schema_record_gets_status_since_none():
+    st, _ = diff(empty_state(), [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, T0)
+    rec = st["plays"]["p"]["sessions"]["s1"]
+    assert rec["status_since"] == T0.isoformat()  # first seen ON_SALE: now
+    del rec["status_since"]  # simulate a record written before the field existed
+    st, _ = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH,
+                 T0 + timedelta(minutes=5))
+    assert st["plays"]["p"]["sessions"]["s1"]["status_since"] is None
