@@ -1,0 +1,219 @@
+from __future__ import annotations
+
+import copy
+import hashlib
+from datetime import datetime, time, timedelta
+
+from tiyatro.models import ISTANBUL, Config, Event, Play, PlayWatch, Session, Status
+from tiyatro.rules import matching_targets
+from tiyatro.tags import apply_overrides, derive_tags
+
+ON_SALE_GAP = timedelta(minutes=30)
+OPENING_SOON_LEAD = timedelta(minutes=10)
+DAY_BEFORE_HOUR = time(10, 0)
+REMOVE_AFTER_MISSES = 2
+EMITTED_TTL = timedelta(days=60)
+NEVER_OPENED_TTL = timedelta(days=180)
+
+
+def empty_state() -> dict:
+    return {
+        "plays": {},
+        "meta": {"last_scan": None, "fetch_fail_streak": 0},
+        "emitted": {},
+    }
+
+
+def _iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def _dt(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value is not None else None
+
+
+def _normalize(old: dict) -> dict:
+    state = copy.deepcopy(old) if old else empty_state()
+    state.setdefault("plays", {})
+    state.setdefault("emitted", {})
+    meta = state.setdefault("meta", {})
+    meta.setdefault("last_scan", None)
+    meta.setdefault("fetch_fail_streak", 0)
+    return state
+
+
+def _stored_session(sid: str, entry: dict) -> Session:
+    return Session(
+        id=sid,
+        start=_dt(entry["start"]),
+        end=None,
+        status=Status(entry["status"]),
+        opens_at=_dt(entry.get("opens_at")),
+        url=entry.get("url", ""),
+        venue="",
+    )
+
+
+def _watch(config: Config, slug: str) -> PlayWatch | None:
+    watch = config.plays.get(slug)
+    return watch if watch is not None and watch.active else None
+
+
+def _day_before_start(opens_at: datetime) -> datetime:
+    day = opens_at.astimezone(ISTANBUL).date() - timedelta(days=1)
+    return datetime.combine(day, DAY_BEFORE_HOUR, tzinfo=ISTANBUL)
+
+
+def _merge_play(state: dict, play: Play, config: Config, now_iso: str) -> bool:
+    """Fold a scanned play into state. Returns True if the slug is new."""
+    tags = sorted(apply_overrides(derive_tags(play), config.plays.get(play.slug)))
+    entry = state["plays"].get(play.slug)
+    is_new = entry is None
+    if is_new:
+        entry = {
+            "title": play.title, "first_seen": now_iso, "last_seen": now_iso,
+            "missing_count": 0, "ever_opened": False, "archived": False,
+            "removed": False, "tags": [], "sessions": {},
+        }
+        state["plays"][play.slug] = entry
+    entry.update(title=play.title, url=play.url, last_seen=now_iso, missing_count=0,
+                 removed=False, tags=tags)
+
+    sessions = entry.setdefault("sessions", {})
+    seen = set()
+    for s in play.sessions:
+        seen.add(s.id)
+        prev = sessions.get(s.id)
+        prev_status = prev["status"] if prev is not None else None
+        rec = prev if prev is not None else {
+            "last_on_sale_notified": None, "on_sale_count": 0, "on_sale_pending": False,
+        }
+        rec.update(status=s.status.value, opens_at=_iso(s.opens_at), start=_iso(s.start),
+                   url=s.url, gone=False)
+        if s.status in (Status.ON_SALE, Status.SOLD_OUT):
+            entry["ever_opened"] = True
+        if s.status is Status.ON_SALE:
+            if prev_status != Status.ON_SALE.value:
+                rec["on_sale_pending"] = True
+        else:
+            rec["on_sale_pending"] = False
+        sessions[s.id] = rec
+    for sid, rec in sessions.items():
+        if sid not in seen:
+            rec["gone"] = True
+            rec["on_sale_pending"] = False
+    return is_new
+
+
+def _session_payload(entry: dict, session: Session) -> dict:
+    return {
+        "title": entry["title"],
+        "play_url": entry.get("url"),
+        "url": session.url,
+        "start": _iso(session.start),
+        "opens_at": _iso(session.opens_at),
+        "status": session.status.value,
+    }
+
+
+def diff(old: dict, plays: list[Play], config: Config, now: datetime) -> tuple[dict, list[Event]]:
+    state = _normalize(old)
+    now_iso = now.isoformat()
+    same_scan = state["meta"]["last_scan"] == now_iso
+    emitted = state["emitted"]
+    events: list[Event] = []
+
+    def emit(kind: str, key: str, slug: str, sid: str | None,
+             target_ids: list[str], payload: dict) -> None:
+        if key in emitted:
+            return
+        emitted[key] = now_iso
+        events.append(Event(kind, key, slug, sid, target_ids, payload))
+
+    seen = set()
+    for play in plays:
+        seen.add(play.slug)
+        if _merge_play(state, play, config, now_iso):
+            emit("NEW_PLAY", f"NEW_PLAY:{play.slug}", play.slug, None, [],
+                 {"title": play.title, "url": play.url})
+
+    for slug, entry in state["plays"].items():
+        if slug in seen or same_scan:
+            continue
+        entry["missing_count"] = entry.get("missing_count", 0) + 1
+        if entry["missing_count"] >= REMOVE_AFTER_MISSES and not entry.get("removed"):
+            entry["removed"] = True
+            emit("REMOVED_PLAY", f"REMOVED_PLAY:{slug}", slug, None, [],
+                 {"title": entry["title"], "url": entry.get("url")})
+
+    for slug, entry in state["plays"].items():
+        watch = _watch(config, slug)
+        if watch is None or entry.get("removed"):
+            continue
+        for sid, rec in entry["sessions"].items():
+            if rec.get("gone"):
+                continue
+            session = _stored_session(sid, rec)
+            payload = _session_payload(entry, session)
+            if session.status is Status.UNKNOWN:
+                digest = hashlib.sha1(session.status.value.encode()).hexdigest()[:8]
+                emit("UNKNOWN_STATUS", f"UNKNOWN_STATUS:{sid}:{digest}", slug, sid, [], payload)
+                continue
+            targets = matching_targets(watch, session)
+            if not targets:
+                continue
+            ids = [t.id for t in targets]
+            if session.status is Status.ON_SALE and rec.get("on_sale_pending"):
+                last = _dt(rec.get("last_on_sale_notified"))
+                if last is None or now - last >= ON_SALE_GAP:
+                    n = rec.get("on_sale_count", 0) + 1
+                    rec.update(on_sale_count=n, last_on_sale_notified=now_iso,
+                               on_sale_pending=False)
+                    emit("ON_SALE", f"ON_SALE:{sid}:{n}", slug, sid, ids, payload)
+            elif session.status is Status.UPCOMING and session.opens_at is not None:
+                soon_from = session.opens_at - OPENING_SOON_LEAD
+                if soon_from <= now < session.opens_at:
+                    emit("OPENING_SOON", f"OPENING_SOON:{sid}", slug, sid, ids, payload)
+                elif _day_before_start(session.opens_at) <= now < soon_from:
+                    emit("DAY_BEFORE", f"DAY_BEFORE:{sid}", slug, sid, ids, payload)
+
+    state["meta"]["last_scan"] = now_iso
+    return state, events
+
+
+def cleanup(state: dict, config: Config, now: datetime) -> dict:
+    out = _normalize(state)
+    now_iso = now.isoformat()
+    out["emitted"] = {k: v for k, v in out["emitted"].items()
+                      if now - _dt(v) <= EMITTED_TTL}
+    for slug in list(out["plays"]):
+        entry = out["plays"][slug]
+        starts = [_dt(rec["start"]) for rec in entry.get("sessions", {}).values()]
+        watched = _watch(config, slug) is not None
+        too_old = now - _dt(entry["first_seen"]) > NEVER_OPENED_TTL
+        if not entry.get("ever_opened") and too_old and not watched:
+            del out["plays"][slug]
+            # A still-listed play would otherwise be re-announced as NEW_PLAY next scan.
+            out["emitted"][f"NEW_PLAY:{slug}"] = now_iso
+            continue
+        entry["archived"] = bool(starts) and all(s < now for s in starts)
+    return out
+
+
+def next_opening(state: dict, config: Config, now: datetime) -> datetime | None:
+    best: datetime | None = None
+    for slug, entry in state.get("plays", {}).items():
+        watch = _watch(config, slug)
+        if watch is None or entry.get("removed"):
+            continue
+        for sid, rec in entry.get("sessions", {}).items():
+            if rec.get("gone") or rec["status"] != Status.UPCOMING.value:
+                continue
+            session = _stored_session(sid, rec)
+            if session.opens_at is None or session.opens_at <= now:
+                continue
+            if not matching_targets(watch, session):
+                continue
+            if best is None or session.opens_at < best:
+                best = session.opens_at
+    return best
