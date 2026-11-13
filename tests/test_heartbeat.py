@@ -112,3 +112,40 @@ def test_run_status_naive_and_bad_timestamps():
     # a garbled previous run must not break the lag computation
     r = github_run_status([run(2), {"created_at": "bad"}], NOW)
     assert r["healthy"] is True and r["lag_s"] == 0
+
+
+# ---- fix round 2: lateness measured from the previous run's end -------------------
+
+def done_run(start_min, end_min, conclusion="success"):
+    return {"created_at": (NOW - timedelta(minutes=start_min)).isoformat(),
+            "updated_at": (NOW - timedelta(minutes=end_min)).isoformat(),
+            "status": "completed", "conclusion": conclusion}
+
+
+def test_long_burst_run_that_ended_recently_is_healthy():
+    # previous run started 16 min ago, ran a 13-min burst, ended 3 min ago
+    r = github_run_status([done_run(16, 3), done_run(21, 20)], NOW)
+    assert r["gap_s"] == 180 and r["healthy"] is True
+    assert r["lag_s"] == 0  # started 4 min after the previous run ended (< 5 min grid)
+
+
+def test_previous_run_ended_40_min_ago_is_unhealthy():
+    r = github_run_status([done_run(41, 40), done_run(46, 45)], NOW)
+    assert r["gap_s"] == 2400 and r["healthy"] is False
+
+
+def test_gap_threshold_is_600_s():
+    assert github_run_status([done_run(11, 10)], NOW)["healthy"] is True
+    assert github_run_status([done_run(12, 11)], NOW)["healthy"] is False
+
+
+def test_lag_is_start_vs_previous_end_plus_grid():
+    # previous ended 20 min ago, latest started 12 min ago: 8 min later, 3 min late
+    r = github_run_status([done_run(12, 2), done_run(30, 20)], NOW)
+    assert r["lag_s"] == 180
+
+
+def test_updated_at_missing_falls_back_to_created_at():
+    r = github_run_status([{"created_at": (NOW - timedelta(minutes=8)).isoformat(),
+                            "status": "completed", "conclusion": "success"}], NOW)
+    assert r["gap_s"] == 480 and r["healthy"] is True
