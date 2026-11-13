@@ -82,6 +82,9 @@ EVENT_KINDS = (
     "PC_DIVERGED",
     "GH_LAGGING",
     "FETCH_FAILING",
+    "PLAY_FAILING",
+    "NEW_SESSIONS",
+    "DELIVERY_DROPPED",
 )
 
 

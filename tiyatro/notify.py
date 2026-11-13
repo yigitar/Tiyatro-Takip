@@ -37,6 +37,9 @@ KIND_TEXT = {
     "PC_DIVERGED": "🖥️ PC ile GitHub uyuşmuyor",
     "GH_LAGGING": "\U0001f422 GitHub taraması gecikiyor",
     "FETCH_FAILING": "\U0001f6ab Biletinial taraması başarısız",
+    "PLAY_FAILING": "\U0001f9e9 Oyun sayfası okunamıyor",
+    "NEW_SESSIONS": "\U0001f4c5 Yeni seanslar/dönem",
+    "DELIVERY_DROPPED": "⚠️ bildirim iletilemedi",
 }
 DAY_BEFORE_TEXT = "\U0001f514 Satış açılış hatırlatması: "
 
@@ -66,7 +69,13 @@ def _kind_line(ev: Event) -> str:
         opens = _dt(ev.payload.get("opens_at"))
         when = f"{DAYS[opens.weekday()]}, {opens:%H:%M}" if opens else "?"
         return DAY_BEFORE_TEXT + html.escape(when)
+    if ev.kind == "DELIVERY_DROPPED":
+        count = ev.payload.get("count", "?")
+        return (f"⚠️ {_esc(count, 10)} bildirim iletilemedi: "
+                f"{_esc(ev.payload.get('summary', ''), DETAIL_MAX)}")
     text = KIND_TEXT.get(ev.kind, html.escape(ev.kind))
+    if ev.kind == "PLAY_FAILING":
+        text += f": {_esc(ev.payload.get('title') or ev.play_slug, TITLE_MAX)}"
     if ev.kind == "OPENING_SOON":
         opens = _dt(ev.payload.get("opens_at"))
         if opens:
@@ -108,6 +117,9 @@ def _entry(ev: Event, plays: dict[str, Play], config: Config, ids: list[str]) ->
     detail = ev.payload.get("detail")
     if detail:
         lines.append(_esc(detail, DETAIL_MAX))
+    extra = ev.payload.get("lines")
+    if isinstance(extra, list):
+        lines.extend(_esc(x, TITLE_MAX + 100) for x in extra)
     return "\n".join(lines)
 
 
