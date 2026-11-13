@@ -426,3 +426,41 @@ def test_old_schema_record_gets_status_since_none():
     st, _ = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH,
                  T0 + timedelta(minutes=5))
     assert st["plays"]["p"]["sessions"]["s1"]["status_since"] is None
+
+
+
+def test_play_and_session_metadata_stored():
+    end = SAT_20 + timedelta(minutes=90)
+    s = Session("s1", SAT_20, end, Status.UPCOMING, OPENS, "https://example.test/s1", "Sahne")
+    p = Play("p", "Oyun", "https://example.test/p", "Dram", 90, 12, 150.0, [s])
+    st, _ = diff(empty_state(), [p], WATCH, T0)
+    entry = st["plays"]["p"]
+    assert (entry["genre"], entry["duration_min"], entry["age_limit"], entry["price_from"],
+            entry["url"]) == ("Dram", 90, 12, 150.0, "https://example.test/p")
+    rec = entry["sessions"]["s1"]
+    assert rec["url"] == "https://example.test/s1" and rec["end"] == end.isoformat()
+    # a later parse lacking the fields keeps the previous values
+    s2 = Session("s1", SAT_20, None, Status.UPCOMING, OPENS, "https://example.test/s1", "")
+    p2 = Play("p", "Oyun", "https://example.test/p", None, None, None, None, [s2])
+    st, ev = diff(st, [p2], WATCH, T0 + timedelta(minutes=5))
+    entry = st["plays"]["p"]
+    assert (entry["genre"], entry["duration_min"], entry["age_limit"],
+            entry["price_from"]) == ("Dram", 90, 12, 150.0)
+    assert entry["sessions"]["s1"]["end"] == end.isoformat()
+    assert ev == []
+    json.dumps(st)
+
+
+def test_old_schema_play_without_metadata_still_works():
+    st, _ = diff(empty_state(), [play(sessions=[sess()])], WATCH, T0)
+    entry = st["plays"]["p"]
+    for k in ("genre", "duration_min", "age_limit", "price_from", "url"):
+        entry.pop(k, None)
+    entry["sessions"]["s1"].pop("end", None)
+    entry["sessions"]["s1"].pop("url", None)
+    st, ev = diff(st, [play(sessions=[sess()])], WATCH, T0 + timedelta(minutes=5))
+    assert ev == []  # no mass re-alert
+    assert st["plays"]["p"]["genre"] == "Dram"
+    assert st["plays"]["p"]["sessions"]["s1"]["end"] is None
+    st2, ev = diff(st, [], WATCH, T0 + timedelta(minutes=10))
+    assert next_opening(st2, WATCH, T0) == OPENS

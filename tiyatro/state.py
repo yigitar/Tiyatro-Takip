@@ -113,8 +113,16 @@ def _merge_play(state: dict, play: Play, config: Config, now_iso: str) -> bool:
             "removed": False, "tags": [], "sessions": {},
         }
         state["plays"][play.slug] = entry
-    entry.update(title=play.title, url=play.url, last_seen=now_iso, missing_count=0,
+    entry.update(title=play.title, last_seen=now_iso, missing_count=0,
                  removed=False, tags=tags)
+    # Categorical metadata for the menu / PC app; a parse lacking a field keeps the old one.
+    for key, value in (("url", play.url), ("genre", play.genre),
+                       ("duration_min", play.duration_min), ("age_limit", play.age_limit),
+                       ("price_from", play.price_from)):
+        if value is not None and value != "":
+            entry[key] = value
+        else:
+            entry.setdefault(key, None)
 
     sessions = entry.setdefault("sessions", {})
     seen = set()
@@ -132,7 +140,11 @@ def _merge_play(state: dict, play: Play, config: Config, now_iso: str) -> bool:
         elif "status_since" not in rec:
             rec["status_since"] = None  # pre-field record: change time unknown
         rec.update(status=s.status.value, opens_at=_iso(s.opens_at), start=_iso(s.start),
-                   url=s.url, gone=False)
+                   url=s.url or rec.get("url", ""), gone=False)
+        if s.end is not None:
+            rec["end"] = _iso(s.end)
+        else:
+            rec.setdefault("end", None)
         if s.status in (Status.ON_SALE, Status.SOLD_OUT):
             entry["ever_opened"] = True
         if s.status is Status.ON_SALE:
