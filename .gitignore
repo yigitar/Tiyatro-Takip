@@ -1,0 +1,20 @@
+# yerel proje yonetimi / kisisel notlar (public repoya girmez)
+PROJECT.md
+ProjectMemory.md
+SessionHandoff.md
+Prompts.md
+Decisions.md
+Research.md
+Input/
+Working/
+Output/
+Archive/
+docs/
+.superpowers/
+__pycache__/
+.pytest_cache/
+.venv/
+node_modules/
+*.local
+pc/local/
+.wrangler/
