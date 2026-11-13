@@ -1,8 +1,322 @@
 {
- "emitted": {},
- "meta": {
-  "fetch_fail_streak": 0,
-  "last_scan": null
+ "emitted": {
+  "NEW_PLAY:evvel-zaman-icinde-kocaeli-sehir-tiyatrolari": "2026-11-13T10:31:26.691999+03:00",
+  "NEW_PLAY:hic-kimsenin-oykusu-kocaeli-buyuksehir-sehir-tiyatrolari": "2026-11-13T10:31:26.691999+03:00",
+  "NEW_PLAY:kusursuz-dunyaya-yolculuk-kocaeli-bb": "2026-11-13T10:31:26.691999+03:00",
+  "NEW_PLAY:on-ikinci-gece-kocaeli-bb": "2026-11-13T10:31:26.691999+03:00",
+  "NEW_PLAY:unutmak-kocaeli-bb": "2026-11-13T10:31:26.691999+03:00",
+  "NEW_PLAY:ve-ates-bizi-tuketiyor-kocaeli-bb": "2026-11-13T10:31:26.691999+03:00"
  },
- "plays": {}
+ "meta": {
+  "fetch_fail_since": null,
+  "fetch_fail_streak": 0,
+  "last_scan": "2026-11-13T10:31:26.691999+03:00"
+ },
+ "outbox": [],
+ "plays": {
+  "evvel-zaman-icinde-kocaeli-sehir-tiyatrolari": {
+   "archived": false,
+   "ever_opened": true,
+   "fail_since": null,
+   "fail_streak": 0,
+   "first_seen": "2026-11-13T10:31:26.691999+03:00",
+   "last_seen": "2026-11-13T10:31:26.691999+03:00",
+   "missing_count": 0,
+   "removed": false,
+   "sessions": {
+    "18699570": {
+     "first_seen": "2026-11-13T10:31:26.691999+03:00",
+     "gone": false,
+     "last_on_sale_notified": null,
+     "on_sale_count": 0,
+     "on_sale_pending": false,
+     "opens_at": null,
+     "start": "2026-11-15T14:00:00+03:00",
+     "status": "sold_out",
+     "status_since": "2026-11-13T10:31:26.691999+03:00",
+     "url": "https://biletinial.com/tr-tr/tiyatro/evvel-zaman-icinde-kocaeli-sehir-tiyatrolari/18699570"
+    },
+    "18699572": {
+     "first_seen": "2026-11-13T10:31:26.691999+03:00",
+     "gone": false,
+     "last_on_sale_notified": null,
+     "on_sale_count": 0,
+     "on_sale_pending": true,
+     "opens_at": null,
+     "start": "2026-11-18T11:00:00+03:00",
+     "status": "on_sale",
+     "status_since": "2026-11-13T10:31:26.691999+03:00",
+     "url": "https://biletinial.com/tr-tr/tiyatro/evvel-zaman-icinde-kocaeli-sehir-tiyatrolari/18699572"
+    },
+    "18699573": {
+     "first_seen": "2026-11-13T10:31:26.691999+03:00",
+     "gone": false,
+     "last_on_sale_notified": null,
+     "on_sale_count": 0,
+     "on_sale_pending": true,
+     "opens_at": null,
+     "start": "2026-11-18T14:00:00+03:00",
+     "status": "on_sale",
+     "status_since": "2026-11-13T10:31:26.691999+03:00",
+     "url": "https://biletinial.com/tr-tr/tiyatro/evvel-zaman-icinde-kocaeli-sehir-tiyatrolari/18699573"
+    },
+    "18699577": {
+     "first_seen": "2026-11-13T10:31:26.691999+03:00",
+     "gone": false,
+     "last_on_sale_notified": null,
+     "on_sale_count": 0,
+     "on_sale_pending": false,
+     "opens_at": null,
+     "start": "2026-11-22T14:00:00+03:00",
+     "status": "sold_out",
+     "status_since": "2026-11-13T10:31:26.691999+03:00",
+     "url": "https://biletinial.com/tr-tr/tiyatro/evvel-zaman-icinde-kocaeli-sehir-tiyatrolari/18699577"
+    }
+   },
+   "tags": [
+    "gündüz",
+    "çocuk"
+   ],
+   "title": "Evvel Zaman İçinde",
+   "url": "https://biletinial.com/tr-tr/tiyatro/evvel-zaman-icinde-kocaeli-sehir-tiyatrolari"
+  },
+  "hic-kimsenin-oykusu-kocaeli-buyuksehir-sehir-tiyatrolari": {
+   "archived": false,
+   "ever_opened": true,
+   "fail_since": null,
+   "fail_streak": 0,
+   "first_seen": "2026-11-13T10:31:26.691999+03:00",
+   "last_seen": "2026-11-13T10:31:26.691999+03:00",
+   "missing_count": 0,
+   "removed": false,
+   "sessions": {
+    "18699593": {
+     "first_seen": "2026-11-13T10:31:26.691999+03:00",
+     "gone": false,
+     "last_on_sale_notified": null,
+     "on_sale_count": 0,
+     "on_sale_pending": false,
+     "opens_at": null,
+     "start": "2026-11-18T20:00:00+03:00",
+     "status": "sold_out",
+     "status_since": "2026-11-13T10:31:26.691999+03:00",
+     "url": "https://biletinial.com/tr-tr/tiyatro/hic-kimsenin-oykusu-kocaeli-buyuksehir-sehir-tiyatrolari/18699593"
+    },
+    "18699594": {
+     "first_seen": "2026-11-13T10:31:26.691999+03:00",
+     "gone": false,
+     "last_on_sale_notified": null,
+     "on_sale_count": 0,
+     "on_sale_pending": true,
+     "opens_at": null,
+     "start": "2026-11-25T20:00:00+03:00",
+     "status": "on_sale",
+     "status_since": "2026-11-13T10:31:26.691999+03:00",
+     "url": "https://biletinial.com/tr-tr/tiyatro/hic-kimsenin-oykusu-kocaeli-buyuksehir-sehir-tiyatrolari/18699594"
+    }
+   },
+   "tags": [],
+   "title": "Hiç Kimsenin Öyküsü",
+   "url": "https://biletinial.com/tr-tr/tiyatro/hic-kimsenin-oykusu-kocaeli-buyuksehir-sehir-tiyatrolari"
+  },
+  "kusursuz-dunyaya-yolculuk-kocaeli-bb": {
+   "archived": false,
+   "ever_opened": true,
+   "fail_since": null,
+   "fail_streak": 0,
+   "first_seen": "2026-11-13T10:31:26.691999+03:00",
+   "last_seen": "2026-11-13T10:31:26.691999+03:00",
+   "missing_count": 0,
+   "removed": false,
+   "sessions": {
+    "18699591": {
+     "first_seen": "2026-11-13T10:31:26.691999+03:00",
+     "gone": false,
+     "last_on_sale_notified": null,
+     "on_sale_count": 0,
+     "on_sale_pending": false,
+     "opens_at": null,
+     "start": "2026-11-29T14:00:00+03:00",
+     "status": "sold_out",
+     "status_since": "2026-11-13T10:31:26.691999+03:00",
+     "url": "https://biletinial.com/tr-tr/tiyatro/kusursuz-dunyaya-yolculuk-kocaeli-bb/18699591"
+    }
+   },
+   "tags": [
+    "gündüz",
+    "çocuk"
+   ],
+   "title": "Kusursuz Dünyaya Yolculuk",
+   "url": "https://biletinial.com/tr-tr/tiyatro/kusursuz-dunyaya-yolculuk-kocaeli-bb"
+  },
+  "on-ikinci-gece-kocaeli-bb": {
+   "archived": false,
+   "ever_opened": true,
+   "fail_since": null,
+   "fail_streak": 0,
+   "first_seen": "2026-11-13T10:31:26.691999+03:00",
+   "last_seen": "2026-11-13T10:31:26.691999+03:00",
+   "missing_count": 0,
+   "removed": false,
+   "sessions": {
+    "18699567": {
+     "first_seen": "2026-11-13T10:31:26.691999+03:00",
+     "gone": false,
+     "last_on_sale_notified": null,
+     "on_sale_count": 0,
+     "on_sale_pending": false,
+     "opens_at": null,
+     "start": "2026-11-13T20:00:00+03:00",
+     "status": "sold_out",
+     "status_since": "2026-11-13T10:31:26.691999+03:00",
+     "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699567"
+    },
+    "18699568": {
+     "first_seen": "2026-11-13T10:31:26.691999+03:00",
+     "gone": false,
+     "last_on_sale_notified": null,
+     "on_sale_count": 0,
+     "on_sale_pending": false,
+     "opens_at": null,
+     "start": "2026-11-14T15:00:00+03:00",
+     "status": "sold_out",
+     "status_since": "2026-11-13T10:31:26.691999+03:00",
+     "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699568"
+    },
+    "18699569": {
+     "first_seen": "2026-11-13T10:31:26.691999+03:00",
+     "gone": false,
+     "last_on_sale_notified": null,
+     "on_sale_count": 0,
+     "on_sale_pending": false,
+     "opens_at": null,
+     "start": "2026-11-14T20:00:00+03:00",
+     "status": "sold_out",
+     "status_since": "2026-11-13T10:31:26.691999+03:00",
+     "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699569"
+    },
+    "18699574": {
+     "first_seen": "2026-11-13T10:31:26.691999+03:00",
+     "gone": false,
+     "last_on_sale_notified": null,
+     "on_sale_count": 0,
+     "on_sale_pending": false,
+     "opens_at": null,
+     "start": "2026-11-19T20:00:00+03:00",
+     "status": "sold_out",
+     "status_since": "2026-11-13T10:31:26.691999+03:00",
+     "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699574"
+    },
+    "18699575": {
+     "first_seen": "2026-11-13T10:31:26.691999+03:00",
+     "gone": false,
+     "last_on_sale_notified": null,
+     "on_sale_count": 0,
+     "on_sale_pending": false,
+     "opens_at": null,
+     "start": "2026-11-20T20:00:00+03:00",
+     "status": "sold_out",
+     "status_since": "2026-11-13T10:31:26.691999+03:00",
+     "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699575"
+    },
+    "18699576": {
+     "first_seen": "2026-11-13T10:31:26.691999+03:00",
+     "gone": false,
+     "last_on_sale_notified": null,
+     "on_sale_count": 0,
+     "on_sale_pending": false,
+     "opens_at": null,
+     "start": "2026-11-21T20:00:00+03:00",
+     "status": "sold_out",
+     "status_since": "2026-11-13T10:31:26.691999+03:00",
+     "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699576"
+    }
+   },
+   "tags": [
+    "gündüz"
+   ],
+   "title": "On İkinci Gece",
+   "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb"
+  },
+  "unutmak-kocaeli-bb": {
+   "archived": false,
+   "ever_opened": true,
+   "fail_since": null,
+   "fail_streak": 0,
+   "first_seen": "2026-11-13T10:31:26.691999+03:00",
+   "last_seen": "2026-11-13T10:31:26.691999+03:00",
+   "missing_count": 0,
+   "removed": false,
+   "sessions": {
+    "18699597": {
+     "first_seen": "2026-11-13T10:31:26.691999+03:00",
+     "gone": false,
+     "last_on_sale_notified": null,
+     "on_sale_count": 0,
+     "on_sale_pending": false,
+     "opens_at": null,
+     "start": "2026-11-17T20:00:00+03:00",
+     "status": "sold_out",
+     "status_since": "2026-11-13T10:31:26.691999+03:00",
+     "url": "https://biletinial.com/tr-tr/tiyatro/unutmak-kocaeli-bb/18699597"
+    }
+   },
+   "tags": [],
+   "title": "Unutmak",
+   "url": "https://biletinial.com/tr-tr/tiyatro/unutmak-kocaeli-bb"
+  },
+  "ve-ates-bizi-tuketiyor-kocaeli-bb": {
+   "archived": false,
+   "ever_opened": false,
+   "fail_since": null,
+   "fail_streak": 0,
+   "first_seen": "2026-11-13T10:31:26.691999+03:00",
+   "last_seen": "2026-11-13T10:31:26.691999+03:00",
+   "missing_count": 0,
+   "removed": false,
+   "sessions": {
+    "18699586": {
+     "first_seen": "2026-11-13T10:31:26.691999+03:00",
+     "gone": false,
+     "last_on_sale_notified": null,
+     "on_sale_count": 0,
+     "on_sale_pending": false,
+     "opens_at": "2026-11-15T10:00:00+03:00",
+     "start": "2026-11-27T20:00:00+03:00",
+     "status": "upcoming",
+     "status_since": "2026-11-13T10:31:26.691999+03:00",
+     "url": "https://biletinial.com/tr-tr/tiyatro/ve-ates-bizi-tuketiyor-kocaeli-bb/18699586"
+    },
+    "18699587": {
+     "first_seen": "2026-11-13T10:31:26.691999+03:00",
+     "gone": false,
+     "last_on_sale_notified": null,
+     "on_sale_count": 0,
+     "on_sale_pending": false,
+     "opens_at": "2026-11-16T10:00:00+03:00",
+     "start": "2026-11-28T15:00:00+03:00",
+     "status": "upcoming",
+     "status_since": "2026-11-13T10:31:26.691999+03:00",
+     "url": "https://biletinial.com/tr-tr/tiyatro/ve-ates-bizi-tuketiyor-kocaeli-bb/18699587"
+    },
+    "18699588": {
+     "first_seen": "2026-11-13T10:31:26.691999+03:00",
+     "gone": false,
+     "last_on_sale_notified": null,
+     "on_sale_count": 0,
+     "on_sale_pending": false,
+     "opens_at": "2026-11-16T10:00:00+03:00",
+     "start": "2026-11-28T20:00:00+03:00",
+     "status": "upcoming",
+     "status_since": "2026-11-13T10:31:26.691999+03:00",
+     "url": "https://biletinial.com/tr-tr/tiyatro/ve-ates-bizi-tuketiyor-kocaeli-bb/18699588"
+    }
+   },
+   "tags": [
+    "gündüz"
+   ],
+   "title": "Ve Ateş Bizi Tüketiyor",
+   "url": "https://biletinial.com/tr-tr/tiyatro/ve-ates-bizi-tuketiyor-kocaeli-bb"
+  }
+ }
 }
