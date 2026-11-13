@@ -34,6 +34,7 @@ KIND_TEXT = {
     "REMOVED_PLAY": "❌ Listeden kalktı",
     "UNKNOWN_STATUS": "⚠️ Bilinmeyen durum — sayfayı kontrol et",
     "PC_INACTIVE": "\U0001f5a5️ PC uygulaması aktif değil",
+    "PC_DIVERGED": "🖥️ PC ile GitHub uyuşmuyor",
     "GH_LAGGING": "\U0001f422 GitHub taraması gecikiyor",
     "FETCH_FAILING": "\U0001f6ab Biletinial taraması başarısız",
 }

@@ -79,6 +79,7 @@ EVENT_KINDS = (
     "ON_SALE",
     "UNKNOWN_STATUS",
     "PC_INACTIVE",
+    "PC_DIVERGED",
     "GH_LAGGING",
     "FETCH_FAILING",
 )
