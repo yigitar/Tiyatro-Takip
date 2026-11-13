@@ -1,0 +1,9 @@
+name = "tiyatro-takip-bot"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+GITHUB_REPO = "yigitar/Tiyatro-Takip"
+
+# Secrets (wrangler secret put): TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
+# TIYATRO_GH_TOKEN, WEBHOOK_SECRET
