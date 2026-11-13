@@ -389,3 +389,16 @@ def test_diff_unscanned_slugs_are_not_missing():
     assert kinds(ev) == []
     assert st["plays"]["b"] == before  # untouched
     assert st["plays"]["c"]["removed"] is True
+
+
+def test_status_since_tracks_status_changes():
+    st, _ = diff(empty_state(), [play(sessions=[sess()])], WATCH, T0)
+    rec = st["plays"]["p"]["sessions"]["s1"]
+    assert rec["status_since"] == T0.isoformat() and rec["first_seen"] == T0.isoformat()
+    t1 = T0 + timedelta(minutes=5)
+    st, _ = diff(st, [play(sessions=[sess()])], WATCH, t1)
+    assert st["plays"]["p"]["sessions"]["s1"]["status_since"] == T0.isoformat()
+    t2 = T0 + timedelta(minutes=10)
+    st, _ = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, t2)
+    rec = st["plays"]["p"]["sessions"]["s1"]
+    assert rec["status_since"] == t2.isoformat() and rec["first_seen"] == T0.isoformat()

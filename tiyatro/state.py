@@ -106,7 +106,10 @@ def _merge_play(state: dict, play: Play, config: Config, now_iso: str) -> bool:
         prev_status = None if prev is None or prev.get("gone") else prev["status"]
         rec = prev if prev is not None else {
             "last_on_sale_notified": None, "on_sale_count": 0, "on_sale_pending": False,
+            "first_seen": now_iso,
         }
+        if prev is None or prev_status != s.status.value or "status_since" not in rec:
+            rec["status_since"] = now_iso
         rec.update(status=s.status.value, opens_at=_iso(s.opens_at), start=_iso(s.start),
                    url=s.url, gone=False)
         if s.status in (Status.ON_SALE, Status.SOLD_OUT):
