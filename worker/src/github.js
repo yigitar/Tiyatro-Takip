@@ -68,7 +68,14 @@ export function createGithub({ token, repo, fetch: fetchImpl = globalThis.fetch 
     if (res.status === 404) return null;
     if (!res.ok) throw new GithubError("GET", res.status);
     const body = await res.json();
-    return { data: JSON.parse(fromBase64(body.content || "")), sha: body.sha };
+    let content = body.content;
+    if (!content || body.encoding === "none") {
+      // Files over 1 MB come back without content: fetch the blob by sha instead.
+      const blobRes = await call("GET blob", `${API}/repos/${repo}/git/blobs/${body.sha}`, { method: "GET" });
+      if (!blobRes.ok) throw new GithubError("GET blob", blobRes.status);
+      content = (await blobRes.json()).content;
+    }
+    return { data: JSON.parse(fromBase64(content || "")), sha: body.sha };
   }
 
   async function putJson(path, data, sha, message) {

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { h, render, apply, buildIndex } from "../src/menu.js";
+import { h, render, apply, buildIndex, guardLength } from "../src/menu.js";
 import { makeConfig, makeState } from "./_fixtures.js";
 
 const cfg = makeConfig();
@@ -69,7 +69,7 @@ test("every callback_data is <= 64 bytes over all routes", () => {
     routes.push(`p:${hh}`, `ta:${hh}:1`, `tg:${hh}:y`, `tg:${hh}:c`);
     for (const t of play(cfg, slug)?.targets ?? []) routes.push(`ts:${hh}:${t.id}`);
   }
-  routes.push(`ts:${KB}:y`, `hd:${KB}:y:wd:1`, `hf:${KB}:y:18`, `ht:${KB}:y:none`, `hx:${KB}:y:0:1`);
+  routes.push(`ts:${KB}:y`, `hd:${KB}:y:wd:1`, `hf:${KB}:y:18`, `ht:${KB}:y:none`, `hx:${KB}:y:300301:1`);
   let n = 0;
   for (const route of routes) {
     const r = render(route, cfg, st);
@@ -96,7 +96,7 @@ test("render ts: target screen offers people/days/hours/exclusions/delete", () =
   const cds = flat(r.keyboard).map((b) => b.callback_data);
   for (const c of [`hp:${KB}:y:1`, `hp:${KB}:y:4`, `hd:${KB}:y:wd:1`, `hd:${KB}:y:we:1`, `hd:${KB}:y:all:1`,
     `hd:${KB}:y:d0:1`, `hd:${KB}:y:d4:0`, `hf:${KB}:y:20`, `hf:${KB}:y:none`, `ht:${KB}:y:20`,
-    `hx:${KB}:y:0:1`, `hx:${KB}:y:1:0`, `hs:${KB}:y:rm`]) {
+    `hx:${KB}:y:300301:1`, `hx:${KB}:y:300302:0`, `hs:${KB}:y:rm`]) {
     assert.ok(cds.includes(c), c);
   }
 });
@@ -186,22 +186,78 @@ test("apply hf / ht: from_time / to_time, overrides untouched", () => {
   }
 });
 
-test("apply hx: explicit exclude/include of the session date (Istanbul date, sorted by start)", () => {
-  // index 0 = s1 (2030-03-01), index 2 = s3 (2030-03-03); s4 is gone and not indexed
-  const c = apply(`hx:${KB}:y:0:1`, cfg, st);
+test("apply hx: stateless exclude/include of an explicit yymmdd date", () => {
+  const c = apply(`hx:${KB}:y:300301:1`, cfg, null); // no state needed
   assert.deepEqual(target(c).rule.exclude_dates, ["2030-03-01", "2030-03-02"]);
-  const c3 = apply(`hx:${KB}:y:2:1`, c, st);
+  const c3 = apply(`hx:${KB}:y:300303:1`, c, st);
   assert.deepEqual(target(c3).rule.exclude_dates, ["2030-03-01", "2030-03-02", "2030-03-03"]);
-  const back = apply(`hx:${KB}:y:0:0`, c, st);
-  assert.deepEqual(target(back).rule.exclude_dates, ["2030-03-02"]);
-  assert.deepEqual(target(apply(`hx:${KB}:y:1:0`, cfg, st)).rule.exclude_dates, []);
-  assert.deepEqual(apply(`hx:${KB}:y:3:1`, cfg, st), cfg);
-  assert.deepEqual(apply(`hx:${KB}:y:99:1`, cfg, st), cfg);
+  assert.deepEqual(target(apply(`hx:${KB}:y:300301:0`, c, st)).rule.exclude_dates, ["2030-03-02"]);
+  assert.deepEqual(target(apply(`hx:${KB}:y:300302:0`, cfg, st)).rule.exclude_dates, []);
+  // invalid dates / flags leave the config unchanged
+  for (const bad of ["", "1", "30030", "3003011", "300230", "301301", "300332", "abcdef", "000000"]) {
+    assert.deepEqual(apply(`hx:${KB}:y:${bad}:1`, cfg, st), cfg, bad);
+  }
+  assert.deepEqual(apply(`hx:${KB}:y:300301:2`, cfg, st), cfg);
+  assert.deepEqual(apply(`hx:${KB}:y:300301`, cfg, st), cfg);
+});
+
+test("render hx buttons carry the date: a stale button still means the labelled date", () => {
+  const before = flat(render(`ts:${KB}:y`, cfg, st).keyboard).filter((b) => b.callback_data.startsWith("hx:"));
+  const mar3 = before.find((b) => b.text.includes("03.03"));
+  assert.equal(mar3.callback_data, `hx:${KB}:y:300303:1`);
+  // the session list changes after the screen was rendered (a session is removed/inserted)
+  const st2 = makeState();
+  delete st2.plays["kusursuz-bir-aile"].sessions.s1;
+  st2.plays["kusursuz-bir-aile"].sessions.s9 = { status: "on_sale", start: "2030-03-02T10:00:00+03:00" };
+  const out = apply(mar3.callback_data, cfg, st2);
+  assert.deepEqual(target(out).rule.exclude_dates, ["2030-03-02", "2030-03-03"]);
+});
+
+test("watchlist is paged: 40 watched plays -> every page <= 4096 chars, valid HTML, buttons <= 64 bytes", () => {
+  const c = makeConfig();
+  const big = makeState();
+  for (let i = 0; i < 40; i++) {
+    const slug = `uzun-oyun-adi-${i}`;
+    big.plays[slug] = { title: `Çok Uzun Bir Oyun Adı & Alt Başlık ${"x".repeat(60)} ${i}`, sessions: {} };
+    c.plays[slug] = { active: true, tag_overrides: {}, targets: [
+      { id: "y", name: "Yetişkin", people: 2, rule: { days: [0, 2, 4], from_time: "18:00", to_time: "22:00",
+        overrides: { "5": { from: "14:00", to: null } }, exclude_dates: ["2030-01-01"] } },
+      { id: "c", name: "Çocuk", people: 3, rule: { days: null, from_time: null, to_time: null, overrides: {}, exclude_dates: [] } },
+    ] };
+  }
+  const first = render("tl", c, big);
+  assert.ok(flat(first.keyboard).some((b) => b.callback_data === "tl:1"));
+  const pageCount = 6; // 41 watched plays / 8 per page
+  for (let p = 0; p < pageCount; p++) {
+    const r = render(`tl:${p}`, c, big);
+    assert.ok(r.text.length <= 4096, `page ${p}: ${r.text.length}`);
+    assert.equal(r.text.match(/<b>/g)?.length, r.text.match(/<\/b>/g)?.length);
+    for (const b of flat(r.keyboard)) assert.ok(bytes(b.callback_data) <= 64);
+    assert.ok(flat(r.keyboard).filter((b) => b.callback_data.startsWith("p:")).length <= 8);
+  }
+  assert.ok(flat(render("tl:5", c, big).keyboard).every((b) => b.callback_data !== "tl:6"));
+  assert.deepEqual(render("tl:99", c, big), render("tl:5", c, big)); // clamps
+});
+
+test("guardLength: render text is always <= 4096 and keeps HTML balanced", () => {
+  const long = { text: `<b>Baslik</b>\n<a href="https://x.example/a">link</a> ` + "<b>" + "satir &amp; <i>egik</i>\n".repeat(600) + "</b>",
+    keyboard: [] };
+  const g = guardLength(long);
+  assert.ok(g.text.length <= 4096);
+  assert.ok(g.text.endsWith("</b>"));
+  assert.equal(g.text.match(/<b>/g).length, g.text.match(/<\/b>/g).length);
+  assert.equal(guardLength({ text: "kisa", keyboard: [] }).text, "kisa");
+  // property: every route over a play with an enormous target list stays within the limit
+  const c = makeConfig();
+  c.plays["kusursuz-bir-aile"].targets = Array.from({ length: 200 }, (_, i) => ({
+    id: `t${i}`, name: `Hedef ${"ü".repeat(30)} ${i}`, people: 2,
+    rule: { days: [1], from_time: "10:00", to_time: null, overrides: {}, exclude_dates: [] } }));
   const s2 = makeState();
-  s2.plays["kusursuz-bir-aile"].sessions.s1.start = "2030-03-01T22:30:00+00:00"; // 01:30 Mar 2 Istanbul
-  s2.plays["kusursuz-bir-aile"].sessions.s2.start = "2030-03-05T20:00:00+03:00";
-  const d = apply(`hx:${KB}:y:0:1`, makeConfig(), s2);
-  assert.ok(target(d).rule.exclude_dates.includes("2030-03-02"));
+  for (let i = 0; i < 300; i++) s2.plays["kusursuz-bir-aile"].sessions[`z${i}`] = { status: "upcoming",
+    opens_at: "2030-02-20T10:00:00+03:00", start: `2030-05-${String(1 + (i % 28)).padStart(2, "0")}T20:00:00+03:00` };
+  for (const route of ["m", "pl:0", `p:${KB}`, `ts:${KB}:t5`, "tl", "up", "rf", `ta:${KB}:1`]) {
+    assert.ok(render(route, c, s2).text.length <= 4096, route);
+  }
 });
 
 test("apply hs rm / pz", () => {
@@ -218,7 +274,7 @@ test("every mutating route is idempotent and never mutates input", () => {
     `ta:${KB}:0`, `ta:${KB}:1`, `ta:${KP}:1`, `tg:${KP}:y`, `tg:${KP}:c`, `tg:${YN}:c`, `tg:${KB}:y`,
     `hp:${KB}:y:3`, `hp:${KB}:y:9`, `hd:${KB}:y:wd`, `hd:${KB}:y:we:1`, `hd:${KB}:y:all:0`,
     `hd:${KB}:y:d0:1`, `hd:${KB}:y:d4:0`, `hf:${KB}:y:18`, `hf:${KB}:y:none`, `ht:${KB}:y:22`,
-    `ht:${KB}:y:none`, `hx:${KB}:y:0:1`, `hx:${KB}:y:0:0`, `hx:${KB}:y:1:1`, `hx:${KB}:y:1:0`,
+    `ht:${KB}:y:none`, `hx:${KB}:y:300301:1`, `hx:${KB}:y:300301:0`, `hx:${KB}:y:300302:1`, `hx:${KB}:y:300302:0`,
     `hs:${KB}:y:rm`, "pz:1", "pz:0",
   ];
   for (const route of routes) {
@@ -233,7 +289,7 @@ test("every mutating route is idempotent and never mutates input", () => {
 test("unknown play hash / target id / malformed -> unchanged copy, bulunamadi screen, no throw", () => {
   const bad = [
     "p:00000000", "ta:00000000:1", "tg:00000000:y", `hp:${KB}:nope:2`, `hd:${KB}:nope:wd`,
-    `hf:${KB}:nope:18`, `hx:${KB}:nope:0:1`, `hs:${KB}:nope:rm`, `ts:${KB}:nope`,
+    `hf:${KB}:nope:18`, `hx:${KB}:nope:300301:1`, `hs:${KB}:nope:rm`, `ts:${KB}:nope`,
     "", "zz", "p", "p:", `hp:${KB}`, "ta:", ":::",
   ];
   for (const route of bad) {

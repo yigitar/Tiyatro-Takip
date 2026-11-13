@@ -4,6 +4,16 @@ import { isMutating, render, viewOf } from "./menu.js";
 
 const OK = () => new Response("ok", { status: 200 });
 
+/** Constant-time string comparison (no early exit on the first differing byte). */
+function safeEqual(a, b) {
+  const x = new TextEncoder().encode(String(a ?? ""));
+  const y = new TextEncoder().encode(String(b ?? ""));
+  let diff = x.length ^ y.length;
+  const n = Math.max(x.length, y.length);
+  for (let i = 0; i < n; i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0);
+  return diff === 0;
+}
+
 class TelegramError extends Error {
   constructor(method, status) {
     super(`telegram ${method} failed (HTTP ${status})`);
@@ -88,7 +98,7 @@ async function onMessage(message, tg, gh) {
 export async function handle(request, env, fetchImpl = globalThis.fetch) {
   if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
   const secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
-  if (!env.WEBHOOK_SECRET || secret !== env.WEBHOOK_SECRET) return new Response("forbidden", { status: 403 });
+  if (!env.WEBHOOK_SECRET || !safeEqual(secret, env.WEBHOOK_SECRET)) return new Response("forbidden", { status: 403 });
 
   let update;
   try {
@@ -99,13 +109,17 @@ export async function handle(request, env, fetchImpl = globalThis.fetch) {
 
   const cq = update?.callback_query;
   const message = update?.message;
-  const chatId = cq?.message?.chat?.id ?? message?.chat?.id;
-  if (chatId === undefined || chatId !== Number(env.TELEGRAM_CHAT_ID)) return OK();
+  // Private chat with the owner only: sender and chat must both be the configured id.
+  const owner = Number(env.TELEGRAM_CHAT_ID);
+  const authorized = (u) => Number.isFinite(owner) && u?.from?.id === owner
+    && (u.chat?.id ?? u.message?.chat?.id ?? owner) === owner;
+  if (!(cq ? authorized(cq) : message ? authorized(message) : false)) return OK();
 
   const tg = createTelegram(env.TELEGRAM_BOT_TOKEN, fetchImpl);
   const gh = createGithub({ token: env.TIYATRO_GH_TOKEN, repo: env.GITHUB_REPO, fetch: fetchImpl });
   try {
     if (cq && cq.message) await onCallback(cq, env, tg, gh);
+    else if (cq) await tg("answerCallbackQuery", { callback_query_id: cq.id }); // stop the spinner
     else if (message) await onMessage(message, tg, gh);
   } catch (e) {
     console.error(`bot error: ${e?.name ?? "Error"}`);
@@ -118,8 +132,21 @@ export async function handle(request, env, fetchImpl = globalThis.fetch) {
   return OK();
 }
 
+/** Cron trigger: kick the scan workflow. Never throws; logs only the error type. */
+export async function runScheduled(env, fetchImpl = globalThis.fetch) {
+  try {
+    const gh = createGithub({ token: env.TIYATRO_GH_TOKEN, repo: env.GITHUB_REPO, fetch: fetchImpl });
+    await gh.dispatchWorkflow("scan.yml", "main");
+  } catch (e) {
+    console.error(`scheduled error: ${e?.name ?? "Error"}`);
+  }
+}
+
 export default {
   async fetch(request, env) {
     return handle(request, env, globalThis.fetch);
+  },
+  async scheduled(event, env, ctx) {
+    await runScheduled(env, globalThis.fetch);
   },
 };

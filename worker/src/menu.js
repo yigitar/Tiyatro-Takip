@@ -6,7 +6,7 @@
 // Routes (callback_data, each <= 64 bytes):
 //   m | pl:<page> | p:<h> | ts:<h>:<id> (target screen) | ta:<h>:<0|1> | tg:<h>:<y|c>
 //   hp:<h>:<id>:<n> | hd:<h>:<id>:<wd|we|all|d0..d6>[:<0|1>] | hf:<h>:<id>:<HH|none>
-//   ht:<h>:<id>:<HH|none> | hx:<h>:<id>:<sidx>:<0|1> | hs:<h>:<id>:rm | tl | up | rf | pz:<0|1>
+//   ht:<h>:<id>:<HH|none> | hx:<h>:<id>:<yymmdd>:<0|1> (date, stateless) | hs:<h>:<id>:rm | tl | up | rf | pz:<0|1>
 
 const PAGE_SIZE = 6;
 const MAX_CALLBACK_BYTES = 64;
@@ -165,6 +165,16 @@ function validHour(s) {
   return n >= 0 && n <= 23 ? `${String(n).padStart(2, "0")}:00` : undefined;
 }
 
+/** "261128" -> "2026-11-28"; null unless it is a real calendar date. */
+function dateFromYymmdd(s) {
+  const m = /^(\d{2})(\d{2})(\d{2})$/.exec(s ?? "");
+  if (!m) return null;
+  const [y, mo, d] = [2000 + Number(m[1]), Number(m[2]), Number(m[3])];
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+  return dt.toISOString().slice(0, 10);
+}
+
 function ensurePlay(out, slug) {
   if (!isObj(out.plays)) out.plays = {};
   if (!isObj(out.plays[slug])) out.plays[slug] = { active: true, targets: [], tag_overrides: {} };
@@ -239,10 +249,9 @@ export function apply(route, config, state) {
       if (value !== undefined) ruleOf(t)[op === "hf" ? "from_time" : "to_time"] = value;
     } else if (op === "hx") {
       const flag = parts[4];
-      if (/^\d+$/.test(parts[3] ?? "") && (flag === "0" || flag === "1")) {
-        const session = sessionList(state, slug)[Number(parts[3])];
-        const date = session ? isoDate(session[1].start) : null;
-        if (date) {
+      const date = dateFromYymmdd(parts[3]);
+      if (date && (flag === "0" || flag === "1")) {
+        {
           const rule = ruleOf(t);
           const cur = Array.isArray(rule.exclude_dates) ? rule.exclude_dates : [];
           rule.exclude_dates = flag === "1"
@@ -387,13 +396,21 @@ function targetScreen(config, state, slug, t, idx) {
     btn(`${rule.to_time === `${x}:00` ? "✓ " : ""}≤${x}:00`, `ht:${hh}:${id}:${x}`));
 
   const now = Date.now();
+  const seenDates = new Set();
   const exclBtns = sessionList(state, slug)
-    .map(([, rec], i) => ({ rec, i }))
-    .filter(({ rec }) => Date.parse(rec.start) >= now - 24 * 3600 * 1000)
+    .filter(([, rec]) => Date.parse(rec.start) >= now - 24 * 3600 * 1000)
+    .filter(([, rec]) => {
+      const d = isoDate(rec.start);
+      if (seenDates.has(d)) return false;
+      seenDates.add(d);
+      return true;
+    })
     .slice(0, 8)
-    .map(({ rec, i }) => {
-      const excluded = ex.includes(isoDate(rec.start));
-      return btn(`${excluded ? "🚫 " : ""}${fmtShort(rec.start)}`, `hx:${hh}:${id}:${i}:${excluded ? 0 : 1}`);
+    .map(([, rec]) => {
+      const date = isoDate(rec.start);
+      const excluded = ex.includes(date);
+      const code = date.slice(2, 4) + date.slice(5, 7) + date.slice(8, 10);
+      return btn(`${excluded ? "🚫 " : ""}${fmtShort(rec.start)}`, `hx:${hh}:${id}:${code}:${excluded ? 0 : 1}`);
     });
 
   const chunk = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, k) => arr.slice(k * n, k * n + n));
@@ -413,22 +430,33 @@ function targetScreen(config, state, slug, t, idx) {
   };
 }
 
-function watchlistScreen(config, state, idx) {
+const TL_PAGE = 8;
+
+function watchlistScreen(config, state, idx, pageArg) {
   const slugs = allSlugs(config, state)
     .filter((s) => isWatched(config, state, s))
     .sort((a, b) => playTitle(state, a).localeCompare(playTitle(state, b), "tr"));
-  const lines = ["📋 <b>Takip listem</b>"];
+  const pages = Math.max(1, Math.ceil(slugs.length / TL_PAGE));
+  const page = Math.min(/^\d+$/.test(pageArg ?? "") ? Number(pageArg) : 0, pages - 1);
+  const shown = slugs.slice(page * TL_PAGE, (page + 1) * TL_PAGE);
+  const lines = [`📋 <b>Takip listem</b>${pages > 1 ? ` (sayfa ${page + 1}/${pages})` : ""}`];
   if (slugs.length === 0) lines.push("Takip edilen oyun yok.");
-  for (const s of slugs) {
+  for (const s of shown) {
     const targets = (cfgPlays(config)[s].targets ?? []).filter(isObj);
     lines.push("", `🎭 <b>${esc(playTitle(state, s))}</b>`);
     if (targets.length === 0) lines.push("• hedef yok");
-    for (const t of targets) lines.push(`• ${targetSummary(t)}`);
+    for (const t of targets.slice(0, 4)) lines.push(`• ${targetSummary(t)}`);
+    if (targets.length > 4) lines.push(`… +${targets.length - 4} hedef daha`);
   }
+  if (pages > 1) lines.push("", `… toplam ${slugs.length} oyun`);
   return {
     text: lines.join("\n"),
     keyboard: rows(
-      ...slugs.slice(0, 12).map((s) => [btn(`🎭 ${trunc(playTitle(state, s), 38)}`, `p:${idx.hashOf.get(s)}`)]),
+      ...shown.map((s) => [btn(`🎭 ${trunc(playTitle(state, s), 38)}`, `p:${idx.hashOf.get(s)}`)]),
+      [
+        page > 0 ? btn("‹ Önceki", `tl:${page - 1}`) : null,
+        page < pages - 1 ? btn("Sonraki ›", `tl:${page + 1}`) : null,
+      ],
       [BACK_MAIN()],
     ),
   };
@@ -457,11 +485,32 @@ function upcomingScreen(config, state) {
 
 /** Renders the screen for a route. Mutating routes render the screen they lead back to. */
 export function render(route, config, state) {
+  return guardLength(renderRoute(route, config, state));
+}
+
+const MAX_TEXT = 4096;
+
+/** Telegram rejects text > 4096 chars: cut on a line boundary and close open HTML tags. */
+export function guardLength(screen) {
+  if (screen.text.length <= MAX_TEXT) return screen;
+  let cut = screen.text.slice(0, MAX_TEXT - 200);
+  const nl = cut.lastIndexOf("\n");
+  if (nl > 0) cut = cut.slice(0, nl); // newlines never sit inside a tag or entity
+  const open = [];
+  for (const m of cut.matchAll(/<(\/?)([a-z]+)[^>]*>/g)) {
+    if (m[1]) open.pop();
+    else open.push(m[2]);
+  }
+  const tail = open.reverse().map((t) => `</${t}>`).join("");
+  return { ...screen, text: `${cut}\n…${tail}` };
+}
+
+function renderRoute(route, config, state) {
   try {
     const parts = String(route ?? "").split(":");
     const op = parts[0];
     if (op === "m" || op === "pz") return mainScreen(config, state);
-    if (op === "tl") return watchlistScreen(config, state, indexFor(config, state));
+    if (op === "tl") return watchlistScreen(config, state, indexFor(config, state), parts[1]);
     if (op === "up") return upcomingScreen(config, state);
     if (op === "rf") {
       return { text: "🔄 Tarama istendi. Sonuçlar birkaç dakika içinde güncellenir.", keyboard: rows([BACK_MAIN()]) };

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { handle } from "../src/index.js";
+import worker, { handle } from "../src/index.js";
 import { h } from "../src/menu.js";
 import { makeConfig, makeState } from "./_fixtures.js";
 
@@ -77,7 +77,7 @@ const cb = (data, chat = 4242) => ({
   update_id: 1,
   callback_query: { id: "q1", data, message: { message_id: 77, chat: { id: chat } }, from: { id: chat } },
 });
-const msg = (text, chat = 4242) => ({ update_id: 2, message: { message_id: 5, text, chat: { id: chat } } });
+const msg = (text, chat = 4242) => ({ update_id: 2, message: { message_id: 5, text, chat: { id: chat }, from: { id: chat } } });
 
 test("only POST; wrong or missing secret -> 403 without any API call", async () => {
   const { fake, calls } = makeFake();
@@ -283,4 +283,76 @@ test("missing config.json is created from defaults; missing state.json tolerated
   assert.equal(put.written.paused, true);
   assert.equal(put.written.version, 1);
   assert.ok(put.written.sources.length >= 1);
+});
+
+test("sender must also be the owner: foreign from.id (callback or text) is ignored silently", async () => {
+  const { fake, calls } = makeFake();
+  const c = cb(`ta:${KB}:0`);
+  c.callback_query.from.id = 999; // in the owner's chat but sent by someone else
+  assert.equal((await handle(req(c), ENV, fake)).status, 200);
+  const m = msg("/start");
+  m.message.from.id = 999;
+  assert.equal((await handle(req(m), ENV, fake)).status, 200);
+  const noFrom = msg("/start");
+  delete noFrom.message.from;
+  assert.equal((await handle(req(noFrom), ENV, fake)).status, 200);
+  assert.equal(calls.length, 0);
+});
+
+test("callback without message still answers the callback (spinner stops), no GitHub traffic", async () => {
+  const { fake, calls } = makeFake();
+  const res = await handle(req({ update_id: 9, callback_query: { id: "q9", data: "m", from: { id: 4242 } } }), ENV, fake);
+  assert.equal(res.status, 200);
+  assert.equal(tgCalls(calls, "answerCallbackQuery").length, 1);
+  assert.equal(tgCalls(calls, "answerCallbackQuery")[0].body.callback_query_id, "q9");
+  assert.equal(calls.filter((c) => c.url.includes("github")).length, 0);
+});
+
+test("webhook secret: empty/unset secret rejects everything; length-differing secrets rejected", async () => {
+  const { fake, calls } = makeFake();
+  assert.equal((await handle(req(msg("/start"), { secret: "" }), { ...ENV, WEBHOOK_SECRET: "" }, fake)).status, 403);
+  assert.equal((await handle(req(msg("/start"), { secret: "whsec" }), { ...ENV, WEBHOOK_SECRET: undefined }, fake)).status, 403);
+  assert.equal((await handle(req(msg("/start"), { secret: "whsecX" }), ENV, fake)).status, 403);
+  assert.equal((await handle(req(msg("/start"), { secret: "whse" }), ENV, fake)).status, 403);
+  assert.equal(calls.length, 0);
+});
+
+test("files over 1 MB (empty content, encoding none) are read through the blob API", async () => {
+  const cfg = makeConfig();
+  const calls = [];
+  const fake = async (url, init = {}) => {
+    calls.push(String(url));
+    if (/contents\/config\.json/.test(url)) return jsonRes(200, { content: "", encoding: "none", sha: "bigsha" });
+    if (/git\/blobs\/bigsha$/.test(url)) return jsonRes(200, { content: b64(cfg), encoding: "base64" });
+    return jsonRes(404, {});
+  };
+  const { createGithub } = await import("../src/github.js");
+  const gh = createGithub({ token: "t", repo: "o/r", fetch: fake });
+  const got = await gh.getJson("config.json");
+  assert.equal(got.sha, "bigsha");
+  assert.deepEqual(got.data, cfg);
+  assert.equal(calls.length, 2);
+});
+
+test("scheduled: exactly one workflow dispatch; failure never throws and logs only the error type", async () => {
+  const { fake, calls } = makeFake();
+  const orig = globalThis.fetch;
+  const logs = [];
+  const o = { error: console.error };
+  console.error = (...a) => logs.push(a.map(String).join(" "));
+  try {
+    globalThis.fetch = fake;
+    await worker.scheduled({}, ENV, {});
+    assert.equal(calls.filter((c) => c.url.endsWith("/actions/workflows/scan.yml/dispatches")).length, 1);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].body, { ref: "main" });
+    const failing = makeFake({ ghFail: true });
+    globalThis.fetch = failing.fake;
+    await assert.doesNotReject(worker.scheduled({}, ENV, {}));
+    assert.ok(logs.length >= 1);
+    assert.ok(!logs.join("\n").includes(GH_TOKEN));
+  } finally {
+    globalThis.fetch = orig;
+    console.error = o.error;
+  }
 });
