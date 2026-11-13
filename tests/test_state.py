@@ -193,6 +193,19 @@ def test_day_before():
     assert sorted(kinds(ev)) == ["NEW_PLAY", "OPENING_SOON"]
 
 
+def test_day_before_cutoff_one_hour_before_opening():
+    p = [play(sessions=[sess()])]
+    _, ev = diff(_seed(), p, WATCH, OPENS - timedelta(minutes=61))
+    assert kinds(ev) == ["DAY_BEFORE"]
+    _, ev = diff(_seed(), p, WATCH, OPENS - timedelta(minutes=60))
+    assert ev == []
+    # first seen inside the last hour (outside the 10-min window): no DAY_BEFORE ever
+    st, ev = diff(empty_state(), p, WATCH, OPENS - timedelta(minutes=30))
+    assert kinds(ev) == ["NEW_PLAY"]
+    st, ev = diff(st, p, WATCH, OPENS - timedelta(minutes=9))
+    assert kinds(ev) == ["OPENING_SOON"]
+
+
 def test_no_pre_open_events_after_leaving_upcoming():
     st, _ = diff(_seed(), [play(sessions=[sess(status=Status.SOLD_OUT)])], WATCH,
                  OPENS - timedelta(hours=30))
@@ -205,7 +218,7 @@ def test_unknown_status_event():
     st, ev = diff(_seed(), unk, WATCH, T0 + timedelta(minutes=5))
     # targets not required for UNKNOWN_STATUS on a watched play
     assert kinds(ev) == ["UNKNOWN_STATUS"]
-    assert ev[0].key.startswith("UNKNOWN_STATUS:s1:") and ev[0].target_ids == []
+    assert ev[0].key == "UNKNOWN_STATUS:s1" and ev[0].target_ids == []
     st, ev = diff(st, unk, WATCH, T0 + timedelta(minutes=10))
     assert ev == []
 
@@ -302,3 +315,52 @@ def test_next_opening():
     assert next_opening(st, c, OPENS) == later
     assert next_opening(st, c, later) is None
     assert next_opening(empty_state(), c, T0) is None
+
+
+def test_on_sale_after_session_vanished_and_returned():  # C1a
+    st, _ = diff(empty_state(), [play(sessions=[sess()])], WATCH, T0)
+    st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, T0 + timedelta(minutes=5))
+    assert [e.key for e in ev] == ["ON_SALE:s1:1"]
+    st, ev = diff(st, [play(sessions=[])], WATCH, T0 + timedelta(minutes=15))
+    assert ev == []
+    st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, T0 + timedelta(minutes=65))
+    assert [e.key for e in ev] == ["ON_SALE:s1:2"]
+
+
+def test_pending_on_sale_survives_vanish_cycle():  # C1b
+    st, _ = diff(empty_state(), [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, T0)
+    st, _ = diff(st, [play(sessions=[sess(status=Status.SOLD_OUT)])], WATCH, T0 + timedelta(minutes=5))
+    st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, T0 + timedelta(minutes=20))
+    assert ev == []  # held by the 30-min gap
+    st, ev = diff(st, [play(sessions=[])], WATCH, T0 + timedelta(minutes=31))
+    assert ev == []  # gone: nothing emitted
+    st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, T0 + timedelta(minutes=40))
+    assert [e.key for e in ev] == ["ON_SALE:s1:2"]
+
+
+def test_session_gone_from_listed_play():
+    past = T0 - timedelta(days=1)
+    s_up = sess("s1")
+    s_past = sess("s2", status=Status.SOLD_OUT, start=past, opens_at=None)
+    st, _ = diff(empty_state(), [play(sessions=[s_up, s_past])], WATCH, T0)
+    assert next_opening(st, WATCH, T0) == OPENS
+    st, ev = diff(st, [play(sessions=[s_past])], WATCH, OPENS - timedelta(hours=30))
+    assert ev == []
+    assert st["plays"]["p"]["sessions"]["s1"]["gone"] is True
+    st, ev = diff(st, [play(sessions=[s_past])], WATCH, OPENS - timedelta(minutes=5))
+    assert ev == []  # no DAY_BEFORE / OPENING_SOON for a gone session
+    assert next_opening(st, WATCH, T0) is None
+    # archive: the gone session still counts as history
+    assert cleanup(st, WATCH, SAT_20 - timedelta(hours=1))["plays"]["p"]["archived"] is False
+    assert cleanup(st, WATCH, SAT_20 + timedelta(hours=1))["plays"]["p"]["archived"] is True
+
+
+def test_watch_added_while_already_on_sale_alerts_once():  # I1
+    p = [play(sessions=[sess(status=Status.ON_SALE)])]
+    st, ev = diff(empty_state(), p, NOWATCH, T0)
+    assert kinds(ev) == ["NEW_PLAY"]
+    later = T0 + timedelta(days=5)
+    st, ev = diff(st, p, WATCH, later)
+    assert [e.key for e in ev] == ["ON_SALE:s1:1"]
+    st, ev = diff(st, p, WATCH, later + timedelta(minutes=5))
+    assert ev == []

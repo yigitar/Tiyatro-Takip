@@ -1,7 +1,23 @@
+"""Scan-to-scan state diff, notification events and periodic cleanup.
+
+Notes on alerting semantics:
+- Every event goes through ``state["emitted"]`` (key -> ISO time). A key is never
+  emitted twice while it is remembered; ``cleanup`` forgets keys after 60 days. So a
+  moved ``opens_at`` after an OPENING_SOON/DAY_BEFORE alert does not re-alert, and a
+  play removed, re-added and removed again within 60 days is not re-announced.
+- ON_SALE: a session entering ON_SALE (or first seen ON_SALE, or reappearing ON_SALE
+  after having dropped off the page) becomes "pending". The pending alert fires when an
+  active watch has a matching target and the last ON_SALE alert for that session is at
+  least 30 min old. A pending alert survives the session vanishing for a scan. If a
+  matching active watch/target appears while the session is already ON_SALE, exactly
+  one ON_SALE alert fires ("ticket available right now").
+- UNKNOWN_STATUS is keyed per session id (``UNKNOWN_STATUS:<sid>``): once per session.
+- DAY_BEFORE fires from 10:00 the day before opening until 60 min before opening, so it
+  never arrives as a near-duplicate of OPENING_SOON (last 10 min before opening).
+"""
 from __future__ import annotations
 
 import copy
-import hashlib
 from datetime import datetime, time, timedelta
 
 from tiyatro.models import ISTANBUL, Config, Event, Play, PlayWatch, Session, Status
@@ -11,6 +27,7 @@ from tiyatro.tags import apply_overrides, derive_tags
 ON_SALE_GAP = timedelta(minutes=30)
 OPENING_SOON_LEAD = timedelta(minutes=10)
 DAY_BEFORE_HOUR = time(10, 0)
+DAY_BEFORE_CUTOFF = timedelta(minutes=60)
 REMOVE_AFTER_MISSES = 2
 EMITTED_TTL = timedelta(days=60)
 NEVER_OPENED_TTL = timedelta(days=180)
@@ -84,7 +101,8 @@ def _merge_play(state: dict, play: Play, config: Config, now_iso: str) -> bool:
     for s in play.sessions:
         seen.add(s.id)
         prev = sessions.get(s.id)
-        prev_status = prev["status"] if prev is not None else None
+        # A gone record is a non-ON_SALE previous state: reappearing ON_SALE is a transition.
+        prev_status = None if prev is None or prev.get("gone") else prev["status"]
         rec = prev if prev is not None else {
             "last_on_sale_notified": None, "on_sale_count": 0, "on_sale_pending": False,
         }
@@ -101,7 +119,6 @@ def _merge_play(state: dict, play: Play, config: Config, now_iso: str) -> bool:
     for sid, rec in sessions.items():
         if sid not in seen:
             rec["gone"] = True
-            rec["on_sale_pending"] = False
     return is_new
 
 
@@ -156,8 +173,7 @@ def diff(old: dict, plays: list[Play], config: Config, now: datetime) -> tuple[d
             session = _stored_session(sid, rec)
             payload = _session_payload(entry, session)
             if session.status is Status.UNKNOWN:
-                digest = hashlib.sha1(session.status.value.encode()).hexdigest()[:8]
-                emit("UNKNOWN_STATUS", f"UNKNOWN_STATUS:{sid}:{digest}", slug, sid, [], payload)
+                emit("UNKNOWN_STATUS", f"UNKNOWN_STATUS:{sid}", slug, sid, [], payload)
                 continue
             targets = matching_targets(watch, session)
             if not targets:
@@ -174,7 +190,8 @@ def diff(old: dict, plays: list[Play], config: Config, now: datetime) -> tuple[d
                 soon_from = session.opens_at - OPENING_SOON_LEAD
                 if soon_from <= now < session.opens_at:
                     emit("OPENING_SOON", f"OPENING_SOON:{sid}", slug, sid, ids, payload)
-                elif _day_before_start(session.opens_at) <= now < soon_from:
+                elif (_day_before_start(session.opens_at) <= now
+                      < session.opens_at - DAY_BEFORE_CUTOFF):
                     emit("DAY_BEFORE", f"DAY_BEFORE:{sid}", slug, sid, ids, payload)
 
     state["meta"]["last_scan"] = now_iso
