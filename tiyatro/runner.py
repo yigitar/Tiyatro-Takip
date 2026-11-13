@@ -86,7 +86,6 @@ BURST_INTERVAL_S = 12
 BURST_TIERS = ((timedelta(minutes=30), BURST_INTERVAL_S, 3),
                (timedelta(minutes=90), 30, 3),
                (BURST_OVERDUE, 60, 5))
-BURST_CONFIG_EVERY = timedelta(seconds=60)
 BURST_MAX_SECONDS = 780
 BURST_WATCH_EVERY = timedelta(seconds=60)
 PC_WINDOW = timedelta(minutes=60)
@@ -328,9 +327,24 @@ def _discard_outbox(state: dict, events: Iterable[Event] = ()) -> None:
     state["outbox"] = []
 
 
+def _confirmed_paused(store, config: Config) -> bool:
+    """True only if a fresh read of config.json still says paused.
+
+    Discarding consumes event keys for good, so a cached/stale ``paused`` must never be
+    enough. If the fresh read fails, the events are kept (fail open: a missed alert is
+    worse than one unwanted while pausing).
+    """
+    if not config.paused:
+        return False
+    try:
+        return load_config(store).paused
+    except Exception:
+        return False
+
+
 def _dispatch(state: dict, events: list[Event], first_scan: bool, store, tg, claims,
               now: datetime, plays: dict[str, Play], config: Config, who: str) -> int:
-    if config.paused:
+    if (events or state["outbox"]) and _confirmed_paused(store, config):
         _discard_outbox(state, events)
         return 0
     _queue_events(state, events, first_scan, now, who)
@@ -477,7 +491,7 @@ def run_once(store, tg, claims, now: datetime, who: str = "github",
     failures = 0
 
     # R2: deliver what earlier runs could not.
-    if config.paused:
+    if state["outbox"] and _confirmed_paused(store, config):
         _discard_outbox(state)
     else:
         failures += _deliver(state, store, tg, claims, now, {}, config)
@@ -607,8 +621,11 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
 
     Tick interval: the fastest tier among the targets: ``interval`` (12 s) +-3 s, 30 s
     +-3 s once more than 30 min overdue, 60 s +-5 s once more than 90 min overdue
-    (``rand`` gives the jitter). A tick fetches only the targeted play pages; the
-    config is re-read at most once a minute to keep fast ticks cheap. Stops at ``until``, after
+    (``rand`` gives the jitter). A tick fetches only the targeted play pages and reads
+    ``config.json`` exactly once, so a config change (pause, new watch/target) is
+    honoured by the next tick at the latest (bounded by one tick). If that read fails,
+    the last good config is used for scanning, but a paused config is re-read again
+    before anything is discarded (``_confirmed_paused``). Stops at ``until``, after
     ``max_seconds`` or when no watched session is in its window any more.
 
     State is saved whenever it differs from the last successfully saved version (so a
@@ -623,7 +640,6 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
     deadline = min(until, start + timedelta(seconds=max_seconds))
     state = _prepare(copy.deepcopy(state)) if state is not None else load_state(store)
     config: Config | None = None
-    config_at: datetime | None = None
     base, jitter = interval, BURST_TIERS[0][2]
     errors: list[str] = []
     result: RunResult | None = None
@@ -635,14 +651,12 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
         if now >= deadline:
             break
         try:
-            if config is None or now - config_at >= BURST_CONFIG_EVERY:
-                try:
-                    config = load_config(store)
-                    config_at = now
-                except Exception as exc:
-                    if config is None:
-                        raise
-                    errors.append(type(exc).__name__)
+            try:
+                config = load_config(store)
+            except Exception as exc:
+                if config is None:
+                    raise
+                errors.append(type(exc).__name__)
             targets = _burst_targets(state, config, now)
             if not targets:
                 break

@@ -1415,5 +1415,83 @@ def test_fast_tier_tick_cost_is_low(monkeypatch):
     assert set(ticks) == {12}
     n_ticks = len(ticks)
     assert env.web.calls == [BASE + "p"] * n_ticks  # one page per tick, nothing else
-    # config is re-read about once a minute, not on every 12 s tick
-    assert gets.count("config.json") <= 300 // 60 + 1
+    # config is read exactly once per tick (+1 for a final tick that ends the loop)
+    assert n_ticks <= gets.count("config.json") <= n_ticks + 1
+
+
+
+# ==== 6c fix: no stale config inside a burst ======================================
+
+PAUSED_CFG = {**WATCH_CFG, "paused": True}
+
+
+def test_unpause_during_burst_flip_is_sent(monkeypatch):
+    opens = NOW + timedelta(minutes=5)
+    env = Env(monkeypatch, [mkplay(sessions=[sess(opens_at=opens)])], WATCH_CFG)
+    env.run(NOW)
+    env.tg.sent.clear()
+    env.store.files["config.json"] = (PAUSED_CFG, "paused")
+    start = opens - timedelta(seconds=3)
+    clock = [start]
+
+    def sleep(s):
+        clock[0] += timedelta(seconds=s)
+        if clock[0] >= start + timedelta(seconds=1):
+            env.store.files["config.json"] = (WATCH_CFG, "unpaused")
+        if clock[0] >= start + timedelta(seconds=5):
+            env.web.set(mkplay(sessions=[sess(status=Status.ON_SALE)]))
+
+    burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
+               opens + timedelta(minutes=10), fetch_fn=env.web.fetch,
+               rand=lambda a, b: 0.0)
+    assert sum("Bilet alınabilir" in m for m in env.tg.sent) == 1
+
+
+def test_stale_paused_config_never_discards(monkeypatch):
+    env = on_sale_ready(monkeypatch)  # stored config: not paused
+    stale = config_from_dict(PAUSED_CFG)
+    res = env.run(NOW + timedelta(minutes=5), config=stale)
+    assert [e.kind for e in res.events] == ["ON_SALE"]
+    assert len(env.tg.sent) == 1 and "Bilet alınabilir" in env.tg.sent[0]
+    assert env.saved_state()["meta"].get("paused_discarded", 0) == 0
+
+
+def test_really_paused_still_discards(monkeypatch):
+    env = on_sale_ready(monkeypatch)
+    env.store.files["config.json"] = (PAUSED_CFG, "p2")
+    res = env.run(NOW + timedelta(minutes=5))
+    assert [e.kind for e in res.events] == ["ON_SALE"] and env.tg.sent == []
+    assert env.saved_state()["meta"]["paused_discarded"] == 1
+
+
+def test_watch_added_mid_burst_honored_next_tick(monkeypatch):
+    opens = NOW + timedelta(minutes=5)
+    p = mkplay("p", sessions=[sess(opens_at=opens)])
+    q = mkplay("q", sessions=[sess("s2", opens_at=opens)])
+    env = Env(monkeypatch, [p, q], WATCH_CFG)
+    env.run(NOW)
+    env.tg.sent.clear()
+    start = opens - timedelta(seconds=3)
+    clock = [start]
+    sent_at = []
+    real_send = env.tg.send
+
+    def send(text):
+        sent_at.append((clock[0], text))
+        return real_send(text)
+
+    env.tg.send = send
+    with_q = {"plays": {"p": WATCH_CFG["plays"]["p"], "q": WATCH_CFG["plays"]["p"]}}
+
+    def sleep(s):
+        clock[0] += timedelta(seconds=s)
+        if clock[0] >= start + timedelta(seconds=1):
+            env.store.files["config.json"] = (with_q, "q-added")
+        if clock[0] >= start + timedelta(seconds=5):
+            env.web.set(mkplay("q", sessions=[sess("s2", status=Status.ON_SALE)]))
+
+    burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
+               opens + timedelta(minutes=10), fetch_fn=env.web.fetch,
+               rand=lambda a, b: 0.0, max_seconds=120)
+    on_sale = [t for t, m in sent_at if "Bilet alınabilir" in m]
+    assert len(on_sale) == 1 and on_sale[0] <= start + timedelta(seconds=13)
