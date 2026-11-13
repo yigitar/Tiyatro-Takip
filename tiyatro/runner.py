@@ -24,9 +24,10 @@ in a row fires one ``PLAY_FAILING`` (``plays[slug]["fail_streak"]``).
 
 Burst mode: the announced ``opens_at`` is only a plan; the site flips to ON_SALE when
 the organiser enables sales, which can be minutes late (observed live). So a watched
-UPCOMING session is polled from ``opens_at - 10 min`` up to ``opens_at + 90 min``
-(every 12 s +-3 s, every 30 s +-3 s once 30 min overdue), and for 10 min after a flip to
-ON_SALE. One run's burst ends before ``max_seconds`` (780 s); the next scheduled run
+UPCOMING session is polled from ``opens_at - 10 min`` up to ``opens_at + 4 h``
+(every 12 s +-3 s; 30 s +-3 s once 30 min overdue; 60 s +-5 s once 90 min overdue: a
+live opening was still "Yakında" 55+ min after its announced time), and for 10 min after
+a flip to ON_SALE (12 s). One run's burst ends before ``max_seconds`` (780 s); the next scheduled run
 (every 5 min) re-enters burst mode by itself, which is cheap and idempotent (state,
 ``emitted`` and claims carry over). Two runs never overlap: the scan workflow runs in
 one Actions ``concurrency`` group (set up in the workflow file).
@@ -78,12 +79,14 @@ RETRY_BASE_S = 10
 RETRY_MAX_S = 600
 DROPPED_LOG_MAX = 50
 BURST_LEAD = timedelta(minutes=10)
-BURST_OVERDUE = timedelta(minutes=90)
-BURST_SLOW_AFTER = timedelta(minutes=30)
+BURST_OVERDUE = timedelta(hours=4)
 BURST_FLIP_TAIL = timedelta(minutes=10)
 BURST_INTERVAL_S = 12
-BURST_SLOW_INTERVAL_S = 30
-BURST_JITTER_S = 3
+# (overdue up to, tick seconds, jitter seconds); tier 0 uses ``interval`` (12 s)
+BURST_TIERS = ((timedelta(minutes=30), BURST_INTERVAL_S, 3),
+               (timedelta(minutes=90), 30, 3),
+               (BURST_OVERDUE, 60, 5))
+BURST_CONFIG_EVERY = timedelta(seconds=60)
 BURST_MAX_SECONDS = 780
 BURST_WATCH_EVERY = timedelta(seconds=60)
 PC_WINDOW = timedelta(minutes=60)
@@ -532,12 +535,20 @@ def run_once(store, tg, claims, now: datetime, who: str = "github",
 
 # ---- modes -----------------------------------------------------------------------
 
-def _burst_targets(state: dict, config: Config,
-                   now: datetime) -> list[tuple[str, datetime, bool]]:
-    """(slug, burst end, fast?) for watched sessions that need burst polling.
+def _tier(overdue: timedelta) -> int:
+    for i, (limit, _tick, _jitter) in enumerate(BURST_TIERS):
+        if overdue <= limit:
+            return i
+    return len(BURST_TIERS) - 1
 
-    UPCOMING with ``opens_at - 10 min <= now <= opens_at + 90 min`` (fast while at most
-    30 min overdue), or flipped to ON_SALE within the last 10 min (fast).
+
+def _burst_targets(state: dict, config: Config,
+                   now: datetime) -> list[tuple[str, datetime, int]]:
+    """(slug, burst end, cadence tier) for watched sessions that need burst polling.
+
+    UPCOMING with ``opens_at - 10 min <= now <= opens_at + 4 h`` (tier by how overdue:
+    0 = 12 s up to 30 min, 1 = 30 s up to 90 min, 2 = 60 s beyond), or flipped to
+    ON_SALE within the last 10 min (tier 0).
     """
     out = []
     for slug, entry in (state.get("plays") or {}).items():
@@ -557,10 +568,10 @@ def _burst_targets(state: dict, config: Config,
                 continue
             if status is Status.UPCOMING and opens is not None \
                     and opens - BURST_LEAD <= now <= opens + BURST_OVERDUE:
-                hit = (opens + BURST_OVERDUE, now <= opens + BURST_SLOW_AFTER)
+                hit = (opens + BURST_OVERDUE, _tier(now - opens))
             elif status is Status.ON_SALE and since is not None \
                     and since <= now <= since + BURST_FLIP_TAIL:
-                hit = (since + BURST_FLIP_TAIL, True)
+                hit = (since + BURST_FLIP_TAIL, 0)
             else:
                 continue
             if matching_targets(watch, session):
@@ -573,10 +584,12 @@ def plan_mode(state: dict, config: Config, now: datetime) -> tuple[str, datetime
     flipped; else ("normal", None).
 
     Burst iff a watched session (active play, >= 1 matching target) is UPCOMING with
-    ``opens_at - 10 min <= now <= opens_at + 90 min`` (the site often flips later than
-    the announced time), or flipped to ON_SALE within the last 10 min. ``until`` is the
-    latest such end (``opens_at + 90 min`` / flip + 10 min); ``burst_loop`` caps a single
-    run at ``max_seconds`` and the next scheduled run re-enters burst mode.
+    ``opens_at - 10 min <= now <= opens_at + 4 h`` (the site flips when the organiser
+    enables sales, observed 55+ min after the announced time), or flipped to ON_SALE
+    within the last 10 min. ``until`` is the latest such end (``opens_at + 4 h`` /
+    flip + 10 min); ``burst_loop`` caps a single run at ``max_seconds`` and the next
+    scheduled run re-enters burst mode. Cadence: 12 s up to 30 min overdue, 30 s up to
+    90 min, 60 s beyond (each with jitter).
     """
     found = _burst_targets(state, config, now)
     if not found:
@@ -592,8 +605,10 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
                rand: Callable[[float, float], float] = random.uniform) -> RunResult:
     """Re-scan only the plays inside a burst window.
 
-    Tick interval: ``interval`` (12 s), or 30 s once every targeted session is more
-    than 30 min overdue; both with +-3 s jitter (``rand``). Stops at ``until``, after
+    Tick interval: the fastest tier among the targets: ``interval`` (12 s) +-3 s, 30 s
+    +-3 s once more than 30 min overdue, 60 s +-5 s once more than 90 min overdue
+    (``rand`` gives the jitter). A tick fetches only the targeted play pages; the
+    config is re-read at most once a minute to keep fast ticks cheap. Stops at ``until``, after
     ``max_seconds`` or when no watched session is in its window any more.
 
     State is saved whenever it differs from the last successfully saved version (so a
@@ -608,7 +623,8 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
     deadline = min(until, start + timedelta(seconds=max_seconds))
     state = _prepare(copy.deepcopy(state)) if state is not None else load_state(store)
     config: Config | None = None
-    base = interval
+    config_at: datetime | None = None
+    base, jitter = interval, BURST_TIERS[0][2]
     errors: list[str] = []
     result: RunResult | None = None
     saved_fp = _fingerprint(state)
@@ -619,17 +635,21 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
         if now >= deadline:
             break
         try:
-            try:
-                config = load_config(store)
-            except Exception as exc:
-                if config is None:
-                    raise
-                errors.append(type(exc).__name__)
+            if config is None or now - config_at >= BURST_CONFIG_EVERY:
+                try:
+                    config = load_config(store)
+                    config_at = now
+                except Exception as exc:
+                    if config is None:
+                        raise
+                    errors.append(type(exc).__name__)
             targets = _burst_targets(state, config, now)
             if not targets:
                 break
-            slugs = sorted({slug for slug, _end, _fast in targets})
-            base = interval if any(fast for *_x, fast in targets) else BURST_SLOW_INTERVAL_S
+            slugs = sorted({slug for slug, _end, _tier_ in targets})
+            tier = min(t for *_x, t in targets)
+            base = interval if tier == 0 else BURST_TIERS[tier][1]
+            jitter = BURST_TIERS[tier][2]
             result = run_once(store, tg, claims, now, who=who, fetch_fn=fetch_fn,
                               sleep=sleep, persist_state=False, state=state,
                               only_slugs=slugs, config=config)
@@ -649,7 +669,7 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
                     save_error = save_error or err
         except Exception as exc:
             errors.append(type(exc).__name__)
-        sleep(max(1.0, base + rand(-BURST_JITTER_S, BURST_JITTER_S)))
+        sleep(max(1.0, base + rand(-jitter, jitter)))
     final = result or RunResult([], "burst", 0, state)
     final.state = state
     final.errors = errors

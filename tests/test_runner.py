@@ -215,13 +215,14 @@ def _state_with_opening(opens_at, slug="p", status="upcoming"):
 
 @pytest.mark.parametrize("offset_min,mode", [(-11, "normal"), (-9, "burst"),
                                               (11, "burst"), (30, "burst"),
-                                              (90, "burst"), (91, "normal")])
+                                              (91, "burst"), (180, "burst"),
+                                              (240, "burst"), (241, "normal")])
 def test_plan_mode_window(offset_min, mode):
     st = _state_with_opening(OPENS)  # still UPCOMING: the site has not flipped yet
     cfg = config_from_dict(WATCH_CFG)
     got, until = plan_mode(st, cfg, OPENS + timedelta(minutes=offset_min))
     assert got == mode
-    assert until == (OPENS + timedelta(minutes=90) if mode == "burst" else None)
+    assert until == (OPENS + timedelta(hours=4) if mode == "burst" else None)
 
 
 def test_plan_mode_recent_flip_to_on_sale():
@@ -1079,19 +1080,26 @@ def test_burst_backs_off_after_30_min_and_jitters(monkeypatch):
     burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
                OPENS + timedelta(minutes=90), fetch_fn=env.web.fetch, max_seconds=120)
     assert ticks and all(9 <= t <= 15 for t in ticks)
+    clock[0] = OPENS + timedelta(minutes=95)
+    ticks.clear()
+    burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
+               OPENS + timedelta(hours=4), fetch_fn=env.web.fetch, max_seconds=400)
+    assert ticks and all(55 <= t <= 65 for t in ticks)
     assert len(set(ticks)) > 1  # jittered
 
 
-def test_burst_ends_after_90_min_overdue(monkeypatch):
+def test_burst_ends_after_4_h_overdue(monkeypatch):
     env = _overdue_env(monkeypatch, OPENS)
-    clock = [OPENS + timedelta(minutes=89)]
+    clock = [OPENS + timedelta(minutes=239)]
 
     def sleep(s):
         clock[0] += timedelta(seconds=s)
 
     burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
-               OPENS + timedelta(minutes=90), fetch_fn=env.web.fetch)
-    assert clock[0] <= OPENS + timedelta(minutes=90, seconds=33)
+               OPENS + timedelta(hours=4), fetch_fn=env.web.fetch)
+    assert clock[0] <= OPENS + timedelta(hours=4, seconds=65)
+    assert plan_mode(env.saved_state(), config_from_dict(WATCH_CFG),
+                     OPENS + timedelta(hours=4, minutes=1)) == ("normal", None)
 
 
 
@@ -1346,3 +1354,66 @@ def test_pc_watch_check_gh_false_skips_github_check():
     assert [e.kind for e in ev] == ["PC_INACTIVE"]  # PC checks still run
     ev = pc_watch(store, st, cfg, NOW, claims, tg)
     assert [e.kind for e in ev] == ["GH_LAGGING"]
+
+
+
+# ==== 6c: 4-hour overdue window, request rate, per-tick cost ======================
+
+def test_three_hours_overdue_polls_every_60_s(monkeypatch):
+    env = _overdue_env(monkeypatch, OPENS)
+    start = OPENS + timedelta(hours=3)
+    assert plan_mode(env.saved_state(), config_from_dict(WATCH_CFG), start) == (
+        "burst", OPENS + timedelta(hours=4))
+    env.web.calls.clear()
+    clock = [start]
+    ticks, fetch_times = [], []
+
+    def fetch_fn(url):
+        fetch_times.append(clock[0])
+        return env.web.fetch(url)
+
+    def sleep(s):
+        if s >= 5:
+            ticks.append(s)
+        clock[0] += timedelta(seconds=s)
+
+    burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
+               OPENS + timedelta(hours=4), fetch_fn=fetch_fn, rand=lambda a, b: 0.0)
+    assert ticks and set(ticks) == {60}
+    # request rate per relevant play: at most 2 per minute
+    for t in fetch_times:
+        window = [u for u in fetch_times if t <= u < t + timedelta(minutes=1)]
+        assert len(window) <= 2
+    assert set(env.web.calls) == {BASE + "p"}
+
+
+def test_fast_tier_tick_cost_is_low(monkeypatch):
+    opens = NOW + timedelta(minutes=5)
+    env = Env(monkeypatch, [mkplay(sessions=[sess(opens_at=opens)]), mkplay("other")],
+              WATCH_CFG)
+    env.run(NOW)
+    env.web.calls.clear()
+    real_get = env.store.get
+    gets = []
+
+    def get(path):
+        gets.append(path)
+        return real_get(path)
+
+    monkeypatch.setattr(env.store, "get", get)
+    clock = [NOW]
+    ticks = []
+
+    def sleep(s):
+        if s >= 5:
+            ticks.append(s)
+        clock[0] += timedelta(seconds=s)
+
+    burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
+               opens + timedelta(minutes=10), fetch_fn=env.web.fetch,
+               rand=lambda a, b: 0.0, max_seconds=300)
+    assert set(ticks) == {12}
+    n_ticks = len(ticks)
+    assert env.web.calls == [BASE + "p"] * n_ticks  # one page per tick, nothing else
+    # config is re-read about once a minute, not on every 12 s tick
+    assert gets.count("config.json") <= 300 // 60 + 1
