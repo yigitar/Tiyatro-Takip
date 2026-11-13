@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import pathlib
 from datetime import datetime, timedelta
 
@@ -213,13 +214,27 @@ def _state_with_opening(opens_at, slug="p", status="upcoming"):
 
 
 @pytest.mark.parametrize("offset_min,mode", [(-11, "normal"), (-9, "burst"),
-                                              (9, "burst"), (11, "normal")])
+                                              (11, "burst"), (30, "burst"),
+                                              (90, "burst"), (91, "normal")])
 def test_plan_mode_window(offset_min, mode):
-    st = _state_with_opening(OPENS)
+    st = _state_with_opening(OPENS)  # still UPCOMING: the site has not flipped yet
     cfg = config_from_dict(WATCH_CFG)
     got, until = plan_mode(st, cfg, OPENS + timedelta(minutes=offset_min))
     assert got == mode
-    assert until == (OPENS + timedelta(minutes=10) if mode == "burst" else None)
+    assert until == (OPENS + timedelta(minutes=90) if mode == "burst" else None)
+
+
+def test_plan_mode_recent_flip_to_on_sale():
+    st = _state_with_opening(OPENS, status="on_sale")
+    flip = OPENS + timedelta(minutes=25)
+    st["plays"]["p"]["sessions"]["s1"]["status_since"] = flip.isoformat()
+    cfg = config_from_dict(WATCH_CFG)
+    assert plan_mode(st, cfg, flip + timedelta(minutes=9)) == (
+        "burst", flip + timedelta(minutes=10))
+    assert plan_mode(st, cfg, flip + timedelta(minutes=11)) == ("normal", None)
+    # an ON_SALE session without a recent flip does not keep bursting
+    del st["plays"]["p"]["sessions"]["s1"]["status_since"]
+    assert plan_mode(st, cfg, flip)[0] == "normal"
 
 
 def test_plan_mode_ignores_unwatched_and_unmatched():
@@ -257,7 +272,7 @@ def test_burst_loop_scans_only_relevant_play_until_end(monkeypatch):
     assert DEFAULT_SOURCE not in env.web.calls
     # stops when the session leaves the burst window (opens_at cleared by ON_SALE)
     # or at `until`, never after max_seconds
-    assert clock[0] <= NOW + timedelta(seconds=780 + 12)
+    assert clock[0] <= NOW + timedelta(seconds=780 + 15)
     assert len(env.tg.sent) == 1 and "Bilet alınabilir" in env.tg.sent[0]
     assert res.state["plays"]["p"]["sessions"]["s1"]["status"] == "on_sale"
     # persisted only when something changed (not every 12 s iteration)
@@ -276,11 +291,11 @@ def test_burst_loop_respects_until_and_max_seconds(monkeypatch):
 
     burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
                opens + timedelta(minutes=10), fetch_fn=env.web.fetch, max_seconds=60)
-    assert clock[0] - NOW <= timedelta(seconds=72)
+    assert clock[0] - NOW <= timedelta(seconds=60 + 15)
     clock[0] = NOW
     burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
                NOW + timedelta(seconds=30), fetch_fn=env.web.fetch)
-    assert clock[0] - NOW <= timedelta(seconds=36)
+    assert clock[0] - NOW <= timedelta(seconds=30 + 15)
 
 
 # ---- (e) pc_watch ------------------------------------------------------------
@@ -292,7 +307,8 @@ class RunsStore(FakeStore):
 
     def runs(self, per_page=10):
         t = (self.now - timedelta(minutes=self.runs_age_min)).isoformat()
-        return [{"created_at": t, "status": "completed", "conclusion": "success"}]
+        return [{"created_at": t, "status": "completed", "conclusion": "success",
+                 "path": ".github/workflows/scan.yml", "id": 1}]
 
 
 def _pc_env(store, opens):
@@ -396,7 +412,10 @@ def test_play_parse_error_does_not_abort_scan(monkeypatch):
         assert res.failures == 1 and res.scanned == 2
         assert [e.kind for e in res.events] == []
     st = env.saved_state()
-    assert st["plays"]["b"] == before
+    after = {k: v for k, v in st["plays"]["b"].items()
+             if k not in ("fail_streak", "fail_since")}
+    before = {k: v for k, v in before.items() if k not in ("fail_streak", "fail_since")}
+    assert after == before and st["plays"]["b"]["fail_streak"] == 3
     assert st["meta"]["fetch_fail_streak"] == 0
     env.web.plays["b"] = FetchError("HTTP 500")
     assert env.run(NOW + timedelta(minutes=30)).failures == 1
@@ -460,7 +479,8 @@ def test_outbox_expires_after_6h_and_is_logged(monkeypatch):
     env.run(NOW + timedelta(minutes=5))
     res = env.run(NOW + timedelta(hours=6, minutes=6))
     st = env.saved_state()
-    assert st["outbox"] == [] and res.failures >= 1
+    assert [e["key"] for e in st["outbox"]] == ["DROPPED:ON_SALE:s1:1"]
+    assert res.failures >= 1
     assert st["meta"]["outbox_dropped"][-1]["key"] == "ON_SALE:s1:1"
 
 
@@ -472,11 +492,12 @@ def test_outbox_drops_after_20_attempts(monkeypatch):
         t = NOW + timedelta(minutes=5 + 10 * i)
         env.claims.clock = lambda t=t: t
         env.run(t)
-        seen.append([e["attempts"] for e in env.saved_state()["outbox"]])
+        seen.append([e["attempts"] for e in env.saved_state()["outbox"]
+                     if e["key"] == "ON_SALE:s1:1"])
     # the 20th failed attempt drops the entry in the same run
     assert seen[0] == [1] and seen[18] == [19] and seen[19] == [], seen
     st = env.saved_state()
-    assert st["outbox"] == []
+    assert [e["key"] for e in st["outbox"]] == ["DROPPED:ON_SALE:s1:1"]
     assert st["meta"]["outbox_dropped"][-1]["reason"] == "attempts"
     assert st["meta"]["outbox_dropped"][-1]["attempts"] == 20
     assert len(st["meta"]["outbox_dropped"]) == 1
@@ -508,7 +529,7 @@ def test_first_scan_sends_one_folded_setup_message(monkeypatch):
     res = env.run(NOW)
     assert len([e for e in res.events if e.kind == "NEW_PLAY"]) == 6
     assert len(env.tg.sent) == 1 and "(6)" in env.tg.sent[0]
-    key = f"SETUP:{NOW:%Y-%m-%dT%H:%M}"
+    key = runner.setup_key([e for e in res.events if e.kind == "NEW_PLAY"])
     assert env.store.files[claim_path(key)][0]["status"] == "sent"
     # a later new play is announced on its own
     env.web.set(mkplay("p9"))
@@ -535,7 +556,9 @@ def test_first_scan_with_real_fixtures(monkeypatch):
     store, tg = FakeStore(), FakeTG()
     res = run_once(store, tg, ClaimStore(store, "github", lambda: NOW), NOW,
                    fetch_fn=fetch_fn, sleep=lambda s: None)
-    assert res.scanned == 3 and res.failures == 3
+    # 3 of 6 play pages unavailable: per-play failures + one scan failure (C1)
+    assert res.scanned == 3 and res.failures == 4
+    assert store.files["state.json"][0]["meta"]["fetch_fail_streak"] == 1
     assert len(tg.sent) == 1
     assert set(store.files["state.json"][0]["plays"]) == set(files)
 
@@ -680,3 +703,390 @@ def test_main_end_to_end_and_secret_free_errors(monkeypatch, capsys):
     assert runner.main() != 0
     err = capsys.readouterr().err
     assert "ghp_SECRET" not in err and "TGSECRET" not in err and "RuntimeError" in err
+
+
+# ==== fix round 1 =================================================================
+
+# ---- C1: play-page parser break must not be silent ---------------------------------
+
+def test_all_play_pages_failing_is_a_scan_failure(monkeypatch):
+    env = Env(monkeypatch, [mkplay("a"), mkplay("b"), mkplay("c")], WATCH_CFG)
+    env.run(NOW)
+    env.tg.sent.clear()
+    for slug in ("a", "b", "c"):
+        env.web.plays[slug] = ParseError("layout changed")
+    kinds = []
+    for i in range(1, 6):
+        res = env.run(NOW + timedelta(minutes=5 * i))
+        kinds.append([e.kind for e in res.events])
+    assert env.saved_state()["meta"]["fetch_fail_streak"] == 5
+    assert kinds == [[], [], ["FETCH_FAILING"], [], []]
+    assert len(env.tg.sent) == 1
+    st = env.saved_state()
+    assert not any(st["plays"][s]["removed"] for s in ("a", "b", "c"))
+
+
+def test_half_of_play_pages_failing_is_a_scan_failure(monkeypatch):
+    env = Env(monkeypatch, [mkplay(s) for s in "abcd"])
+    env.run(NOW)
+    env.web.plays["a"] = ParseError("x")
+    env.web.plays["b"] = FetchError("y")
+    res = env.run(NOW + timedelta(minutes=5))
+    assert env.saved_state()["meta"]["fetch_fail_streak"] == 1 and res.scanned == 2
+
+
+def test_watched_play_failing_three_runs_emits_one_play_failing(monkeypatch):
+    plays = [mkplay("p"), mkplay("a"), mkplay("b"), mkplay("c")]
+    env = Env(monkeypatch, plays, WATCH_CFG)
+    env.run(NOW)
+    env.tg.sent.clear()
+    env.web.plays["p"] = ParseError("rows vs json-ld")
+    kinds = []
+    for i in range(1, 6):
+        res = env.run(NOW + timedelta(minutes=5 * i))
+        kinds.append([e.kind for e in res.events])
+    assert kinds == [[], [], ["PLAY_FAILING"], [], []]
+    st = env.saved_state()
+    assert st["plays"]["p"]["fail_streak"] == 5
+    assert st["meta"]["fetch_fail_streak"] == 0
+    key = [k for k in st["emitted"] if k.startswith("PLAY_FAILING:")]
+    assert key == [f"PLAY_FAILING:p:{(NOW + timedelta(minutes=5)).isoformat()}"]
+    assert len(env.tg.sent) == 1 and "Oyun sayfası okunamıyor: Oyun p" in env.tg.sent[0]
+    env.web.set(mkplay("p"))
+    env.run(NOW + timedelta(minutes=40))
+    assert env.saved_state()["plays"]["p"]["fail_streak"] == 0
+
+
+def test_unwatched_play_failing_is_not_alerted(monkeypatch):
+    env = Env(monkeypatch, [mkplay(s) for s in "pabc"], WATCH_CFG)
+    env.run(NOW)
+    env.web.plays["a"] = ParseError("x")
+    for i in range(1, 5):
+        assert env.run(NOW + timedelta(minutes=5 * i)).events == []
+
+
+def test_single_transient_play_failure_is_silent(monkeypatch):
+    env = Env(monkeypatch, [mkplay(s) for s in "pabc"], WATCH_CFG)
+    env.run(NOW)
+    env.tg.sent.clear()
+    env.web.plays["p"] = FetchError("HTTP 502")
+    env.run(NOW + timedelta(minutes=5))
+    env.web.set(mkplay("p"))
+    for i in range(2, 6):
+        env.run(NOW + timedelta(minutes=5 * i))
+    assert env.tg.sent == []
+    st = env.saved_state()
+    assert st["plays"]["p"]["fail_streak"] == 0 and st["meta"]["fetch_fail_streak"] == 0
+
+
+# ---- I1: GH_LAGGING ignores the current run -----------------------------------------
+
+SCAN_PATH = ".github/workflows/scan.yml"
+
+
+class HeadRunStore(FakeStore):
+    """runs(): the current in-progress run first, then the given completed runs."""
+
+    def __init__(self, previous):
+        super().__init__()
+        self.previous = previous
+
+    def runs(self, per_page=10):
+        cur = {"id": 999, "path": SCAN_PATH, "status": "in_progress", "conclusion": None,
+               "created_at": self.now.isoformat()}
+        other = {"id": 5, "path": ".github/workflows/test.yml", "status": "completed",
+                 "conclusion": "success", "created_at": self.now.isoformat()}
+        return [cur, other] + [
+            {"id": 100 + i, "path": SCAN_PATH, "status": "completed", "conclusion": c,
+             "created_at": (self.now - timedelta(minutes=m)).isoformat()}
+            for i, (m, c) in enumerate(self.previous)]
+
+
+def _gh_watch(monkeypatch, previous):
+    monkeypatch.setenv("GITHUB_RUN_ID", "999")
+    store = HeadRunStore(previous)
+    opens = NOW + timedelta(minutes=30)
+    st, cfg, tg, claims = _pc_env(store, opens)
+    store.files["heartbeat.json"] = ({"ts": NOW.isoformat(), "observed": {}}, "h1")
+    return pc_watch(store, st, cfg, NOW, claims, tg), opens
+
+
+def test_gh_lagging_with_in_progress_head_run(monkeypatch):
+    ev, opens = _gh_watch(monkeypatch, [(40, "success"), (45, "success")])
+    assert [e.key for e in ev] == [f"GH_LAGGING:{opens.isoformat()}"]
+
+
+def test_gh_two_previous_failures_unhealthy(monkeypatch):
+    ev, _ = _gh_watch(monkeypatch, [(5, "failure"), (10, "failure")])
+    assert [e.kind for e in ev] == ["GH_LAGGING"]
+
+
+def test_gh_healthy_previous_run_no_alert(monkeypatch):
+    ev, _ = _gh_watch(monkeypatch, [(5, "success"), (10, "success")])
+    assert ev == []
+
+
+def test_scan_runs_filter():
+    runs = [{"id": 1, "path": SCAN_PATH, "status": "in_progress"},
+            {"id": 2, "path": SCAN_PATH, "status": "completed"},
+            {"id": 3, "path": ".github/workflows/other.yml", "status": "completed"},
+            {"id": 4, "name": "scan", "status": "completed"},
+            "garbage"]
+    assert [r["id"] for r in runner.scan_runs(runs, run_id="2")] == [4]
+    assert [r["id"] for r in runner.scan_runs(runs, run_id=None)] == [2, 4]
+
+
+# ---- I2: stable SETUP key ---------------------------------------------------------
+
+def test_setup_key_stable_across_save_failure(monkeypatch):
+    store = FlakyStateStore()
+    env = Env(monkeypatch, [mkplay(f"p{i}") for i in range(6)], store=store)
+    store.fail_state = True
+    res = env.run(NOW)
+    assert res.save_error and len(env.tg.sent) == 1
+    store.fail_state = False
+    env.run(NOW + timedelta(minutes=1))
+    assert len(env.tg.sent) == 1
+    digest = hashlib.sha1("\n".join(sorted(f"p{i}" for i in range(6))).encode()).hexdigest()
+    assert claim_path(f"SETUP:{digest[:12]}") in store.files
+
+
+# ---- I3: transient store errors in a burst ----------------------------------------
+
+def test_burst_survives_one_store_error(monkeypatch):
+    opens = NOW + timedelta(minutes=5)
+    env = Env(monkeypatch, [mkplay(sessions=[sess(opens_at=opens)])], WATCH_CFG)
+    env.run(NOW)
+    env.tg.sent.clear()
+    clock = [NOW]
+    real_get = env.store.get
+    config_gets = []
+
+    def flaky_get(path):
+        if path == "config.json":
+            config_gets.append(1)
+            if len(config_gets) == 2:
+                raise RuntimeError("HTTP 502")
+        return real_get(path)
+
+    monkeypatch.setattr(env.store, "get", flaky_get)
+
+    def sleep(s):
+        clock[0] += timedelta(seconds=s)
+        if clock[0] >= opens:
+            env.web.set(mkplay(sessions=[sess(status=Status.ON_SALE)]))
+
+    res = burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
+                     opens + timedelta(minutes=10), fetch_fn=env.web.fetch)
+    assert len(config_gets) >= 3
+    assert res.errors == ["RuntimeError"]
+    assert len(env.tg.sent) == 1 and "Bilet alınabilir" in env.tg.sent[0]
+
+
+def test_burst_sleeps_between_page_fetches(monkeypatch):
+    opens = NOW + timedelta(minutes=5)
+    two = [mkplay("p", sessions=[sess(opens_at=opens)]),
+           mkplay("q", sessions=[sess("s2", opens_at=opens)])]
+    cfg = {"plays": {"p": WATCH_CFG["plays"]["p"], "q": WATCH_CFG["plays"]["p"]}}
+    env = Env(monkeypatch, two, cfg)
+    env.run(NOW)
+    env.sleeps.clear()
+    env.run(NOW + timedelta(seconds=1), only_slugs=["p", "q"])
+    assert env.sleeps and all(s >= 0.5 for s in env.sleeps)
+
+
+def _main_env(monkeypatch):
+    for k, v in {"TELEGRAM_BOT_TOKEN": "1:T", "TELEGRAM_CHAT_ID": "4",
+                 "GITHUB_TOKEN": "ghp_X", "GITHUB_REPOSITORY": "o/r"}.items():
+        monkeypatch.setenv(k, v)
+
+
+def test_main_runs_pc_watch_after_burst_crash(monkeypatch, capsys):
+    _main_env(monkeypatch)
+    calls = []
+
+    class S(RunsStore):
+        def __init__(self, *a, **k):
+            super().__init__()
+
+        def ensure_branch(self):
+            pass
+
+    monkeypatch.setattr(runner, "Store", S)
+    monkeypatch.setattr(runner, "Telegram", lambda *a, **k: FakeTG())
+    monkeypatch.setattr(runner, "run_once", lambda *a, **k: runner.RunResult(
+        [], "normal", 0, runner._prepare(empty_state()), daily=True))
+    monkeypatch.setattr(runner, "plan_mode", lambda *a: ("burst", NOW))
+
+    def boom(*a, **k):
+        raise RuntimeError("burst died")
+
+    monkeypatch.setattr(runner, "burst_loop", boom)
+    monkeypatch.setattr(runner, "pc_watch", lambda *a, **k: calls.append("pc") or [])
+    monkeypatch.setattr(runner.ClaimStore, "purge", lambda self, *a: calls.append("purge"))
+    runner.main()
+    assert calls == ["pc", "purge"]
+    assert "RuntimeError" in capsys.readouterr().err
+
+
+# ---- I4: daily new-session summary ----------------------------------------------
+
+def test_daily_summary_of_new_sessions(monkeypatch):
+    day = datetime(2026, 11, 13, 13, 0, tzinfo=ISTANBUL)
+    env = Env(monkeypatch, [mkplay("a", title="Hamlet"), mkplay("b")])
+    res = env.run(day)  # first daily: no previous daily -> nothing
+    assert res.daily and [e.kind for e in res.events] == ["NEW_PLAY", "NEW_PLAY"]
+    sat2 = SAT_20 + timedelta(days=7)
+    env.web.set(mkplay("a", title="Hamlet", sessions=[
+        sess(), sess("s7", start=sat2), sess("s8", start=sat2 + timedelta(days=7))]))
+    res = env.run(day + timedelta(hours=2))
+    assert res.events == []
+    res = env.run(day + timedelta(days=1))
+    assert [e.key for e in res.events] == ["NEW_SESSIONS:2026-11-14"]
+    msg = env.tg.sent[-1]
+    assert "Yeni seanslar/dönem" in msg and "Hamlet" in msg and "2 seans" in msg
+    assert "28 Kasım" in msg and "5 Aralık" in msg
+    res = env.run(day + timedelta(days=2))
+    assert res.daily and res.events == []
+
+
+# ---- I5: dropped alerts are announced -------------------------------------------
+
+def test_drop_notice_delivered_once_after_outage(monkeypatch):
+    env = on_sale_ready(monkeypatch)
+    env.tg.fail = True
+    env.run(NOW + timedelta(minutes=5))
+    env.run(NOW + timedelta(hours=6, minutes=6))
+    st = env.saved_state()
+    assert [e["key"] for e in st["outbox"]] == ["DROPPED:ON_SALE:s1:1"]
+    env.tg.fail = False
+    env.run(NOW + timedelta(hours=6, minutes=30))
+    env.run(NOW + timedelta(hours=7))
+    assert len(env.tg.sent) == 1
+    assert "1 bildirim iletilemedi" in env.tg.sent[0] and "ON_SALE" in env.tg.sent[0]
+    assert env.saved_state()["outbox"] == []
+
+
+def test_main_exits_nonzero_and_reports_drops(monkeypatch, capsys):
+    _main_env(monkeypatch)
+    st = runner._prepare(empty_state())
+    st["outbox"] = [{"key": "ON_SALE:x:1", "event": event_to_dict(
+        Event("ON_SALE", "ON_SALE:x:1", "p", "x", [], {})),
+        "created": (datetime.now(ISTANBUL) - timedelta(hours=7)).isoformat(),
+        "attempts": 3, "not_before": NOW.isoformat()}]
+
+    class S(RunsStore):
+        def __init__(self, *a, **k):
+            super().__init__()
+            self.files["state.json"] = (st, "s0")
+
+        def ensure_branch(self):
+            pass
+
+    web = Web(monkeypatch, [mkplay("a")])
+    monkeypatch.setattr(runner, "Store", S)
+    monkeypatch.setattr(runner, "Telegram", lambda *a, **k: FakeTG())
+    monkeypatch.setattr(runner, "fetch", web.fetch)
+    monkeypatch.setattr(runner.time, "sleep", lambda s: None)
+    assert runner.main() == 1
+    assert "ON_SALE:x:1" in capsys.readouterr().err
+
+
+# ---- M1: malformed state --------------------------------------------------------
+
+@pytest.mark.parametrize("bad", [{"plays": None}, {"meta": None}, {"outbox": ["x"]},
+                                 {"emitted": [1], "outbox": [{"no": "key"}, 5]},
+                                 {"plays": {"a": "junk"}}, ["not", "a", "dict"]])
+def test_malformed_state_is_coerced(monkeypatch, bad):
+    env = Env(monkeypatch, [mkplay("a")])
+    env.store.files["state.json"] = (bad, "s0")
+    res = env.run(NOW)
+    st = env.saved_state()
+    assert isinstance(st["plays"], dict) and isinstance(st["meta"], dict)
+    assert st["outbox"] == [] and res.scanned == 1
+
+
+def test_store_error_on_state_load_propagates(monkeypatch):
+    env = Env(monkeypatch, [mkplay("a")])
+    env.store.files["state.json"] = ({"plays": {}, "meta": {"x": 1}}, "s0")
+    real = env.store.get
+
+    def get(path):
+        if path == "state.json":
+            raise RuntimeError("HTTP 502")
+        return real(path)
+
+    monkeypatch.setattr(env.store, "get", get)
+    with pytest.raises(RuntimeError):
+        env.run(NOW)
+    assert env.store.files["state.json"][0] == {"plays": {}, "meta": {"x": 1}}
+
+
+# ---- overdue openings: the site flips when the organiser enables sales ------------
+
+def _overdue_env(monkeypatch, opens):
+    env = Env(monkeypatch, [mkplay(sessions=[sess(opens_at=opens)])], WATCH_CFG)
+    env.run(opens - timedelta(hours=2))
+    env.tg.sent.clear()
+    return env
+
+
+def test_overdue_opening_flip_inside_burst_sends_once(monkeypatch):
+    env = _overdue_env(monkeypatch, OPENS)
+    start = OPENS + timedelta(minutes=20)  # still UPCOMING 20 min after opens_at
+    assert plan_mode(env.saved_state(), config_from_dict(WATCH_CFG), start)[0] == "burst"
+    clock = [start]
+    ticks = []
+
+    def sleep(s):
+        if s >= 5:
+            ticks.append(s)
+        clock[0] += timedelta(seconds=s)
+        if clock[0] >= OPENS + timedelta(minutes=25):
+            env.web.set(mkplay(sessions=[sess(status=Status.ON_SALE)]))
+
+    res = burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
+                     OPENS + timedelta(minutes=90), fetch_fn=env.web.fetch,
+                     rand=lambda a, b: 0.0)
+    assert len(env.tg.sent) == 1 and "Bilet alınabilir" in env.tg.sent[0]
+    assert res.state["plays"]["p"]["sessions"]["s1"]["status"] == "on_sale"
+    assert set(ticks) == {12}  # fast polling: within 30 min of opens_at / recent flip
+    assert clock[0] - start <= timedelta(seconds=780 + 12)
+    # the next scheduled run re-enters burst cheaply and does not re-send
+    res2 = burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
+                      OPENS + timedelta(minutes=90), fetch_fn=env.web.fetch,
+                      rand=lambda a, b: 0.0)
+    assert len(env.tg.sent) == 1 and res2.errors == []
+
+
+def test_burst_backs_off_after_30_min_and_jitters(monkeypatch):
+    env = _overdue_env(monkeypatch, OPENS)
+    clock = [OPENS + timedelta(minutes=31)]
+    ticks = []
+
+    def sleep(s):
+        if s >= 5:
+            ticks.append(s)
+        clock[0] += timedelta(seconds=s)
+
+    burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
+               OPENS + timedelta(minutes=90), fetch_fn=env.web.fetch, max_seconds=120)
+    assert ticks and all(27 <= t <= 33 for t in ticks)
+    clock[0] = OPENS + timedelta(minutes=5)
+    ticks.clear()
+    burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
+               OPENS + timedelta(minutes=90), fetch_fn=env.web.fetch, max_seconds=120)
+    assert ticks and all(9 <= t <= 15 for t in ticks)
+    assert len(set(ticks)) > 1  # jittered
+
+
+def test_burst_ends_after_90_min_overdue(monkeypatch):
+    env = _overdue_env(monkeypatch, OPENS)
+    clock = [OPENS + timedelta(minutes=89)]
+
+    def sleep(s):
+        clock[0] += timedelta(seconds=s)
+
+    burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
+               OPENS + timedelta(minutes=90), fetch_fn=env.web.fetch)
+    assert clock[0] <= OPENS + timedelta(minutes=90, seconds=33)

@@ -5,14 +5,31 @@ Delivery guarantees (a missed alert is worse than a duplicate):
   sent, so each event is first put into the persistent ``state["outbox"]`` and retried
   every run until the claim for its key reads ``sent`` (written by us or by the other
   runner). An entry is dropped after 6 h or 20 send attempts; the drop is logged in
-  ``state["meta"]["outbox_dropped"]`` and counted as a failure. After a failed attempt
-  the entry waits 10 s, 20 s, 40 s ... (max 10 min) before the next try.
+  ``state["meta"]["outbox_dropped"]``, counted as a failure, and announced once by a
+  ``DELIVERY_DROPPED`` notice (key ``DROPPED:<first dropped key>``) that goes through
+  the same outbox. After a failed attempt the entry waits 10 s, 20 s, 40 s ...
+  (max 10 min) before the next try.
 - One claim per event: claim key = event key. Exception: the first scan (old state had
-  no plays) folds all NEW_PLAY events into a single ``SETUP:<YYYY-MM-DDTHH:MM>`` entry.
+  no plays) folds all NEW_PLAY events into a single ``SETUP:<sha1(sorted slugs)[:12]>``
+  entry; the key is stable, so a retry after a failed state save is not re-sent.
 - If the Telegram send succeeded but saving ``state.json`` failed, the next run derives
   the same events again; their claims already read ``sent`` so they are not re-sent.
 - The PC runner (``who="pc"``) queues with ``not_before = now + 60 s`` so GitHub gets
   the first chance; afterwards the PC only sends if the claim is not ``sent``/held.
+
+Scan health: a venue failure, or a venue that loads while no play page (or at least
+max(2, 50 %) of them) parses, is a scan FAILURE: ``meta.fetch_fail_streak`` grows and
+one ``FETCH_FAILING`` fires at 3. A single watched play whose page fails 3 normal scans
+in a row fires one ``PLAY_FAILING`` (``plays[slug]["fail_streak"]``).
+
+Burst mode: the announced ``opens_at`` is only a plan; the site flips to ON_SALE when
+the organiser enables sales, which can be minutes late (observed live). So a watched
+UPCOMING session is polled from ``opens_at - 10 min`` up to ``opens_at + 90 min``
+(every 12 s +-3 s, every 30 s +-3 s once 30 min overdue), and for 10 min after a flip to
+ON_SALE. One run's burst ends before ``max_seconds`` (780 s); the next scheduled run
+(every 5 min) re-enters burst mode by itself, which is cheap and idempotent (state,
+``emitted`` and claims carry over). Two runs never overlap: the scan workflow runs in
+one Actions ``concurrency`` group (set up in the workflow file).
 
 Pausing: with ``config.paused`` the scan and state update run normally but the events
 (and anything still in the outbox) are discarded: they stay recorded in ``emitted`` and
@@ -26,11 +43,13 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import hashlib
 import json
 import os
+import random
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, time as dtime, timedelta
 from typing import Callable, Iterable
 
@@ -39,7 +58,7 @@ from tiyatro.config import config_from_dict, default_config
 from tiyatro.fetcher import fetch
 from tiyatro.heartbeat import github_run_status, pc_status, read_heartbeat
 from tiyatro.models import ISTANBUL, Config, Event, Play, Session, Status
-from tiyatro.notify import Telegram, default_transport, format_message
+from tiyatro.notify import MONTHS, Telegram, default_transport, format_message
 from tiyatro.parser import ParseError, parse_play, parse_venue
 from tiyatro.rules import matching_targets
 from tiyatro.state import cleanup, diff, empty_state, next_opening
@@ -49,7 +68,9 @@ from tiyatro.timeutil import parse_iso
 STATE_PATH = "state.json"
 CONFIG_PATH = "config.json"
 REQUEST_GAP_S = 2
+BURST_GAP_S = 0.5
 FETCH_FAIL_ALERT_AT = 3
+PLAY_FAIL_ALERT_AT = 3
 OUTBOX_MAX_AGE = timedelta(hours=6)
 OUTBOX_MAX_ATTEMPTS = 20
 PC_DELAY = timedelta(seconds=60)
@@ -57,11 +78,18 @@ RETRY_BASE_S = 10
 RETRY_MAX_S = 600
 DROPPED_LOG_MAX = 50
 BURST_LEAD = timedelta(minutes=10)
+BURST_OVERDUE = timedelta(minutes=90)
+BURST_SLOW_AFTER = timedelta(minutes=30)
+BURST_FLIP_TAIL = timedelta(minutes=10)
 BURST_INTERVAL_S = 12
+BURST_SLOW_INTERVAL_S = 30
+BURST_JITTER_S = 3
 BURST_MAX_SECONDS = 780
 PC_WINDOW = timedelta(minutes=60)
 PC_SECOND_WARNING = timedelta(minutes=10)
 DAILY_AT = dtime(12, 0)
+SCAN_WORKFLOW_PATH = ".github/workflows/scan.yml"
+SCAN_WORKFLOW_NAME = "scan"
 ENV_KEYS = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "GITHUB_TOKEN", "GITHUB_REPOSITORY")
 SECRET_KEYS = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "GITHUB_TOKEN")
 
@@ -75,6 +103,7 @@ class RunResult:
     failures: int = 0
     save_error: str | None = None
     daily: bool = False
+    errors: list[str] = field(default_factory=list)  # burst: exception type names
 
 
 # ---- (de)serialisation and loading ----------------------------------------
@@ -95,19 +124,41 @@ def load_config(store) -> Config:
     return config_from_dict(data) if data else default_config()
 
 
-def _prepare(state: dict) -> dict:
-    """Fill in runner-owned keys in place."""
-    state.setdefault("plays", {})
-    state.setdefault("emitted", {})
-    if not isinstance(state.get("outbox"), list):
-        state["outbox"] = []
-    meta = state.setdefault("meta", {})
+def _prepare(state) -> dict:
+    """Coerce a (possibly malformed) state into shape; fixes dicts in place.
+
+    Garbled parts are replaced or dropped (non-dict plays, non-dict or keyless outbox
+    entries) so one bad write can never wedge the runner.
+    """
+    if not isinstance(state, dict):
+        state = empty_state()
+    plays = state.get("plays")
+    if not isinstance(plays, dict):
+        plays = state["plays"] = {}
+    for slug in [s for s, e in plays.items() if not isinstance(e, dict)]:
+        del plays[slug]
+    for entry in plays.values():
+        if not isinstance(entry.get("sessions"), dict):
+            entry["sessions"] = {}
+        for sid in [s for s, r in entry["sessions"].items() if not isinstance(r, dict)]:
+            del entry["sessions"][sid]
+    if not isinstance(state.get("emitted"), dict):
+        state["emitted"] = {}
+    box = state.get("outbox")
+    state["outbox"] = [e for e in (box if isinstance(box, list) else [])
+                       if isinstance(e, dict) and isinstance(e.get("key"), str) and e["key"]
+                       and (isinstance(e.get("event"), dict) or isinstance(e.get("events"), list))]
+    if not isinstance(state.get("meta"), dict):
+        state["meta"] = {}
+    meta = state["meta"]
     meta.setdefault("last_scan", None)
-    meta.setdefault("fetch_fail_streak", 0)
+    if not isinstance(meta.get("fetch_fail_streak"), int):
+        meta["fetch_fail_streak"] = 0
     return state
 
 
 def load_state(store) -> dict:
+    """Store errors propagate on purpose: never overwrite good state with an empty one."""
     data, _sha = store.get(STATE_PATH)
     return _prepare(data if data else empty_state())
 
@@ -127,11 +178,12 @@ def _fingerprint(state: dict) -> str:
     return json.dumps(st, sort_keys=True, default=str)
 
 
-def _emit(state: dict, kind: str, key: str, payload: dict, now: datetime) -> Event | None:
+def _emit(state: dict, kind: str, key: str, payload: dict, now: datetime,
+          slug: str = "") -> Event | None:
     if key in state["emitted"]:
         return None
     state["emitted"][key] = now.isoformat()
-    return Event(kind, key, "", None, [], payload)
+    return Event(kind, key, slug, None, [], payload)
 
 
 # ---- outbox ------------------------------------------------------------------
@@ -148,12 +200,16 @@ def _enqueue(state: dict, key: str, events: list[Event], now: datetime, who: str
     state["outbox"].append(entry)
 
 
+def setup_key(events: list[Event]) -> str:
+    slugs = "\n".join(sorted(e.play_slug for e in events))
+    return "SETUP:" + hashlib.sha1(slugs.encode("utf-8")).hexdigest()[:12]
+
+
 def _queue_events(state: dict, events: list[Event], first_scan: bool, now: datetime,
                   who: str) -> None:
     setup = [e for e in events if e.kind == "NEW_PLAY"] if first_scan else []
     if setup:
-        local = now.astimezone(ISTANBUL)
-        _enqueue(state, f"SETUP:{local:%Y-%m-%dT%H:%M}", setup, now, who)
+        _enqueue(state, setup_key(setup), setup, now, who)
     for ev in events:
         if ev not in setup:
             _enqueue(state, ev.key, [ev], now, who)
@@ -163,7 +219,7 @@ def _entry_events(entry: dict) -> list[Event]:
     raw = entry.get("events")
     if not isinstance(raw, list):
         raw = [entry.get("event") or {}]
-    return [event_from_dict(d) for d in raw]
+    return [event_from_dict(d) for d in raw if isinstance(d, dict)]
 
 
 def _claim_sent(store, key: str) -> bool:
@@ -175,7 +231,11 @@ def _claim_sent(store, key: str) -> bool:
 
 
 class _AllParts:
-    """Telegram stand-in for ``send_with_claim``: sends every part, returns the last id."""
+    """Telegram stand-in for ``send_with_claim``: sends every part, returns the last id.
+
+    If a later part fails, the whole message is retried and the earlier parts are sent
+    again: an accepted duplicate (better than a missing part).
+    """
 
     def __init__(self, tg, parts: list[str]):
         self.tg = tg
@@ -190,28 +250,46 @@ class _AllParts:
 
 def _log_drop(state: dict, entry: dict, reason: str, now: datetime) -> None:
     log = state["meta"].setdefault("outbox_dropped", [])
+    if not isinstance(log, list):
+        log = state["meta"]["outbox_dropped"] = []
     log.append({"key": entry.get("key"), "reason": reason, "at": now.isoformat(),
                 "attempts": entry.get("attempts", 0)})
     del log[:-DROPPED_LOG_MAX]
 
 
+def _drop_notice(state: dict, dropped: list[dict], now: datetime) -> None:
+    labels = []
+    for entry in dropped:
+        for ev in _entry_events(entry):
+            title = ev.payload.get("title") or ev.play_slug
+            labels.append(f"{ev.kind} {title}".strip())
+    first = str(dropped[0].get("key"))
+    ev = _emit(state, "DELIVERY_DROPPED", f"DROPPED:{first}",
+               {"count": len(dropped), "summary": ", ".join(labels)}, now)
+    if ev is not None:
+        _enqueue(state, ev.key, [ev], now, "github")
+
+
 def _deliver(state: dict, store, tg, claims: ClaimStore, now: datetime,
              plays: dict[str, Play], config: Config) -> int:
     """Try every due outbox entry once. Returns the number of dropped (failed) entries."""
-    failures = 0
+    dropped: list[dict] = []
     keep: list[dict] = []
     for entry in state["outbox"]:
         key = str(entry.get("key", ""))
-        created = parse_iso(entry.get("created")) or now
-        attempts = int(entry.get("attempts", 0))
+        try:
+            created = parse_iso(entry.get("created")) or now
+            attempts = int(entry.get("attempts", 0))
+            not_before = parse_iso(entry.get("not_before")) or now
+        except (TypeError, ValueError):
+            created, attempts, not_before = now, 0, now
         expired = ("age" if now - created > OUTBOX_MAX_AGE
                    else "attempts" if attempts >= OUTBOX_MAX_ATTEMPTS else None)
         if expired:
             if not _claim_sent(store, key):
                 _log_drop(state, entry, expired, now)
-                failures += 1
+                dropped.append(entry)
             continue
-        not_before = parse_iso(entry.get("not_before")) or now
         if not_before > now:
             keep.append(entry)
             continue
@@ -228,7 +306,9 @@ def _deliver(state: dict, store, tg, claims: ClaimStore, now: datetime,
             entry["not_before"] = (now + timedelta(seconds=delay)).isoformat()
             keep.append(entry)
     state["outbox"] = keep
-    return failures
+    if dropped:
+        _drop_notice(state, dropped, now)
+    return len(dropped)
 
 
 def _discard_outbox(state: dict, events: Iterable[Event] = ()) -> None:
@@ -257,8 +337,8 @@ def _scan(config: Config, state: dict, fetch_fn: Callable, sleep: Callable,
 
     def get(url: str) -> str:
         nonlocal requests
-        if requests and not burst:
-            sleep(REQUEST_GAP_S)
+        if requests:
+            sleep(BURST_GAP_S if burst else REQUEST_GAP_S)
         requests += 1
         return fetch_fn(url).html
 
@@ -293,11 +373,95 @@ def _scan(config: Config, state: dict, fetch_fn: Callable, sleep: Callable,
     return plays, unscanned, failures, venue_error
 
 
+def _play_pages_error(scanned: int, failed: int) -> str | None:
+    total = scanned + failed
+    if total and (scanned == 0 or failed >= max(2, total / 2)):
+        return f"PlayPagesFailing {failed}/{total}"
+    return None
+
+
+def _track_play_failures(state: dict, plays: list[Play], unscanned: set[str],
+                         config: Config, now: datetime) -> list[Event]:
+    events = []
+    for p in plays:
+        entry = state["plays"].get(p.slug)
+        if entry is not None:
+            entry["fail_streak"] = 0
+            entry["fail_since"] = None
+    for slug in sorted(unscanned):
+        entry = state["plays"].get(slug)
+        if entry is None:  # never parsed yet: nothing stored to warn about
+            continue
+        streak = int(entry.get("fail_streak") or 0)
+        if streak == 0:
+            entry["fail_since"] = now.isoformat()
+        entry["fail_streak"] = streak + 1
+        watch = config.plays.get(slug)
+        if entry["fail_streak"] == PLAY_FAIL_ALERT_AT and watch is not None and watch.active:
+            since = entry.get("fail_since") or now.isoformat()
+            ev = _emit(state, "PLAY_FAILING", f"PLAY_FAILING:{slug}:{since}",
+                       {"title": entry.get("title") or slug, "play_url": entry.get("url"),
+                        "detail": f"{PLAY_FAIL_ALERT_AT} taramadır okunamıyor"}, now, slug)
+            if ev:
+                events.append(ev)
+    return events
+
+
+def _day_text(d: datetime) -> str:
+    return f"{d.day} {MONTHS[d.month - 1]}"
+
+
+def _new_sessions_event(state: dict, since: datetime, now: datetime) -> Event | None:
+    lines = []
+    for slug, entry in state["plays"].items():
+        if entry.get("removed"):
+            continue
+        starts = []
+        for rec in entry["sessions"].values():
+            try:
+                first = parse_iso(rec.get("first_seen"))
+                start = parse_iso(rec.get("start"))
+            except (TypeError, ValueError):
+                continue
+            if first is not None and start is not None and first > since \
+                    and not rec.get("gone"):
+                starts.append(start.astimezone(ISTANBUL))
+        if starts:
+            lo, hi = min(starts), max(starts)
+            span = _day_text(lo) if lo.date() == hi.date() else \
+                f"{_day_text(lo)} – {_day_text(hi)}"
+            lines.append(f"• {entry.get('title') or slug}: {len(starts)} seans ({span})")
+    if not lines:
+        return None
+    day = now.astimezone(ISTANBUL).date().isoformat()
+    return _emit(state, "NEW_SESSIONS", f"NEW_SESSIONS:{day}", {"lines": lines}, now)
+
+
+def _daily(state: dict, now: datetime) -> list[Event]:
+    """Mark today's daily run; summarise sessions first seen since the previous one."""
+    meta = state["meta"]
+    local = now.astimezone(ISTANBUL)
+    try:
+        since = parse_iso(meta.get("last_daily_at"))
+        if since is None and meta.get("last_daily"):
+            since = datetime.combine(datetime.fromisoformat(meta["last_daily"]).date(),
+                                     DAILY_AT, tzinfo=ISTANBUL)
+    except (TypeError, ValueError):
+        since = None
+    meta["last_daily"] = local.date().isoformat()
+    meta["last_daily_at"] = now.isoformat()
+    if since is None:  # very first daily run: everything is "new", say nothing
+        return []
+    ev = _new_sessions_event(state, since, now)
+    return [ev] if ev else []
+
+
 def run_once(store, tg, claims, now: datetime, who: str = "github",
              fetch_fn: Callable = fetch, sleep: Callable = time.sleep,
              persist_state: bool = True, state: dict | None = None,
-             only_slugs: list[str] | None = None) -> RunResult:
-    config = load_config(store)
+             only_slugs: list[str] | None = None,
+             config: Config | None = None) -> RunResult:
+    config = config if config is not None else load_config(store)
     state = _prepare(copy.deepcopy(state) if state is not None else load_state(store))
     burst = only_slugs is not None
     failures = 0
@@ -313,10 +477,12 @@ def run_once(store, tg, claims, now: datetime, who: str = "github",
     failures += play_failures
     first_scan = not state["plays"]
     events: list[Event] = []
+    scan_error = venue_error or (None if burst
+                                 else _play_pages_error(len(plays), play_failures))
 
     if not burst:
         meta = state["meta"]
-        if venue_error:
+        if scan_error:
             failures += 1
             if int(meta.get("fetch_fail_streak", 0)) == 0:
                 meta["fetch_fail_since"] = now.isoformat()
@@ -325,7 +491,7 @@ def run_once(store, tg, claims, now: datetime, who: str = "github",
                 since = meta.get("fetch_fail_since") or now.isoformat()
                 ev = _emit(state, "FETCH_FAILING", f"FETCH_FAILING:{since}",
                            {"detail": f"Biletinial {FETCH_FAIL_ALERT_AT} kez üst üste "
-                                      f"okunamadı ({venue_error})"}, now)
+                                      f"okunamadı ({scan_error})"}, now)
                 if ev:
                     events.append(ev)
         else:
@@ -334,16 +500,19 @@ def run_once(store, tg, claims, now: datetime, who: str = "github",
 
     # A failed venue scan never reaches diff (it would look like every play vanished).
     # With several sources, plays from the venues that did load are diffed as a subset.
+    # Play pages that failed are `unscanned`: kept as they are, never counted missing.
     if burst or not venue_error or plays:
         state, diff_events = diff(state, plays, config, now,
                                   complete=not burst and not venue_error,
                                   unscanned=unscanned)
         state = _prepare(cleanup(state, config, now))
         events.extend(diff_events)
+        if not burst:
+            events.extend(_track_play_failures(state, plays, unscanned, config, now))
 
     daily = False
-    if not burst and not venue_error and daily_due(state, now):
-        state["meta"]["last_daily"] = now.astimezone(ISTANBUL).date().isoformat()
+    if not burst and not scan_error and daily_due(state, now):
+        events.extend(_daily(state, now))
         daily = True
 
     failures += _dispatch(state, events, first_scan, store, tg, claims, now,
@@ -356,65 +525,109 @@ def run_once(store, tg, claims, now: datetime, who: str = "github",
 
 # ---- modes -----------------------------------------------------------------------
 
-def _window_openings(state: dict, config: Config, now: datetime) -> list[tuple[str, datetime]]:
-    """(slug, opens_at) of watched sessions with now in [opens_at-10m, opens_at+10m]."""
+def _burst_targets(state: dict, config: Config,
+                   now: datetime) -> list[tuple[str, datetime, bool]]:
+    """(slug, burst end, fast?) for watched sessions that need burst polling.
+
+    UPCOMING with ``opens_at - 10 min <= now <= opens_at + 90 min`` (fast while at most
+    30 min overdue), or flipped to ON_SALE within the last 10 min (fast).
+    """
     out = []
     for slug, entry in (state.get("plays") or {}).items():
         watch = config.plays.get(slug)
         if watch is None or not watch.active or entry.get("removed"):
             continue
         for sid, rec in (entry.get("sessions") or {}).items():
-            if rec.get("gone"):
+            if not isinstance(rec, dict) or rec.get("gone"):
                 continue
             try:
+                status = Status(rec["status"])
                 opens = parse_iso(rec.get("opens_at"))
-                if opens is None or not opens - BURST_LEAD <= now <= opens + BURST_LEAD:
-                    continue
-                session = Session(sid, parse_iso(rec["start"]), None, Status(rec["status"]),
-                                  opens, rec.get("url", ""), "")
+                since = parse_iso(rec.get("status_since"))
+                session = Session(sid, parse_iso(rec["start"]), None, status, opens,
+                                  rec.get("url", ""), "")
             except (KeyError, ValueError, TypeError):
                 continue
+            if status is Status.UPCOMING and opens is not None \
+                    and opens - BURST_LEAD <= now <= opens + BURST_OVERDUE:
+                hit = (opens + BURST_OVERDUE, now <= opens + BURST_SLOW_AFTER)
+            elif status is Status.ON_SALE and since is not None \
+                    and since <= now <= since + BURST_FLIP_TAIL:
+                hit = (since + BURST_FLIP_TAIL, True)
+            else:
+                continue
             if matching_targets(watch, session):
-                out.append((slug, opens))
+                out.append((slug, *hit))
     return out
 
 
 def plan_mode(state: dict, config: Config, now: datetime) -> tuple[str, datetime | None]:
-    found = _window_openings(state, config, now)
+    """("burst", until) while a watched session is about to open, is overdue or just
+    flipped; else ("normal", None).
+
+    Burst iff a watched session (active play, >= 1 matching target) is UPCOMING with
+    ``opens_at - 10 min <= now <= opens_at + 90 min`` (the site often flips later than
+    the announced time), or flipped to ON_SALE within the last 10 min. ``until`` is the
+    latest such end (``opens_at + 90 min`` / flip + 10 min); ``burst_loop`` caps a single
+    run at ``max_seconds`` and the next scheduled run re-enters burst mode.
+    """
+    found = _burst_targets(state, config, now)
     if not found:
         return "normal", None
-    return "burst", max(opens for _, opens in found) + BURST_LEAD
+    return "burst", max(end for _, end, _fast in found)
 
 
 def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callable,
                until: datetime, interval: float = BURST_INTERVAL_S,
                fetch_fn: Callable = fetch, max_seconds: float = BURST_MAX_SECONDS, *,
                who: str = "github", persist_state: bool = True,
-               state: dict | None = None) -> RunResult | None:
-    """Re-scan only the plays inside a burst window every ``interval`` seconds.
+               state: dict | None = None,
+               rand: Callable[[float, float], float] = random.uniform) -> RunResult:
+    """Re-scan only the plays inside a burst window.
 
-    Stops at ``until``, after ``max_seconds`` or when no watched session is in its
-    window any more. State is saved only when an iteration changed something.
+    Tick interval: ``interval`` (12 s), or 30 s once every targeted session is more
+    than 30 min overdue; both with +-3 s jitter (``rand``). Stops at ``until``, after
+    ``max_seconds`` or when no watched session is in its window any more. State is saved only when an iteration changed something. A
+    failing tick (e.g. one store 502) is recorded by exception type name in
+    ``RunResult.errors`` and the loop goes on with the last good config/state.
     """
     start = now_fn()
     deadline = min(until, start + timedelta(seconds=max_seconds))
     state = _prepare(copy.deepcopy(state)) if state is not None else load_state(store)
+    config: Config | None = None
+    base = interval
+    errors: list[str] = []
     result: RunResult | None = None
     while True:
         now = now_fn()
         if now >= deadline:
             break
-        slugs = sorted({slug for slug, _ in _window_openings(state, load_config(store), now)})
-        if not slugs:
-            break
-        before = _fingerprint(state)
-        result = run_once(store, tg, claims, now, who=who, fetch_fn=fetch_fn, sleep=sleep,
-                          persist_state=False, state=state, only_slugs=slugs)
-        state = result.state
-        if persist_state and _fingerprint(state) != before:
-            result.save_error = save_state(store, state)
-        sleep(interval)
-    return result
+        try:
+            try:
+                config = load_config(store)
+            except Exception as exc:
+                if config is None:
+                    raise
+                errors.append(type(exc).__name__)
+            targets = _burst_targets(state, config, now)
+            if not targets:
+                break
+            slugs = sorted({slug for slug, _end, _fast in targets})
+            base = interval if any(fast for *_x, fast in targets) else BURST_SLOW_INTERVAL_S
+            before = _fingerprint(state)
+            result = run_once(store, tg, claims, now, who=who, fetch_fn=fetch_fn,
+                              sleep=sleep, persist_state=False, state=state,
+                              only_slugs=slugs, config=config)
+            state = result.state
+            if persist_state and _fingerprint(state) != before:
+                result.save_error = save_state(store, state)
+        except Exception as exc:
+            errors.append(type(exc).__name__)
+        sleep(max(1.0, base + rand(-BURST_JITTER_S, BURST_JITTER_S)))
+    final = result or RunResult([], "burst", 0, state)
+    final.state = state
+    final.errors = errors
+    return final
 
 
 def daily_due(state: dict, now: datetime) -> bool:
@@ -424,10 +637,27 @@ def daily_due(state: dict, now: datetime) -> bool:
     return (state.get("meta") or {}).get("last_daily") != local.date().isoformat()
 
 
+def scan_runs(runs, run_id: str | None = None,
+              workflow: str = SCAN_WORKFLOW_PATH) -> list[dict]:
+    """Completed runs of the scan workflow, without the current run (``run_id``)."""
+    out = []
+    for r in runs if isinstance(runs, list) else []:
+        if not isinstance(r, dict) or r.get("status") != "completed":
+            continue
+        if run_id is not None and str(r.get("id")) == str(run_id):
+            continue
+        path = str(r.get("path") or "").split("@")[0]
+        if path == workflow or r.get("name") == SCAN_WORKFLOW_NAME:
+            out.append(r)
+    return out
+
+
 def pc_watch(store, state: dict, config: Config, now: datetime, claims, tg) -> list[Event]:
     """Opening-window liveness checks (PC heartbeat, own GitHub schedule).
 
-    Mutates ``state`` in place (emitted keys, outbox); the caller saves it.
+    Mutates ``state`` in place (emitted keys, outbox); the caller saves it. The GitHub
+    check ignores the current run (env ``GITHUB_RUN_ID``), runs still in progress and
+    other workflows.
     """
     _prepare(state)
     opens = next_opening(state, config, now)
@@ -450,7 +680,8 @@ def pc_watch(store, state: dict, config: Config, now: datetime, claims, tg) -> l
         candidates.append(_emit(state, "PC_DIVERGED", f"PC_DIVERGED:{iso}",
                                 {"detail": f"PC farklı görüyor (açılış {at})"}, now))
     try:
-        gh = github_run_status(store.runs(), now)
+        runs = scan_runs(store.runs(per_page=30), os.environ.get("GITHUB_RUN_ID") or None)
+        gh = github_run_status(runs, now)
     except Exception:
         gh = None  # the run list itself is unavailable: nothing reliable to report
     if gh is not None and not gh["healthy"]:
@@ -470,7 +701,26 @@ def _scrub(text: str, secrets: list[str]) -> str:
     return text
 
 
+def _new_drops(state: dict, since: datetime) -> list[str]:
+    keys = []
+    for d in state.get("meta", {}).get("outbox_dropped") or []:
+        try:
+            at = parse_iso(d.get("at"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if at is not None and at >= since:
+            keys.append(str(d.get("key")))
+    return keys
+
+
 def main() -> int:
+    """GitHub entry point.
+
+    Exit code 0, except 1 when: an unexpected exception escaped (message without
+    secrets), ``state.json`` could not be saved (the claims still prevent duplicates,
+    but a red run makes a persistent store fault visible), an alert was dropped from
+    the outbox, or the burst / PC-watch step crashed. 2 when env variables are missing.
+    """
     secrets: list[str] = []
     try:
         env = {k: os.environ.get(k, "") for k in ENV_KEYS}
@@ -486,20 +736,30 @@ def main() -> int:
         def now_fn() -> datetime:
             return datetime.now(ISTANBUL)
 
+        started = now_fn()
         claims = ClaimStore(store, "github", now_fn)
         store.ensure_branch()
         res = run_once(store, tg, claims, now_fn(), fetch_fn=fetch, sleep=time.sleep)
         state, errors = res.state, [res.save_error]
+        problems: list[str] = []
         config = load_config(store)
         mode, until = plan_mode(state, config, now_fn())
         if mode == "burst":
-            br = burst_loop(store, tg, claims, now_fn, time.sleep, until, fetch_fn=fetch,
-                            state=state)
-            if br is not None:
+            try:
+                br = burst_loop(store, tg, claims, now_fn, time.sleep, until,
+                                fetch_fn=fetch, state=state)
                 state = br.state
                 errors.append(br.save_error)
+                if br.errors:
+                    print(f"burst tick errors: {', '.join(br.errors)}", file=sys.stderr)
+            except Exception as exc:
+                problems.append(f"burst failed: {type(exc).__name__}")
+        watch_events: list[Event] = []
         before = _fingerprint(state)
-        watch_events = pc_watch(store, state, config, now_fn(), claims, tg)
+        try:
+            watch_events = pc_watch(store, state, config, now_fn(), claims, tg)
+        except Exception as exc:
+            problems.append(f"pc_watch failed: {type(exc).__name__}")
         if _fingerprint(state) != before:
             errors.append(save_state(store, state))
         if res.daily:
@@ -507,11 +767,15 @@ def main() -> int:
         print(f"mode={mode} scanned={res.scanned} events={len(res.events)} "
               f"watch_events={len(watch_events)} failures={res.failures} "
               f"outbox={len(state['outbox'])}")
+        drops = _new_drops(state, started)
+        if drops:
+            problems.append(f"dropped undelivered alerts: {', '.join(drops)}")
         errors = [e for e in errors if e]
         if errors:
-            print(f"state not saved: {', '.join(errors)}", file=sys.stderr)
-            return 1
-        return 0
+            problems.append(f"state not saved: {', '.join(errors)}")
+        for p in problems:
+            print(p, file=sys.stderr)
+        return 1 if problems else 0
     except Exception as exc:
         print(_scrub(f"runner failed: {type(exc).__name__}: {exc}", secrets), file=sys.stderr)
         return 1
