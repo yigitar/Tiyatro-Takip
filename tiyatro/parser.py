@@ -121,16 +121,21 @@ def _row_blocks(html: str) -> list[tuple[str, str]]:
     return blocks
 
 
-def _check_block_matches(sid: str, block: str, start: datetime) -> None:
+def _visible_start(sid: str, block: str, ld_start: datetime) -> datetime:
+    """Start from the visible date/time; year from JSON-LD (its hour is ignored:
+    some pages carry a wrong JSON-LD hour). Month/day must agree with JSON-LD."""
     d = re.search(r'<span class="d">\s*(\d{1,2})\s+([^\W\d_]+)', block)
     t = re.search(r'<span class="tm">\s*(\d{1,2}):(\d{2})', block)
     if not d or not t:
         raise ParseError(f"seans-{sid}: date/time not found in block")
     month = _TR_MONTHS.get(htmlmod.unescape(d.group(2)).lower())
-    # Only month/day are enforced: the real Kusursuz page shows 14:00 while its
-    # JSON-LD says 17:00 (see task report); the JSON-LD time is used as specified.
-    if (month, int(d.group(1))) != (start.month, start.day):
-        raise ParseError(f"seans-{sid}: block date != JSON-LD start {start.isoformat()}")
+    day = int(d.group(1))
+    if (month, day) != (ld_start.month, ld_start.day):
+        raise ParseError(f"seans-{sid}: block date != JSON-LD start {ld_start.isoformat()}")
+    try:
+        return datetime(ld_start.year, month, day, int(t.group(1)), int(t.group(2)), tzinfo=ISTANBUL)
+    except ValueError as e:
+        raise ParseError(f"seans-{sid}: invalid visible time") from e
 
 
 def _fact(html: str, label: str) -> str | None:
@@ -150,10 +155,12 @@ def parse_play(html: str, url: str) -> Play:
 
     sessions: list[Session] = []
     for (sid, block), ev in zip(blocks, events):
-        start = _iso(ev.get("startDate"))
-        if start is None:
+        ld_start = _iso(ev.get("startDate"))
+        if ld_start is None:
             raise ParseError(f"seans-{sid}: JSON-LD event has no startDate")
-        _check_block_matches(sid, block, start)
+        start = _visible_start(sid, block, ld_start)
+        ld_end = _iso(ev.get("endDate"))
+        end = start + (ld_end - ld_start) if ld_end is not None else None
         status, opens_at = _button_state(block)
         share = re.search(r'data-url="([^"]+)"', block)
         venue_m = re.search(r'<div class="vl">.*?<a [^>]*>(.*?)</a>', block, re.S)
@@ -161,7 +168,7 @@ def parse_play(html: str, url: str) -> Play:
         sessions.append(Session(
             id=sid,
             start=start,
-            end=_iso(ev.get("endDate")),
+            end=end,
             status=status,
             opens_at=opens_at,
             url=htmlmod.unescape(share.group(1)) if share else f"{url}/{sid}",

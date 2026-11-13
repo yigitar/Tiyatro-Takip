@@ -81,7 +81,16 @@ def test_parse_play_kusursuz():
     assert p.duration_min == 60
     assert p.age_limit == 4
     assert len(p.sessions) == 1
-    assert p.sessions[0].start == datetime(2026, 11, 29, 17, 0, tzinfo=ISTANBUL)
+    # JSON-LD says 17:00 but the page shows 14:00; JSON-LD hour is deliberately ignored.
+    assert p.sessions[0].start == datetime(2026, 11, 29, 14, 0, tzinfo=ISTANBUL)
+    assert p.sessions[0].end == datetime(2026, 11, 29, 15, 0, tzinfo=ISTANBUL)
+
+
+def test_visible_time_matches_jsonld_elsewhere():
+    p = play("play_on_ikinci_gece.html", "on-ikinci-gece-kocaeli-bb")
+    got = [(s.start.month, s.start.day, s.start.hour, s.start.minute) for s in p.sessions]
+    assert got == [(11, 12, 20, 0), (11, 13, 20, 0), (11, 14, 15, 0), (11, 14, 20, 0),
+                   (11, 19, 20, 0), (11, 20, 20, 0), (11, 21, 20, 0)]
 
 
 def test_on_sale_PROVISIONAL():
