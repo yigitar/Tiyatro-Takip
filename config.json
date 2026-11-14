@@ -1,6 +1,12 @@
 {
  "paused": false,
- "plays": {},
+ "plays": {
+  "on-ikinci-gece-kocaeli-bb": {
+   "active": true,
+   "tag_overrides": {},
+   "targets": []
+  }
+ },
  "sources": [
   "https://biletinial.com/tr-tr/mekan/kocaeli-buyuksehir-belediyesi-sehir-tiyatrolari"
  ],
