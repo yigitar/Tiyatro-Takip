@@ -550,3 +550,18 @@ def test_opened_sold_out_needs_a_matching_target_and_a_transition():
     assert ev == []  # Wednesday afternoon: no matching target
     _, ev = diff(empty_state(), [play(sessions=[sess(status=Status.SOLD_OUT)])], WATCH, T0)
     assert kinds(ev) == ["NEW_PLAY"]  # first seen sold out: no transition observed
+
+
+# ==== final review M6: prune sessions that started more than 60 days ago ============
+
+def test_cleanup_prunes_sessions_older_than_60_days_and_keeps_archive_flag():
+    old = sess("old", status=Status.SOLD_OUT, start=T0 - timedelta(days=61), opens_at=None)
+    recent = sess("recent", status=Status.SOLD_OUT, start=T0 - timedelta(days=59),
+                  opens_at=None)
+    st, _ = diff(empty_state(), [play(sessions=[old, recent])], WATCH, T0)
+    out = cleanup(st, WATCH, T0)
+    assert set(out["plays"]["p"]["sessions"]) == {"recent"}
+    assert out["plays"]["p"]["archived"] is True
+    later = cleanup(out, WATCH, T0 + timedelta(days=5))  # now every session is pruned
+    assert later["plays"]["p"]["sessions"] == {}
+    assert later["plays"]["p"]["archived"] is True  # still archived, not resurrected

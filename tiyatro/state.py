@@ -38,6 +38,7 @@ DAY_BEFORE_CUTOFF = timedelta(minutes=60)
 REMOVE_AFTER_MISSES = 2
 EMITTED_TTL = timedelta(days=60)
 NEVER_OPENED_TTL = timedelta(days=180)
+SESSION_TTL = timedelta(days=60)  # sessions that started longer ago are pruned
 
 
 def empty_state() -> dict:
@@ -293,7 +294,12 @@ def cleanup(state: dict, config: Config, now: datetime) -> dict:
             # A still-listed play would otherwise be re-announced as NEW_PLAY next scan.
             out["emitted"][f"NEW_PLAY:{slug}"] = now_iso
             continue
-        entry["archived"] = bool(starts) and all(s < now for s in starts)
+        if starts:
+            entry["archived"] = all(s < now for s in starts)
+        # else: no sessions left (all pruned): keep the previous archive flag
+        sessions = entry.get("sessions", {})
+        for sid in [k for k, rec in sessions.items() if now - _dt(rec["start"]) > SESSION_TTL]:
+            del sessions[sid]
     return out
 
 
