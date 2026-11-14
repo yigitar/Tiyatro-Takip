@@ -693,7 +693,7 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
     PC warning is not lost. A failing tick (e.g. one store 502) is recorded by
     exception type name in ``RunResult.errors`` and the loop goes on with the last good
     config/state. After ``BURST_FAIL_ALERT_AT`` (5) consecutive ticks in which every page
-    fetch failed, one ``FETCH_FAILING`` (key ``FETCH_FAILING:burst:<opens_at>``, once per
+    fetch failed, one ``FETCH_FAILING`` (key ``FETCH_FAILING:burst:<opens_at or burst end>``, once per
     opening window) goes through the outbox; a tick with a parsed page resets the count.
     """
     start = now_fn()
@@ -728,7 +728,9 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
             fail_ticks = fail_ticks + 1 if result.scanned == 0 else 0
             if fail_ticks == BURST_FAIL_ALERT_AT:
                 opens = [o for *_x, o in targets if o is not None]
-                window = min(opens) if opens else deadline
+                # stable across runs of one outage: the earliest opens_at, else the
+                # earliest burst end (fixed per session), never the per-run deadline
+                window = min(opens) if opens else min(end for _s, end, _o in targets)
                 ev = _emit(state, "FETCH_FAILING",
                            f"FETCH_FAILING:burst:{window.isoformat()}",
                            {"detail": f"Hızlı modda Biletinial {BURST_FAIL_ALERT_AT} kez "
