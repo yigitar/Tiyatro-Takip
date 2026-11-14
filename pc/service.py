@@ -55,9 +55,9 @@ from tiyatro.fetcher import fetch
 from tiyatro.heartbeat import github_run_status, write_heartbeat
 from tiyatro.models import ISTANBUL, Config, Event, Play
 from tiyatro.runner import (BURST_INTERVAL_S, BURST_LEAD, BURST_TIERS, CONFIG_PATH,
-                            PC_WINDOW, _burst_targets, _entry_events, _prepare, _scan,
-                            load_config, load_state, plan_mode, run_once, scan_runs)
-from tiyatro.state import next_opening
+                            PC_DELAY, PC_WINDOW, _burst_targets, _entry_events, _prepare,
+                            _scan, load_config, load_state, plan_mode, run_once, scan_runs)
+from tiyatro.state import clean_emitted, next_opening
 from tiyatro.tags import apply_overrides, derive_tags
 from tiyatro.timeutil import parse_iso
 
@@ -67,6 +67,7 @@ GH_CHECK_EVERY = timedelta(minutes=5)
 NOTIFIED_TTL = timedelta(days=7)
 ERROR_TEXT_MAX = 200
 LOCAL_STATE_MAX_AGE = timedelta(hours=24)  # older local state: GitHub's is the baseline
+LOCAL_STATE_SKEW = timedelta(minutes=5)  # last_scan further in the future: stale too
 BACKOFF_FIRST_S = 30
 BACKOFF_MAX_S = 300
 
@@ -117,6 +118,18 @@ def _dt(value) -> datetime | None:
         return parse_iso(value) if isinstance(value, str) else None
     except ValueError:
         return None
+
+
+def _count(value) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _newer(theirs, ours) -> bool:
+    """True if timestamp ``theirs`` is set and later than ``ours`` (or ours is unusable)."""
+    t, o = _dt(theirs), _dt(ours)
+    if t is None or t.tzinfo is None:
+        return False
+    return o is None or o.tzinfo is None or t > o
 
 
 class Service:
@@ -205,7 +218,63 @@ class Service:
         last = _dt(meta.get("last_scan"))
         if last is None or last.tzinfo is None:
             return False
-        return self._clock() - last <= LOCAL_STATE_MAX_AGE
+        age = self._clock() - last
+        return -LOCAL_STATE_SKEW <= age <= LOCAL_STATE_MAX_AGE  # future = clock skew
+
+    @staticmethod
+    def _reconcile(local: dict, github: dict, now: datetime) -> None:
+        """Merge what GitHub learned while the PC was off into a fresh local state.
+
+        GitHub records a key in ``emitted`` BEFORE sending, so "emitted" alone does not
+        mean "delivered": a key is delivered only if it is emitted and no longer in
+        GitHub's outbox.
+        - ``emitted``: GitHub's (valid) keys are added, so the PC never re-emits them.
+        - outbox: local entries GitHub delivered are dropped; GitHub's pending entries
+          missing locally are adopted (``not_before`` at least now + 60 s, so a living
+          GitHub still sends first; claims prevent duplicates).
+        - sessions: unknown plays/sessions are copied; for known sessions
+          ``on_sale_count`` is the max of both (the next ON_SALE key cannot collide with
+          one GitHub used), and status / status_since / on_sale_pending /
+          last_on_sale_notified come from GitHub where GitHub's are newer.
+        """
+        theirs = clean_emitted(github.get("emitted"))
+        pending = {e["key"] for e in github.get("outbox") or []}
+        for key, at in theirs.items():
+            local["emitted"].setdefault(key, at)
+        delivered = set(theirs) - pending
+        local["outbox"] = [e for e in local["outbox"] if e["key"] not in delivered]
+        have = {e["key"] for e in local["outbox"]}
+        for entry in github.get("outbox") or []:
+            if entry["key"] in have:
+                continue
+            adopted = copy.deepcopy(entry)
+            not_before = _dt(entry.get("not_before"))
+            earliest = now + PC_DELAY
+            if not_before is None or not_before.tzinfo is None or not_before < earliest:
+                not_before = earliest
+            adopted["not_before"] = not_before.isoformat()
+            local["outbox"].append(adopted)
+            have.add(entry["key"])
+
+        for slug, g_entry in (github.get("plays") or {}).items():
+            l_entry = local["plays"].get(slug)
+            if l_entry is None:
+                local["plays"][slug] = copy.deepcopy(g_entry)
+                continue
+            for sid, grec in (g_entry.get("sessions") or {}).items():
+                lrec = l_entry["sessions"].get(sid)
+                if lrec is None:
+                    l_entry["sessions"][sid] = copy.deepcopy(grec)
+                    continue
+                lrec["on_sale_count"] = max(_count(lrec.get("on_sale_count")),
+                                            _count(grec.get("on_sale_count")))
+                if _newer(grec.get("status_since"), lrec.get("status_since")):
+                    for key in ("status", "status_since", "on_sale_pending"):
+                        if key in grec:
+                            lrec[key] = grec[key]
+                if _newer(grec.get("last_on_sale_notified"),
+                          lrec.get("last_on_sale_notified")):
+                    lrec["last_on_sale_notified"] = grec["last_on_sale_notified"]
 
     @property
     def plays(self) -> list[Play]:
@@ -222,24 +291,20 @@ class Service:
 
     def _ensure_state(self, errors: list[str]) -> dict | None:
         """The working state; on first use it is reconciled with GitHub's state.json:
-        no (fresh) local copy -> GitHub's state is the baseline; otherwise GitHub's
-        ``emitted`` keys are merged in and outbox entries GitHub already emitted are
-        dropped, so the PC never re-emits an alert GitHub handled meanwhile."""
+        no (fresh) local copy -> GitHub's state is the baseline; otherwise see
+        ``_reconcile``."""
         if self._reconciled and self._state is not None:
             return self._state
         local = self.state
         try:
-            github = load_state(self._store)
+            github = load_state(self._store)  # prepared: malformed parts dropped
         except Exception as exc:
             errors.append(_err("GitHub state.json okunamadı", exc))
             return local  # fresh local copy (<= 24 h): usable; reconcile next tick
         if local is None:
             self._state = github
         else:
-            theirs = github.get("emitted") if isinstance(github.get("emitted"), dict) else {}
-            for key, at in theirs.items():
-                local["emitted"].setdefault(key, at)
-            local["outbox"] = [e for e in local["outbox"] if e.get("key") not in theirs]
+            self._reconcile(local, github, self._clock())
         self._reconciled = True
         try:
             self._write_json("state.json", self._state)

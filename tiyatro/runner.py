@@ -62,7 +62,8 @@ from tiyatro.models import ISTANBUL, Config, Event, Play, Session, Status
 from tiyatro.notify import MONTHS, Telegram, default_transport, format_message
 from tiyatro.parser import ParseError, parse_play, parse_venue
 from tiyatro.rules import matching_targets
-from tiyatro.state import cleanup, diff, empty_state, next_opening, valid_session_record
+from tiyatro.state import (clean_emitted, cleanup, diff, empty_state, next_opening,
+                           valid_session_record)
 from tiyatro.store import Store
 from tiyatro.timeutil import parse_iso
 
@@ -146,8 +147,7 @@ def _prepare(state) -> dict:
             entry["sessions"] = {}
         for sid in [s for s, r in entry["sessions"].items() if not valid_session_record(r)]:
             del entry["sessions"][sid]
-    if not isinstance(state.get("emitted"), dict):
-        state["emitted"] = {}
+    state["emitted"] = clean_emitted(state.get("emitted"))
     box = state.get("outbox")
     state["outbox"] = [e for e in (box if isinstance(box, list) else [])
                        if isinstance(e, dict) and isinstance(e.get("key"), str) and e["key"]

@@ -464,3 +464,24 @@ def test_old_schema_play_without_metadata_still_works():
     assert st["plays"]["p"]["sessions"]["s1"]["end"] is None
     st2, ev = diff(st, [], WATCH, T0 + timedelta(minutes=10))
     assert next_opening(st2, WATCH, T0) == OPENS
+
+
+BAD_EMITTED = {"b": None, "c": 5, "d": "kein datum", "e": "2026-11-13T09:00:00",
+               "f": ["x"], "": T0.isoformat()}
+
+
+def test_malformed_emitted_entries_are_dropped_not_fatal():
+    st, _ev = diff(empty_state(), [play(sessions=[sess()])], WATCH, T0)
+    st["emitted"].update(BAD_EMITTED)
+    st2, _ev = diff(st, [play(sessions=[sess()])], WATCH, T0 + timedelta(minutes=5))
+    st3 = cleanup(st2, WATCH, T0 + timedelta(minutes=5))
+    for s in (st2, st3):
+        assert not set(BAD_EMITTED) & set(s["emitted"])
+        assert "NEW_PLAY:p" in s["emitted"]
+
+
+def test_runner_prepare_drops_malformed_emitted_entries():
+    from tiyatro.runner import _prepare
+    st = empty_state()
+    st["emitted"] = dict(BAD_EMITTED, ok=T0.isoformat())
+    assert _prepare(st)["emitted"] == {"ok": T0.isoformat()}

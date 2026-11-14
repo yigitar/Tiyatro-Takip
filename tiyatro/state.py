@@ -64,6 +64,24 @@ def valid_session_record(rec) -> bool:
 _STATUS_VALUES = {s.value for s in Status}
 
 
+def valid_emitted(key, value) -> bool:
+    """An ``emitted`` entry needs a non-empty str key and a tz-aware ISO timestamp;
+    anything else (e.g. a hand-edited ``null``) would break ``cleanup`` every scan."""
+    if not isinstance(key, str) or not key or not isinstance(value, str):
+        return False
+    try:
+        d = _dt(value)
+    except ValueError:
+        return False
+    return d is not None and d.tzinfo is not None
+
+
+def clean_emitted(emitted) -> dict:
+    if not isinstance(emitted, dict):
+        return {}
+    return {k: v for k, v in emitted.items() if valid_emitted(k, v)}
+
+
 def _normalize(old: dict) -> dict:
     state = copy.deepcopy(old) if old else empty_state()
     state.setdefault("plays", {})
@@ -72,7 +90,7 @@ def _normalize(old: dict) -> dict:
         if isinstance(sessions, dict):
             for sid in [k for k, r in sessions.items() if not valid_session_record(r)]:
                 del sessions[sid]
-    state.setdefault("emitted", {})
+    state["emitted"] = clean_emitted(state.get("emitted"))
     meta = state.setdefault("meta", {})
     meta.setdefault("last_scan", None)
     meta.setdefault("fetch_fail_streak", 0)

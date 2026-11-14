@@ -733,7 +733,11 @@ def test_stale_local_state_never_resends_a_handled_alert(monkeypatch, tmp_path):
     assert svc.state["plays"]["p"]["sessions"]["s1"]["status"] == "on_sale"
 
 
-@pytest.mark.parametrize("age_h, kept", [(25, False), (23, True)])
+@pytest.mark.parametrize("age_h, kept", [
+    (25, False), (23, True),
+    (-0.2, False),  # local last_scan 12 min in the future (clock skew): stale
+    (-0.05, True),  # 3 min ahead: within the tolerance
+])
 def test_local_state_older_than_24_h_is_replaced_by_githubs(monkeypatch, tmp_path, age_h,
                                                             kept):
     e = make(monkeypatch, tmp_path)
@@ -772,6 +776,112 @@ def test_github_emitted_drops_pc_outbox_entry_at_startup(monkeypatch, tmp_path):
     svc, tg, _seen = _restart(e, t + timedelta(seconds=20))
     assert tg.sent == []
     assert all(x["key"] != "ON_SALE:s1:1" for x in svc.state["outbox"])
+
+
+def test_github_pending_outbox_entry_is_adopted_not_lost(monkeypatch, tmp_path):
+    """GitHub emitted ON_SALE (recorded before sending), Telegram failed, GitHub died."""
+    e = make(monkeypatch, tmp_path)
+    tick_at(e, NOW)  # fresh local state: upcoming
+    e.web.set(mkplay(sessions=[sess(status=Status.ON_SALE)]))
+    e.gh_tg.fail = True
+    e.gh_run(NOW + timedelta(hours=1))
+    gh_state = e.store.files["state.json"][0]
+    assert "ON_SALE:s1:1" in gh_state["emitted"]
+    assert [x["key"] for x in gh_state["outbox"]] == ["ON_SALE:s1:1"]
+    svc, tg, seen = _restart(e, NOW + timedelta(hours=2))  # ticks at +0, +61, +130 s
+    assert len(tg.sent) == 1 and "Bilet alınabilir" in tg.sent[0]
+    assert seen == ["ON_SALE:s1:1"]
+    assert svc.state["outbox"] == []
+
+
+def test_local_entry_kept_when_github_still_pending(monkeypatch, tmp_path):
+    """Both queued the same key; GitHub's send failed: the PC keeps its own entry
+    (and its not_before), it does not swap it for a later adopted copy."""
+    e = make(monkeypatch, tmp_path)
+    tick_at(e, NOW)
+    t = NOW + timedelta(minutes=10)
+    _flip_on_sale(e, t)  # PC entry: not_before t + 60 s
+    e.gh_tg.fail = True
+    e.gh_run(t + timedelta(seconds=10))  # GitHub emitted the key, send failed
+    tg = FakeTG()
+    svc = Service(e.store, tg, ClaimStore(e.store, "pc", e.clock), clock=e.clock,
+                  fetch_fn=e.web.fetch, sleep=lambda s: None, local_dir=e.tmp,
+                  rand=lambda a, b: 0.0)
+    e.clock.set(t + timedelta(seconds=20))
+    svc.tick()
+    box = [x for x in svc.state["outbox"] if x["key"] == "ON_SALE:s1:1"]
+    assert len(box) == 1 and box[0]["not_before"] == (t + timedelta(seconds=60)).isoformat()
+    e.clock.set(t + timedelta(seconds=61))
+    svc.tick()
+    assert len(tg.sent) == 1
+
+
+def test_adopted_entry_waits_the_pc_grace_period(monkeypatch, tmp_path):
+    e = make(monkeypatch, tmp_path)
+    tick_at(e, NOW)
+    e.web.set(mkplay(sessions=[sess(status=Status.ON_SALE)]))
+    e.gh_tg.fail = True
+    e.gh_run(NOW + timedelta(hours=1))
+    at = NOW + timedelta(hours=2)
+    tg = FakeTG()
+    svc = Service(e.store, tg, ClaimStore(e.store, "pc", e.clock), clock=e.clock,
+                  fetch_fn=e.web.fetch, sleep=lambda s: None, local_dir=e.tmp,
+                  rand=lambda a, b: 0.0)
+    e.clock.set(at)
+    svc.tick()
+    assert tg.sent == []  # GitHub still gets the first 60 s
+    e.clock.set(at + timedelta(seconds=61))
+    svc.tick()
+    assert len(tg.sent) == 1
+
+
+def test_on_sale_count_merge_avoids_key_collision(monkeypatch, tmp_path):
+    """ON_SALE -> SOLD_OUT seen by GitHub, which then died; ON_SALE again while the PC
+    was off < 24 h: the re-opening must alert with a new key (ON_SALE:s1:2)."""
+    e = make(monkeypatch, tmp_path)
+    tick_at(e, NOW)
+    e.web.set(mkplay(sessions=[sess(status=Status.ON_SALE)]))
+    e.gh_run(NOW + timedelta(hours=1))  # sends ON_SALE:s1:1
+    e.web.set(mkplay(sessions=[sess(status=Status.SOLD_OUT)]))
+    e.gh_run(NOW + timedelta(hours=2))
+    e.web.set(mkplay(sessions=[sess(status=Status.ON_SALE)]))
+    svc, tg, seen = _restart(e, NOW + timedelta(hours=3))
+    assert seen == ["ON_SALE:s1:2"] and len(tg.sent) == 1
+    assert svc.state["plays"]["p"]["sessions"]["s1"]["on_sale_count"] == 2
+
+
+BAD_EMITTED = {"b": None, "c": 5, "d": "kein datum", "e": "2026-11-13T09:00:00",
+               "f": ["x"]}
+
+
+def test_github_emitted_garbage_is_not_merged(monkeypatch, tmp_path):
+    e = make(monkeypatch, tmp_path)
+    tick_at(e, NOW)
+    data, sha = e.store.files["state.json"]
+    data = copy.deepcopy(data)
+    data["emitted"].update(BAD_EMITTED)
+    data["emitted"]["ok-key"] = NOW.isoformat()
+    e.store.files["state.json"] = (data, sha + "x")
+    svc = Service(e.store, FakeTG(), ClaimStore(e.store, "pc", e.clock), clock=e.clock,
+                  fetch_fn=e.web.fetch, sleep=lambda s: None, local_dir=tmp_path)
+    for minutes in (1, 7):
+        e.clock.set(NOW + timedelta(minutes=minutes))
+        r = svc.tick()
+        assert r.errors == [] and r.scanned is True
+    assert "ok-key" in svc.state["emitted"]
+    assert not set(BAD_EMITTED) & set(svc.state["emitted"])
+
+
+def test_local_state_with_garbage_emitted_still_scans(monkeypatch, tmp_path):
+    e = make(monkeypatch, tmp_path)
+    tick_at(e, NOW)
+    path = tmp_path / "state.json"
+    local = json.loads(path.read_text(encoding="utf-8"))
+    local["emitted"].update(BAD_EMITTED)
+    path.write_text(json.dumps(local), encoding="utf-8")
+    svc, _tg, _seen = _restart(e, NOW + timedelta(minutes=10))
+    assert svc.status()["errors"] == []
+    assert not set(BAD_EMITTED) & set(svc.state["emitted"])
 
 
 @pytest.mark.parametrize("content", ["", '{"pla', "[]", '"text"'])
