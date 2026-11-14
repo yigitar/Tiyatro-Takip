@@ -21,9 +21,10 @@ def test_from_time_inclusive():
     assert rule_allows(r, dt(2026, 11, 13, 18, 0))
 
 
-def test_to_time_exclusive():
+def test_to_time_inclusive():
     r = Rule(to_time="21:00")
-    assert not rule_allows(r, dt(2026, 11, 13, 21, 0))
+    assert rule_allows(r, dt(2026, 11, 13, 21, 0))
+    assert not rule_allows(r, dt(2026, 11, 13, 21, 1))
     assert rule_allows(r, dt(2026, 11, 13, 20, 59))
 
 
@@ -81,3 +82,22 @@ def test_matching_targets():
     assert matching_targets(w, s) == [t1, t2]
     w.active = False
     assert matching_targets(w, s) == []
+
+
+def test_to_time_2000_allows_a_2000_session():  # final review C2
+    r = Rule(to_time="20:00")
+    assert rule_allows(r, dt(2026, 11, 13, 20, 0))
+    assert rule_allows(r, datetime(2026, 11, 13, 20, 0, 0, tzinfo=ISTANBUL))
+
+
+def test_from_and_to_2000_allow_exactly_2000():  # "20:00+" with "<=20:00"
+    r = Rule(from_time="20:00", to_time="20:00")
+    assert rule_allows(r, dt(2026, 11, 13, 20, 0))
+    assert not rule_allows(r, dt(2026, 11, 13, 20, 1))
+    assert not rule_allows(r, dt(2026, 11, 13, 19, 59))
+
+
+def test_override_to_is_inclusive_too():
+    r = Rule(overrides={4: {"from": None, "to": "20:00"}})
+    assert rule_allows(r, dt(2026, 11, 13, 20, 0))  # Fri
+    assert not rule_allows(r, dt(2026, 11, 13, 20, 1))

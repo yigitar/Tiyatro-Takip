@@ -133,3 +133,14 @@ def test_format_event_for_desktop_plain_text():
     assert "20 Kasım Cuma 20:00" in text
     assert "Yetişkin (2 kişi)" in text
     assert "https://biletinial.com/s/a1" in text
+
+
+def test_target_summary_to_time_says_kadar():  # final review C2
+    from tiyatro.models import Rule, Target
+    from pc.viewmodel import target_summary
+    assert target_summary(Target("y", "Yetişkin", 2, Rule(to_time="20:00"))) == \
+        "Yetişkin: 2 kişi · her gün · 20:00'ye kadar"
+    assert target_summary(Target("y", "Yetişkin", 2, Rule(to_time="18:00"))).endswith(
+        "18:00'e kadar")
+    assert target_summary(Target("y", "Yetişkin", 2, Rule(to_time="22:30"))).endswith(
+        "22:30'a kadar")

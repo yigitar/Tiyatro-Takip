@@ -307,3 +307,13 @@ test("unknown play hash / target id / malformed -> unchanged copy, bulunamadi sc
   assert.doesNotThrow(() => render("m", {}, {}));
   assert.doesNotThrow(() => apply("hd:aaaaaaaa:y:wd", null, null));
 });
+
+test("final review C2: to_time is inclusive and the summary says \"'e kadar\"", () => {
+  const c = apply(`ht:${KB}:y:20`, cfg, st);
+  const text = render(`ts:${KB}:y`, c, st).text;
+  assert.ok(text.includes("20:00'ye kadar"), text);
+  assert.ok(!text.includes("öncesi"));
+  assert.ok(labels(render(`ts:${KB}:y`, c, st)).includes("✓ ≤20:00"));
+  const c2 = apply(`ht:${KB}:y:18`, cfg, st);
+  assert.ok(render(`ts:${KB}:y`, c2, st).text.includes("18:00'e kadar"));
+});

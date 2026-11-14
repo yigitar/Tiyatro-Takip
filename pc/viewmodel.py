@@ -61,6 +61,23 @@ def days_text(days: list[int] | None) -> str:
     return ", ".join(DAY_SHORT[d] for d in s)
 
 
+# Turkish dative suffix of a clock time as read aloud ("20:00" -> "yirmi" -> 'ye);
+# minute 0 reads the hour. Same table as untilText in worker/src/menu.js.
+_UNIT_SUFFIX = {1: "e", 2: "ye", 3: "e", 4: "e", 5: "e", 6: "ya", 7: "ye", 8: "e", 9: "a"}
+_TENS_SUFFIX = {0: "a", 1: "a", 2: "ye", 3: "a", 4: "a", 5: "ye"}
+
+
+def until_text(hhmm: str) -> str:
+    """'20:00' -> "20:00'ye kadar" (inclusive upper bound)."""
+    try:
+        hh, mm = (int(x) for x in hhmm.split(":"))
+        n = mm or hh
+        suffix = _UNIT_SUFFIX[n % 10] if n % 10 else _TENS_SUFFIX[n // 10]
+    except (ValueError, KeyError, AttributeError):
+        suffix = "e"
+    return f"{hhmm}'{suffix} kadar"
+
+
 def target_summary(t: Target) -> str:
     """Same wording as ``targetSummary`` in worker/src/menu.js (without HTML)."""
     rule = t.rule
@@ -68,7 +85,7 @@ def target_summary(t: Target) -> str:
     if rule.from_time:
         parts.append(f"{rule.from_time} sonrası")
     if rule.to_time:
-        parts.append(f"{rule.to_time} öncesi")
+        parts.append(until_text(rule.to_time))
     if rule.overrides:
         parts.append(f"{len(rule.overrides)} gün istisnası")
     if rule.exclude_dates:

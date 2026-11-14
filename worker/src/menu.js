@@ -2,7 +2,8 @@
 // No I/O here. `apply` and `render` never throw and never mutate their inputs.
 //
 // Rule semantics mirror tiyatro/rules.py: days 0=Monday..6=Sunday (null = every day),
-// from_time inclusive / to_time exclusive, exclude_dates are Europe/Istanbul ISO dates.
+// from_time and to_time both inclusive ("≤20:00" keeps 20:00 sessions), exclude_dates are
+// Europe/Istanbul ISO dates.
 // Routes (callback_data, each <= 64 bytes):
 //   m | pl:<page> | p:<h> | ts:<h>:<id> (target screen) | ta:<h>:<0|1> | tg:<h>:<y|c>
 //   hp:<h>:<id>:<n> | hd:<h>:<id>:<wd|we|all|d0..d6>[:<0|1>] | hf:<h>:<id>:<HH|none>
@@ -127,11 +128,27 @@ function daysText(days) {
   return set.map((d) => DAY_NAMES[d]).join(", ");
 }
 
+// Turkish dative suffix of a clock time as read aloud ("20:00" -> "yirmi" -> 'ye); minute
+// 0 reads the hour. Same table as until_text in pc/viewmodel.py.
+const UNIT_SUFFIX = ["", "e", "ye", "e", "e", "e", "ya", "ye", "e", "a"];
+const TENS_SUFFIX = ["a", "a", "ye", "a", "a", "ye"];
+
+/** "20:00" -> "20:00'ye kadar" (inclusive upper bound). */
+function untilText(hhmm) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm));
+  let suffix = "e";
+  if (m) {
+    const n = Number(m[2]) || Number(m[1]);
+    suffix = (n % 10 ? UNIT_SUFFIX[n % 10] : TENS_SUFFIX[Math.floor(n / 10)]) ?? "e";
+  }
+  return `${esc(hhmm)}'${suffix} kadar`;
+}
+
 function targetSummary(t) {
   const rule = isObj(t.rule) ? t.rule : {};
   const parts = [`${esc(t.name ?? t.id)}: ${esc(t.people)} kişi`, daysText(rule.days)];
   if (rule.from_time) parts.push(`${esc(rule.from_time)} sonrası`);
-  if (rule.to_time) parts.push(`${esc(rule.to_time)} öncesi`);
+  if (rule.to_time) parts.push(untilText(rule.to_time));
   const ov = isObj(rule.overrides) ? Object.keys(rule.overrides).length : 0;
   if (ov) parts.push(`${ov} gün istisnası`);
   const ex = Array.isArray(rule.exclude_dates) ? rule.exclude_dates.length : 0;

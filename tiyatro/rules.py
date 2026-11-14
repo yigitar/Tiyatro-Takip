@@ -13,10 +13,12 @@ def _parse(value: str | None) -> time | None:
 
 
 def _in_range(t: time, lo: str | None, hi: str | None) -> bool:
+    """``from`` and ``to`` are both inclusive (minute precision): "<= 20:00" keeps the
+    20:00 sessions."""
     start, end = _parse(lo), _parse(hi)
     if start is not None and t < start:
         return False
-    if end is not None and t >= end:
+    if end is not None and t > end:
         return False
     return True
 
