@@ -5,6 +5,13 @@ The PC is the second runner next to GitHub Actions (``who="pc"``):
 - It keeps its own working copy of the state in ``<local_dir>/state.json`` (git-ignored,
   written atomically) and never writes ``state.json`` on the data branch. When the local
   copy is missing, the GitHub ``state.json`` is the baseline (so no NEW_PLAY storm).
+  At startup a local copy older than 24 h (by ``meta.last_scan``) is discarded for
+  GitHub's; a younger one takes over GitHub's ``emitted`` keys and drops outbox entries
+  GitHub already emitted, so alerts handled while the PC was off are never re-sent
+  (GitHub's claims are purged after 48 h and cannot be relied on for that).
+- Failures never cause a tight retry loop: a failed heartbeat write, or a config/state
+  read failing before the first scan, is retried after 30 s, doubling up to 5 min;
+  success resets the backoff.
 - ``tick()`` scans when due: every 300 s normally; in a burst window (see
   ``tiyatro.runner.plan_mode``) only the plays in the window, at the runner's burst
   cadence (12 s / 30 s / 60 s + jitter). Between scans a tick only delivers outbox
@@ -59,6 +66,21 @@ HEARTBEAT_EVERY = timedelta(minutes=4)
 GH_CHECK_EVERY = timedelta(minutes=5)
 NOTIFIED_TTL = timedelta(days=7)
 ERROR_TEXT_MAX = 200
+LOCAL_STATE_MAX_AGE = timedelta(hours=24)  # older local state: GitHub's is the baseline
+BACKOFF_FIRST_S = 30
+BACKOFF_MAX_S = 300
+
+
+def _next_backoff(current: int) -> int:
+    """30 s after the first failure, doubling up to 5 min."""
+    return BACKOFF_FIRST_S if not current else min(current * 2, BACKOFF_MAX_S)
+
+
+def _str_set(value) -> set[str] | None:
+    """A JSON list as a set of its strings; anything else -> None."""
+    if not isinstance(value, list):
+        return None
+    return {v for v in value if isinstance(v, str)}
 
 
 @dataclass
@@ -115,19 +137,26 @@ class Service:
         self._config: Config | None = None
         self._state: dict | None = None
         self._next_scan_at: datetime | None = None
-        self._hb_at: datetime | None = None
+        self._hb_at: datetime | None = None       # last successful heartbeat write
+        self._hb_try_at: datetime | None = None   # last attempt
+        self._hb_backoff = 0                      # seconds; 0 = last write succeeded
+        self._start_try_at: datetime | None = None  # failed config/state read before
+        self._start_backoff = 0                     # the first scan
+        self._reconciled = False  # local state checked against GitHub's state.json
         self._gh_at: datetime | None = None
         self._gh: dict | None = None
         self._last_scan_ok: datetime | None = None
         self._errors: list[str] = []
         notified = self._read_json("notified.json")
-        self._notified: dict[str, str] = notified if isinstance(notified, dict) else {}
+        self._notified: dict[str, str] = (
+            {k: v for k, v in notified.items() if isinstance(k, str) and isinstance(v, str)}
+            if isinstance(notified, dict) else {})
         listing = self._read_json("plays.json")
         listing = listing if isinstance(listing, dict) else {}
-        known = listing.get("slugs")
-        self._known: set[str] | None = set(known) if isinstance(known, list) else None
-        self.new_slugs: set[str] = set(listing.get("new") or [])
-        self.removed_slugs: set[str] = set(listing.get("removed") or [])
+        self._known: set[str] | None = _str_set(listing.get("slugs"))
+        self.new_slugs: set[str] = _str_set(listing.get("new")) or set()
+        self.removed_slugs: set[str] = _str_set(listing.get("removed")) or set()
+        self.refresh_failures: list[str] = []  # play pages that failed in the last refresh
         self._plays: list[Play] = []
 
     # ---- local files -------------------------------------------------------------
@@ -142,9 +171,13 @@ class Service:
         self._local.mkdir(parents=True, exist_ok=True)
         path = self._local / name
         tmp = path.with_name(name + ".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, sort_keys=True, indent=1),
-                       encoding="utf-8")
-        os.replace(tmp, path)
+        try:
+            tmp.write_text(json.dumps(data, ensure_ascii=False, sort_keys=True, indent=1),
+                           encoding="utf-8")
+            os.replace(tmp, path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
 
     # ---- accessors ---------------------------------------------------------------
     def on_notify(self, callback: Callable[[str, str, list[Event]], None]) -> None:
@@ -156,12 +189,23 @@ class Service:
 
     @property
     def state(self) -> dict | None:
-        """The PC's working state (local copy; None until known)."""
-        if self._state is None:
+        """The PC's working state (local copy; None until known).
+
+        A local copy whose last scan is missing or older than 24 h is ignored: GitHub
+        may have handled (and its claims been purged for) alerts the PC never saw.
+        """
+        if self._state is None and not self._reconciled:
             local = self._read_json("state.json")
-            if isinstance(local, dict):
+            if isinstance(local, dict) and self._fresh(local):
                 self._state = _prepare(local)
         return self._state
+
+    def _fresh(self, local: dict) -> bool:
+        meta = local.get("meta") if isinstance(local.get("meta"), dict) else {}
+        last = _dt(meta.get("last_scan"))
+        if last is None or last.tzinfo is None:
+            return False
+        return self._clock() - last <= LOCAL_STATE_MAX_AGE
 
     @property
     def plays(self) -> list[Play]:
@@ -171,17 +215,32 @@ class Service:
     def reload_config(self) -> Config:
         """Re-read ``config.json`` (Worker edits become visible); keeps the last good
         config if the read fails (the exception propagates)."""
-        self._config = load_config(self._store)
-        return self._config
+        config = load_config(self._store)
+        with self._lock:
+            self._config = config
+        return config
 
     def _ensure_state(self, errors: list[str]) -> dict | None:
-        if self.state is not None:
+        """The working state; on first use it is reconciled with GitHub's state.json:
+        no (fresh) local copy -> GitHub's state is the baseline; otherwise GitHub's
+        ``emitted`` keys are merged in and outbox entries GitHub already emitted are
+        dropped, so the PC never re-emits an alert GitHub handled meanwhile."""
+        if self._reconciled and self._state is not None:
             return self._state
+        local = self.state
         try:
-            self._state = load_state(self._store)  # GitHub state as the baseline
+            github = load_state(self._store)
         except Exception as exc:
             errors.append(_err("GitHub state.json okunamadı", exc))
-            return None
+            return local  # fresh local copy (<= 24 h): usable; reconcile next tick
+        if local is None:
+            self._state = github
+        else:
+            theirs = github.get("emitted") if isinstance(github.get("emitted"), dict) else {}
+            for key, at in theirs.items():
+                local["emitted"].setdefault(key, at)
+            local["outbox"] = [e for e in local["outbox"] if e.get("key") not in theirs]
+        self._reconciled = True
         try:
             self._write_json("state.json", self._state)
         except Exception as exc:
@@ -224,13 +283,23 @@ class Service:
         delivery (PC sends wait 60 s) or the next heartbeat, whichever comes first."""
         now = now or self._clock()
         state, config = self.state, self._config
-        due = [self._next_scan_at or now]
+        if self._next_scan_at is not None:
+            due = [self._next_scan_at]
+        elif self._start_backoff:  # config/state unreadable so far: back off
+            due = [self._start_try_at + timedelta(seconds=self._start_backoff)]
+        else:
+            due = [now]
         if state is not None:
             for entry in state.get("outbox") or []:
                 due.append(_dt(entry.get("not_before")) or now)
             if config is not None and self._in_window(state, config, now):
-                due.append(self._hb_at + HEARTBEAT_EVERY if self._hb_at else now)
+                due.append(self._heartbeat_due(now))
         return max(1.0, (min(due) - now).total_seconds())
+
+    def _heartbeat_due(self, now: datetime) -> datetime:
+        if self._hb_backoff:
+            return self._hb_try_at + timedelta(seconds=self._hb_backoff)
+        return self._hb_at + HEARTBEAT_EVERY if self._hb_at else now
 
     def _outbox_due(self, state: dict, now: datetime) -> bool:
         return any((_dt(e.get("not_before")) or now) <= now
@@ -250,7 +319,11 @@ class Service:
                 errors.append(_err("config.json okunamadı", exc))
             config = self._config
             state = self._ensure_state(errors) if config is not None else None
-            if config is not None and state is not None:
+            if config is None or state is None:
+                self._start_backoff = _next_backoff(self._start_backoff)
+                self._start_try_at = now
+            else:
+                self._start_backoff = 0
                 mode = plan_mode(state, config, now)[0]
                 only: list[str] | None = None
                 act = False
@@ -343,15 +416,16 @@ class Service:
 
     def _heartbeat(self, now: datetime, state: dict, config: Config,
                    errors: list[str]) -> None:
-        if not self._in_window(state, config, now):
+        if not self._in_window(state, config, now) or now < self._heartbeat_due(now):
             return
-        if self._hb_at is not None and now - self._hb_at < HEARTBEAT_EVERY:
-            return
+        self._hb_try_at = now
         try:
             write_heartbeat(self._store, now, self._last_scan_ok,
                             self._observed(state, config))
             self._hb_at = now
-        except Exception as exc:
+            self._hb_backoff = 0
+        except Exception as exc:  # retry after 30 s, 60 s, ... up to 5 min
+            self._hb_backoff = _next_backoff(self._hb_backoff)
             errors.append(_err("heartbeat yazılamadı", exc))
 
     def _check_github(self, now: datetime, errors: list[str]) -> None:
@@ -399,9 +473,10 @@ class Service:
             plays, unscanned, _failures, venue_error = _scan(config, state, recording,
                                                              self._sleep, None)
             if venue_error or not plays:
+                reason = venue_error or ("oyun sayfaları okunamadı" if unscanned
+                                         else "oyun bulunamadı")
                 raise RefreshError(f"Liste güncellenemedi: Biletinial okunamadı "
-                                   f"({venue_error or 'oyun bulunamadı'}); "
-                                   f"önceki liste korunuyor")
+                                   f"({reason}); önceki liste korunuyor")
 
             def replay(url: str):  # same pages again for run_once, no second request
                 if url in cache:
@@ -421,7 +496,13 @@ class Service:
             self.new_slugs = current - prev if prev else set()
             self.removed_slugs = prev - current
             self._known = current
-            self._plays = [self._display_play(p, config) for p in plays]
+            # A play whose own page failed is still listed: keep its previous entry.
+            previous = {p.slug: p for p in self._plays}
+            kept = [previous.get(slug) or self._play_from_state(slug)
+                    for slug in sorted(unscanned)]
+            self._plays = ([self._display_play(p, config) for p in plays]
+                           + [p for p in kept if p is not None])
+            self.refresh_failures = sorted(unscanned)
             try:
                 self._write_json("plays.json", {"slugs": sorted(current),
                                                 "new": sorted(self.new_slugs),
@@ -438,6 +519,14 @@ class Service:
         play = dataclasses.replace(play, **fill)
         return dataclasses.replace(
             play, tags=apply_overrides(derive_tags(play), config.plays.get(play.slug)))
+
+    def _play_from_state(self, slug: str) -> Play | None:
+        entry = (self._state or {}).get("plays", {}).get(slug)
+        if not isinstance(entry, dict):
+            return None
+        return Play(slug, str(entry.get("title") or slug), str(entry.get("url") or ""),
+                    entry.get("genre"), entry.get("duration_min"), entry.get("age_limit"),
+                    entry.get("price_from"), [], set(entry.get("tags") or []))
 
     def rows(self, now: datetime | None = None) -> list[Row]:
         state = self.state or {"plays": {}}
@@ -503,9 +592,11 @@ class Service:
         except _NoChange as nc:
             new = nc.data
         try:
-            self._config = config_from_dict(new)
+            config = config_from_dict(new)
         except (ValueError, TypeError, KeyError, AttributeError):
-            pass
+            return new
+        with self._lock:  # not held during the store I/O above
+            self._config = config
         return new
 
     def set_active(self, slug: str, active: bool) -> dict:
