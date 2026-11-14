@@ -308,6 +308,23 @@ function isWatched(config, state, slug) {
   return cfgPlays(config)[slug]?.active === true && !statePlays(state)[slug]?.removed;
 }
 
+const PORTAL_LINES = 5;
+
+/** "🏛️ Başiskele portalı: boş | açık (N)" per portal in state.portals; unknown state -> none. */
+function portalLines(state) {
+  const portals = isObj(state) && isObj(state.portals) ? state.portals : {};
+  const out = [];
+  for (const id of Object.keys(portals).sort()) {
+    const rec = portals[id];
+    if (!isObj(rec) || typeof rec.empty !== "boolean") continue;
+    const label = id === "basiskele" ? "Başiskele portalı" : esc(trunc(rec.name || id, 40));
+    const n = Array.isArray(rec.items) ? rec.items.length : 0;
+    out.push(`🏛️ ${label}: ${rec.empty ? "boş" : n > 0 ? `açık (${n})` : "açık"}`);
+    if (out.length >= PORTAL_LINES) break;
+  }
+  return out;
+}
+
 function mainScreen(config, state) {
   const watched = allSlugs(config, state).filter((s) => isWatched(config, state, s)).length;
   const paused = isObj(config) && config.paused === true;
@@ -318,6 +335,7 @@ function mainScreen(config, state) {
     ...(paused ? ["Duraklatılmışken oluşan bildirimler atılır; devam edince gönderilmez."] : []),
     `Takip edilen oyun: ${watched}`,
     lastScan ? `Son tarama: ${esc(fmt(lastScan))}` : "Son tarama: bilinmiyor",
+    ...portalLines(state),
   ].join("\n");
   return {
     text,
@@ -526,7 +544,7 @@ function upcomingScreen(config, state) {
     }
   }
   items.sort((a, b) => Date.parse(a.rec.opens_at) - Date.parse(b.rec.opens_at));
-  const lines = ["⏳ <b>Yaklaşan açılışlar</b>"];
+  const lines = ["⏳ <b>Yaklaşan açılışlar</b>", ...portalLines(state)];
   if (items.length === 0) lines.push("Takip ettiğin oyunlarda yaklaşan açılış yok.");
   for (const { slug, rec } of items.slice(0, 15)) {
     lines.push("", `<b>${esc(playTitle(state, slug))}</b>`,

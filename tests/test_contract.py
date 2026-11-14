@@ -8,7 +8,7 @@ import json
 import pathlib
 import shutil
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -164,3 +164,58 @@ def test_worker_play_screen_shows_summary_and_cast_from_python_state():  # wave 
     assert len(text) <= 4096
     hic_text = res["rendered"][1]["text"]
     assert "📝 Bir tren kompartımanında" in hic_text and "Oyuncular:" not in hic_text
+
+
+# ---- wave 3c: portals ------------------------------------------------------------------
+
+PORTALS = [{"id": "basiskele", "name": "Başiskele Belediyesi rezervasyon",
+            "url": "https://rezervasyon.basiskele.bel.tr/etkinlikler", "enabled": True},
+           {"id": "diger", "name": "Diğer", "url": "https://d.example/x", "enabled": False}]
+
+
+def test_worker_write_keeps_portals_untouched():
+    cfg = copy.deepcopy(START_CONFIG)
+    cfg["portals"] = copy.deepcopy(PORTALS)
+    res = node({"config": cfg, "state": START_STATE, "applies": ROUTES, "renders": []})
+    for route, out in zip(ROUTES, res["applied"]):
+        assert out["portals"] == PORTALS, route
+        assert config_from_dict(out).portals == PORTALS
+    # a config that never had the key stays without it (Python then supplies the default)
+    res = node({"config": START_CONFIG, "state": START_STATE, "applies": ROUTES,
+                "renders": []})
+    assert all("portals" not in out for out in res["applied"])
+    from tiyatro.config import DEFAULT_PORTALS
+    assert config_from_dict(res["applied"][-1]).portals == DEFAULT_PORTALS
+
+
+def test_pc_edits_keep_portals_untouched():
+    raw = copy.deepcopy(START_CONFIG)
+    raw["portals"] = copy.deepcopy(PORTALS)
+    configedit.set_paused(raw, True)
+    configedit.set_active(raw, "kucuk-prens", True, ["çocuk"])
+    configedit.set_people(raw, "kusursuz-bir-aile", "y", 3)
+    assert raw["portals"] == PORTALS and config_from_dict(raw).portals == PORTALS
+
+
+def test_worker_renders_python_produced_portal_state():
+    from tests.test_wave3c_portals import page, real_empty
+    from tiyatro.portals import parse_portal
+    from tiyatro.runner import _apply_portals, _prepare
+    state, raw_cfg, _plays = _python_state()
+    cfg = config_from_dict({**raw_cfg, "portals": PORTALS})
+    state = _prepare(state)
+    empty = parse_portal(real_empty())
+    _apply_portals(state, cfg, {"basiskele": empty}, NOW)
+    res = node({"config": raw_cfg, "state": json.loads(json.dumps(state)), "applies": [],
+                "renders": ["m", "up"]})
+    for screen in res["rendered"]:
+        assert "🏛️ Başiskele portalı: boş" in screen["text"] and len(screen["text"]) <= 4096
+    opened = parse_portal(page('<div class="c"><h4>Kuğu Gölü</h4>'
+                               '<a href="/e/1">Rezervasyon Yap</a></div>'
+                               '<div class="c"><h4>Pinokyo</h4>'
+                               '<a href="/e/2">Rezervasyon Yap</a></div>'))
+    _apply_portals(state, cfg, {"basiskele": opened}, NOW + timedelta(minutes=5))
+    res = node({"config": raw_cfg, "state": json.loads(json.dumps(state)), "applies": [],
+                "renders": ["m", "up"]})
+    for screen in res["rendered"]:
+        assert "🏛️ Başiskele portalı: açık (2)" in screen["text"]

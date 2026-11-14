@@ -386,3 +386,75 @@ test("play screen stays <= 4096 chars with huge summary and cast", () => {
   assert.ok(r.text.length <= 4096);
   assert.ok(r.text.includes("(+494)"));
 });
+
+// ---- wave 3c: reservation-portal line ---------------------------------------------
+
+const withPortals = (portals) => ({ ...makeState(), portals });
+const rec = (over = {}) => ({ signature: "s".repeat(40), empty: true, lines: [], items: [],
+  first_seen: "2026-11-13T09:00:00+03:00", last_change: "2026-11-13T09:00:00+03:00",
+  last_check: "2026-11-13T09:00:00+03:00", fail_streak: 0, ...over });
+
+test("portal: main menu and upcoming screen show the Başiskele line (empty)", () => {
+  const s = withPortals({ basiskele: rec() });
+  for (const route of ["m", "up", "pz:1"]) {
+    const r = render(route, cfg, s);
+    assert.ok(r.text.includes("🏛️ Başiskele portalı: boş"), route);
+  }
+});
+
+test("portal: open with N items", () => {
+  const items = [{ title: "A", url: "u" }, { title: "B", url: "v" }, { title: "C", url: "w" }];
+  const s = withPortals({ basiskele: rec({ empty: false, items }) });
+  assert.ok(render("m", cfg, s).text.includes("🏛️ Başiskele portalı: açık (3)"));
+  assert.ok(render("up", cfg, s).text.includes("🏛️ Başiskele portalı: açık (3)"));
+  const none = withPortals({ basiskele: rec({ empty: false, items: [] }) });
+  const t = render("m", cfg, none).text;
+  assert.ok(t.includes("🏛️ Başiskele portalı: açık") && !t.includes("açık ("));
+});
+
+test("portal: unknown, missing or garbage state shows no line", () => {
+  const garbage = [undefined, null, [], "x", { basiskele: null }, { basiskele: "x" },
+    { basiskele: { empty: null } }, { basiskele: {} }, { basiskele: { empty: "yes" } }];
+  for (const p of garbage) {
+    for (const route of ["m", "up"]) {
+      const r = render(route, cfg, { ...makeState(), portals: p });
+      assert.ok(!r.text.includes("🏛️"), `${route} ${JSON.stringify(p)}`);
+    }
+  }
+  assert.ok(!render("m", cfg, makeState()).text.includes("🏛️"));
+});
+
+test("portal: other ids use their (escaped, truncated) name; at most 5 lines; sorted", () => {
+  const portals = {};
+  for (let i = 0; i < 8; i++) portals[`p${i}`] = rec({ name: `Portal <${i}> & ${"x".repeat(100)}` });
+  const t = render("m", cfg, withPortals(portals)).text;
+  const lines = t.split("\n").filter((l) => l.startsWith("🏛️"));
+  assert.equal(lines.length, 5);
+  assert.ok(lines[0].includes("Portal &lt;0&gt; &amp;") && !lines[0].includes("<0>"));
+  assert.ok(lines[0].length < 80);
+});
+
+test("portal: line does not break the 4096 guard on the up screen", () => {
+  const s = withPortals({ basiskele: rec({ empty: false, items: [{ title: "x", url: "y" }] }) });
+  for (let i = 0; i < 40; i++) {
+    s.plays[`oyun-${i}`] = { title: `Oyun ${i} ` + "u".repeat(100), removed: false, tags: [],
+      sessions: { a: { status: "upcoming", opens_at: "2030-02-20T10:00:00+03:00", start: "2030-03-02T20:00:00+03:00" } } };
+  }
+  const c = makeConfig();
+  for (let i = 0; i < 40; i++) c.plays[`oyun-${i}`] = { active: true, targets: [], tag_overrides: {} };
+  const r = render("up", c, s);
+  assert.ok(r.text.length <= 4096);
+  assert.ok(r.text.includes("🏛️ Başiskele portalı"));
+});
+
+test("portal: apply never touches config.portals", () => {
+  const c = makeConfig();
+  c.portals = [{ id: "basiskele", name: "Başiskele Belediyesi rezervasyon",
+    url: "https://rezervasyon.basiskele.bel.tr/etkinlikler", enabled: true }];
+  const before = JSON.stringify(c.portals);
+  for (const route of ["pz:1", `ta:${KP}:1`, `tg:${KB}:c`, `hp:${KB}:y:3`, `hs:${KB}:y:rm`, `hd:${KB}:y:wd`]) {
+    assert.equal(JSON.stringify(apply(route, c, st).portals), before, route);
+  }
+  const noPortals = apply("pz:1", makeConfig(), st);
+  assert.ok(!("portals" in noPortals));
+});
