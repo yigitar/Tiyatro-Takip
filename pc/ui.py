@@ -348,6 +348,8 @@ class App:
 
         ui = L.load_ui(self.local_dir / "ui.json")
         self.beep_enabled = ui["beep"]
+        self.sort = L.load_sort(self.local_dir / "ui.json")  # (column, "asc"|"desc") or None
+        self._default_rows: list = []
         self.bold_font = tkfont.nametofont("TkDefaultFont").copy()
         self.bold_font.configure(weight="bold")
         root.title(APP_TITLE)
@@ -391,7 +393,8 @@ class App:
         self.tree = ttk.Treeview(top, columns=[c[0] for c in COLUMNS], show="headings",
                                  selectmode="browse")
         for key, label, width in COLUMNS:
-            self.tree.heading(key, text=label)
+            self.tree.heading(key, text=L.heading_text(label, key, self.sort),
+                              command=lambda k=key: self.sort_by(k))
             self.tree.column(key, width=width, anchor="w", stretch=key in ("title", "summary"))
         vsb = ttk.Scrollbar(top, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
@@ -510,6 +513,19 @@ class App:
         except Exception:
             log.exception("rows() failed")
             return
+        self._default_rows = rows
+        self._render_rows()
+
+    def sort_by(self, column: str) -> None:
+        """Header click: ascending -> descending -> default order (see ``L.next_sort``)."""
+        self.sort = L.next_sort(self.sort, column)
+        self.save_ui()
+        self._render_rows()
+
+    def _render_rows(self) -> None:
+        rows = L.sort_rows(self._default_rows, self.sort)
+        for key, label, _w in COLUMNS:
+            self.tree.heading(key, text=L.heading_text(label, key, self.sort))
         self.rows = rows
         self.rows_by_slug = {r.slug: r for r in rows}
         top = self.tree.yview()[0]
@@ -874,7 +890,8 @@ class App:
             old = L.load_ui(self.local_dir / "ui.json")
             L.save_ui(self.local_dir / "ui.json",
                       {"geometry": geom if geom and "x" in geom else old["geometry"],
-                       "beep": self.beep_enabled})
+                       "beep": self.beep_enabled,
+                       "sort": list(self.sort) if self.sort else None})
         except Exception:
             log.exception("ui.json not saved")
 

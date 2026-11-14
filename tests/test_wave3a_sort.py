@@ -116,3 +116,84 @@ def test_sort_persists_in_ui_json_and_bad_values_fall_back(tmp_path):
         assert L.load_sort(p) is None, bad
     p.write_text("{not json", encoding="utf-8")
     assert L.load_sort(p) is None
+
+
+# ---- window (headless Tk) ------------------------------------------------------------------
+
+tk = pytest.importorskip("tkinter")
+from pc import ui as appmod  # noqa: E402
+from tests.test_pc_app_smoke import Box, FakeService, tk_root, ui  # noqa: E402,F401
+
+
+def click(ui, column):
+    """Invoke the real heading command, exactly as a click would."""
+    ui.root.tk.call(ui.tree.heading(column)["command"])
+
+
+def order(ui):
+    return list(ui.tree.get_children())
+
+
+def head(ui, column):
+    return ui.tree.heading(column)["text"]
+
+
+def test_header_click_cycles_asc_desc_default_with_arrows(ui):
+    assert order(ui) == ["p1", "p2"] and head(ui, "title") == "Oyun"
+    click(ui, "title")
+    assert order(ui) == ["p1", "p2"] and head(ui, "title") == "Oyun ▲"
+    click(ui, "title")
+    assert order(ui) == ["p2", "p1"] and head(ui, "title") == "Oyun ▼"
+    click(ui, "title")
+    assert order(ui) == ["p1", "p2"] and head(ui, "title") == "Oyun"
+
+
+def test_only_the_active_column_shows_an_arrow(ui):
+    click(ui, "title")
+    click(ui, "price")
+    assert head(ui, "title") == "Oyun" and head(ui, "price") == "Fiyat ▲"
+    click(ui, "sessions")
+    assert head(ui, "price") == "Fiyat" and head(ui, "sessions") == "Seans ▼"  # most first
+
+
+def test_sort_keeps_selection_and_survives_refresh(ui):
+    ui.select_slug("p2")
+    pane = ui.session_tree
+    click(ui, "title")
+    click(ui, "title")  # descending: p2 first
+    assert order(ui) == ["p2", "p1"]
+    assert ui.tree.selection() == ("p2",) and ui.selected == "p2"
+    assert ui.session_tree is pane  # a re-sort does not rebuild the detail pane
+    ui.refresh_rows()  # what every tick does
+    assert order(ui) == ["p2", "p1"] and head(ui, "title") == "Oyun ▼"
+    assert ui.tree.selection() == ("p2",)
+
+
+def test_sort_choice_is_saved_and_restored(ui, tmp_path, tk_root):
+    click(ui, "genre")
+    assert L.load_sort(ui.local_dir / "ui.json") == ("genre", "asc")
+    assert json.loads((ui.local_dir / "ui.json").read_text(encoding="utf-8"))["beep"] is True
+    click(ui, "genre")
+    click(ui, "genre")
+    assert L.load_sort(ui.local_dir / "ui.json") is None
+    (ui.local_dir / "ui.json").write_text(json.dumps({"sort": ["title", "desc"]}), encoding="utf-8")
+    for w in tk_root.winfo_children():
+        w.destroy()
+    tk_root.configure(menu=tk.Menu(tk_root))
+    app = appmod.App(tk_root, FakeService(), ui.local_dir, open_url=lambda u: None,
+                     beep=lambda: None, msgbox=Box(), inline=True)
+    app.refresh_rows()
+    assert order(app) == ["p2", "p1"] and head(app, "title") == "Oyun ▼"
+    app.closing = True
+
+
+def test_corrupt_saved_sort_falls_back_to_default(tmp_path, tk_root):
+    (tmp_path / "ui.json").write_text(json.dumps({"sort": ["bogus", "up"]}), encoding="utf-8")
+    for w in tk_root.winfo_children():
+        w.destroy()
+    tk_root.configure(menu=tk.Menu(tk_root))
+    app = appmod.App(tk_root, FakeService(), tmp_path, open_url=lambda u: None,
+                     beep=lambda: None, msgbox=Box(), inline=True)
+    app.refresh_rows()
+    assert order(app) == ["p1", "p2"] and head(app, "title") == "Oyun"
+    app.closing = True
