@@ -948,3 +948,31 @@ def test_refresh_all_play_pages_failing_says_so(monkeypatch, tmp_path):
     e.clock.set(NOW + timedelta(minutes=1))
     with pytest.raises(RefreshError, match="oyun sayfaları okunamadı"):
         e.svc.refresh_now()
+
+
+def test_edit_completes_while_a_scan_is_blocked_on_the_network(monkeypatch, tmp_path):
+    import threading
+
+    e = make(monkeypatch, tmp_path)
+    started, release = threading.Event(), threading.Event()
+    real = e.svc._fetch
+
+    def blocking(url):
+        started.set()
+        release.wait(10)
+        return real(url)
+
+    e.svc._fetch = blocking
+    e.clock.set(NOW + timedelta(minutes=10))
+    scan = threading.Thread(target=e.svc.tick)
+    scan.start()
+    try:
+        assert started.wait(5), "scan did not start"
+        done = threading.Thread(target=lambda: e.svc.set_paused(True))
+        done.start()
+        done.join(3)
+        assert not done.is_alive(), "edit waited for the scan"
+        assert e.svc.config.paused is True
+    finally:
+        release.set()
+        scan.join(10)

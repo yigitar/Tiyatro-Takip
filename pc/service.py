@@ -145,7 +145,8 @@ class Service:
         self._sleep = sleep
         self._local = Path(local_dir)
         self._rand = rand
-        self._lock = threading.RLock()
+        self._lock = threading.RLock()  # held by tick()/refresh_now(), network I/O included
+        self._config_lock = threading.Lock()  # only guards the _config swap, never I/O
         self._callbacks: list[Callable] = []
         self._config: Config | None = None
         self._state: dict | None = None
@@ -285,7 +286,7 @@ class Service:
         """Re-read ``config.json`` (Worker edits become visible); keeps the last good
         config if the read fails (the exception propagates)."""
         config = load_config(self._store)
-        with self._lock:
+        with self._config_lock:
             self._config = config
         return config
 
@@ -660,7 +661,7 @@ class Service:
             config = config_from_dict(new)
         except (ValueError, TypeError, KeyError, AttributeError):
             return new
-        with self._lock:  # not held during the store I/O above
+        with self._config_lock:  # not _lock: an edit must not wait for a running scan
             self._config = config
         return new
 
