@@ -70,12 +70,14 @@ def test_changed_once_for_new_item_and_cooldown(monkeypatch):
     env.portal.html = opened_html("Konser", "Pinokyo")
     assert kinds(go(env, 3)) == ["PORTAL_CHANGED"]
     assert pstate(env)["last_changed_alert"] == at(3).isoformat()
-    env.portal.html = opened_html("Konser", "Pinokyo", "Üçüncü")
+    env.portal.html = opened_html("Konser")              # an event disappears: churn
     assert kinds(go(env, 4)) == []                       # inside the 6 h cooldown
-    assert len(pstate(env)["items"]) == 3                # but the change is stored
-    env.portal.html = opened_html("Konser", "Pinokyo", "Üçüncü", "Dördüncü")
-    res = env.run(at(3) + timedelta(hours=6, minutes=1), portal_fetch_fn=env.portal.fetch)
-    assert kinds(res) == ["PORTAL_CHANGED"]
+    assert len(pstate(env)["items"]) == 1                # but the change is stored
+    env.portal.html = opened_html("Konser", "Dördüncü")  # a NEW event is never swallowed
+    assert kinds(go(env, 5)) == ["PORTAL_CHANGED"]
+    env.portal.html = opened_html("Dördüncü")
+    res = env.run(at(5) + timedelta(hours=6, minutes=1), portal_fetch_fn=env.portal.fetch)
+    assert kinds(res) == ["PORTAL_CHANGED"]              # churn alerts again after 6 h
 
 
 # ---- I2 classification ------------------------------------------------------------------

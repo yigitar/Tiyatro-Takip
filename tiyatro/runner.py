@@ -91,7 +91,7 @@ from tiyatro.heartbeat import github_run_status, pc_status, read_heartbeat
 from tiyatro.models import ISTANBUL, Config, Event, Play, Session, Status
 from tiyatro.notify import MONTHS, Telegram, default_transport, format_message
 from tiyatro.parser import ParseError, parse_play, parse_venue
-from tiyatro.portals import parse_portal
+from tiyatro.portals import item_key, parse_portal
 from tiyatro.rules import matching_targets
 from tiyatro.state import (ON_SALE_GAP, clean_emitted, cleanup, diff, empty_state,
                            next_opening, valid_session_record)
@@ -473,6 +473,17 @@ def _portal_payload(portal: dict, snap, new_lines: list[str]) -> dict:
             "item_count": len(snap.items), "lines": new_lines[:PORTAL_NOTE_MAX]}
 
 
+def _new_portal_item(rec: dict, snap) -> bool:
+    """True if the snapshot has an item (title + cleaned URL) the stored record lacks."""
+    stored = rec.get("item_keys")
+    if not isinstance(stored, list):  # record from before item_keys: use the stored items
+        stored = [item_key(i) for i in rec.get("items") or [] if isinstance(i, dict)]
+        if len(stored) >= PORTAL_ITEMS_KEPT:
+            return False  # cannot tell beyond the old storage cap
+    known = set(stored)
+    return any(item_key(i) not in known for i in snap.items)
+
+
 def _apply_portal(state: dict, portal: dict, result, now: datetime) -> list[Event]:
     pid, now_iso = portal["id"], now.isoformat()
     rec = state["portals"].setdefault(pid, {})
@@ -516,7 +527,9 @@ def _apply_portal(state: dict, portal: dict, result, now: datetime) -> list[Even
         elif snap.signature != prev_sig:
             last = parse_iso(rec.get("last_changed_alert")) if isinstance(
                 rec.get("last_changed_alert"), str) else None
-            if last is None or now - last >= PORTAL_CHANGED_COOLDOWN:
+            # the cooldown only damps churn; a genuinely new item always alerts
+            if (last is None or now - last >= PORTAL_CHANGED_COOLDOWN
+                    or _new_portal_item(rec, snap)):
                 kind, key = "PORTAL_CHANGED", f"PORTAL_CHANGED:{pid}:{sig12}"
         if kind and not announced:
             ev = _emit(state, kind, key, _portal_payload(portal, snap, new_lines), now)
@@ -535,6 +548,7 @@ def _apply_portal(state: dict, portal: dict, result, now: datetime) -> list[Even
     rec.update(signature=snap.signature, empty=snap.empty,
                lines=list(snap.lines[:PORTAL_LINES_KEPT]),
                items=[dict(i) for i in snap.items[:PORTAL_ITEMS_KEPT]],
+               item_keys=sorted({item_key(i) for i in snap.items}),
                fail_streak=0, last_check=now_iso)
     rec.setdefault("first_seen", now_iso)
     if changed or not rec.get("last_change"):

@@ -54,17 +54,22 @@ GENERIC_ACTIONS = frozenset({
     "rezervasyon yap", "rezervasyon yapin", "rezervasyon", "rezerve et", "rezerve", "detay",
     "detaylar", "detayli bilgi", "devami", "devamini oku", "incele", "kayit ol", "katil",
     "basvur", "bilgi al", "yer ayirt", "ayirt", "tikla", "tiklayin", "sec", "git",
+    "daha fazla", "daha fazlasi", "tumunu gor", "kabul et",
 })
 _KEYWORDS = ("rezerv", "etkinlik", "bilet", "katil", "basvur", "ayirt",
              "tiyatro", "konser", "gosteri", "sinema", "festival")
 _WEAK_KEYWORDS = ("detay", "kayit")        # count only together with an event path
 _EVENT_PATH = ("etkinlik", "rezerv")
 # Pager / consent / navigation controls: never an event, whatever their href says.
-_NOT_ITEM_TEXT = frozenset({
+_PAGER_TEXT = frozenset({     # excluded whatever the href says
     "sonraki", "sonraki sayfa", "onceki", "onceki sayfa", "ilk", "son", "ilk sayfa",
-    "son sayfa", "geri", "ileri", "kabul et", "kabul ediyorum", "tamam", "reddet", "kapat",
-    "detayli bilgi", "daha fazla", "anladim", "ok", "yukle", "yenile", "ara", "giris",
+    "son sayfa", "geri", "ileri",
 })
+_CONSENT_TEXT = frozenset({   # excluded unless the href is under an event/reservation path
+    "kabul et", "kabul ediyorum", "tamam", "reddet", "kapat", "detayli bilgi", "daha fazla",
+    "anladim", "ok", "yukle", "yenile", "ara", "giris",
+})
+_NOT_ITEM_TEXT = _PAGER_TEXT | _CONSENT_TEXT
 _NOT_ITEM_WORDS = ("cerez", "cookie", "kvkk", "gizlilik")
 # Text that says "nothing here" / "something is wrong": a page made only of such lines is empty.
 _NEGATIVE = ("bulunamad", "bulunmamakta", "bulunmuyor", "hata olustu", "hata olu", "bakim",
@@ -286,6 +291,22 @@ def _clean_url(url: str) -> str:
         return url
 
 
+_DATE_TIME = re.compile(
+    r"\d{1,2}[.:/]\d{2}|\d{1,2}\s*(?:ocak|subat|mart|nisan|mayis|haziran|temmuz|agustos|"
+    r"eylul|ekim|kasim|aralik)")
+
+
+def has_date(line: str) -> bool:
+    """A date or a time in the line: such a line is content, never an error message."""
+    return bool(_DATE_TIME.search(fold(line[:MAX_LINE])))
+
+
+def item_key(item: dict) -> str:
+    """Short stable identity of an item (folded title + cleaned URL)."""
+    raw = fold(item.get("title", "")) + "\t" + _clean_url(item.get("url", ""))
+    return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:10]
+
+
 def _garbled(html: str) -> bool:
     return bool(_CTRL.search(html)) or html.count("\ufffd") > max(20, len(html) // 50)
 
@@ -342,11 +363,16 @@ def _candidate(n: _Node, base: str):
     f = fold(text)
     if f in CHROME_LINES and f not in GENERIC_ACTIONS:
         return None
-    if (f in _NOT_ITEM_TEXT or re.fullmatch(r"[\d\s.<>«»…-]*", f)
-            or any(w in f for w in _NOT_ITEM_WORDS) or _is_chrome_line(text)
+    if (f in _PAGER_TEXT or re.fullmatch(r"[\d\s.<>«»…-]*", f)
             or "page$" in (a.get("href") or "").lower()):
         return None
-    path = fold(url) if url != base else ""
+    parts = urlsplit(url)
+    path = fold(parts.path + "?" + parts.query) if url != base else ""  # never the host
+    # a link under an event/reservation path is an event whatever its words say
+    if not any(k in path for k in _EVENT_PATH) and (
+            f in _CONSENT_TEXT or any(w in f for w in _NOT_ITEM_WORDS)
+            or _is_chrome_line(text)):
+        return None
     hay = f + " " + path
     strong = any(k in hay for k in _KEYWORDS)
     weak = any(k in hay for k in _WEAK_KEYWORDS) and any(k in path for k in _EVENT_PATH)
@@ -446,9 +472,10 @@ def parse_portal(html, base_url: str = DEFAULT_BASE_URL) -> PortalSnapshot:
         substantial = [l for l in lines if len(l) >= CONTENT_LINE_MIN]
         empty = False
         if not items:
+            undated = [l for l in lines if not has_date(l)]
             empty = (len(substantial) < CONTENT_LINES_NEEDED
-                     or any(k in fold(l) for l in lines for k in _NOT_FOUND)
-                     or all(_negative(l) for l in substantial))
+                     or any(k in fold(l) for l in undated for k in _NOT_FOUND)
+                     or all(_negative(l) and not has_date(l) for l in substantial))
         return PortalSnapshot(lines, items, empty, _signature(lines, items))
     except Exception:  # a parser bug must not turn into a crash of the scan
         return _fallback(html, base_url)
