@@ -315,6 +315,7 @@ function mainScreen(config, state) {
   const text = [
     "🎭 <b>Tiyatro Takip</b>",
     `Durum: ${paused ? "⏸ duraklatıldı" : "▶️ çalışıyor"}`,
+    ...(paused ? ["Duraklatılmışken oluşan bildirimler atılır; devam edince gönderilmez."] : []),
     `Takip edilen oyun: ${watched}`,
     lastScan ? `Son tarama: ${esc(fmt(lastScan))}` : "Son tarama: bilinmiyor",
   ].join("\n");

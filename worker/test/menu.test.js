@@ -346,3 +346,9 @@ test("active play without targets shows the no-alert warning (play screen + watc
   assert.ok(!render(`p:${KB}`, c, st).text.includes(warn));
   assert.ok(!render(`p:${KP}`, cfg, st).text.includes(warn)); // inactive: no warning
 });
+
+test("final review M8: the paused screen says alerts raised while paused are discarded", () => {
+  const text = render("pz:1", { ...cfg, paused: true }, st).text;
+  assert.ok(text.includes("Duraklatılmışken oluşan bildirimler atılır"), text);
+  assert.ok(!render("m", cfg, st).text.includes("atılır"));
+});
