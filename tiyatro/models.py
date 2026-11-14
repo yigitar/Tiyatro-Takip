@@ -72,6 +72,7 @@ class Config:
     sources: list[str]
     paused: bool
     version: int
+    portals: list[dict] = field(default_factory=list)
 
 
 EVENT_KINDS = (
@@ -90,6 +91,9 @@ EVENT_KINDS = (
     "DELIVERY_DROPPED",
     "OPENED_SOLD_OUT",
     "CONFIG_INVALID",
+    "PORTAL_OPENED",
+    "PORTAL_CHANGED",
+    "PORTAL_FAILING",
 )
 
 

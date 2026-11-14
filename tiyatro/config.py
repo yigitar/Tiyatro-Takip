@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import copy
 import re
+from urllib.parse import urlsplit
 
 from .models import Config, PlayWatch, Rule, Target
 
@@ -8,6 +10,12 @@ DEFAULT_SOURCE = (
     "https://biletinial.com/tr-tr/mekan/kocaeli-buyuksehir-belediyesi-sehir-tiyatrolari"
 )
 MIN_PEOPLE, MAX_PEOPLE = 1, 4
+MAX_PORTALS = 5
+DEFAULT_PORTALS = [{"id": "basiskele", "name": "Başiskele Belediyesi rezervasyon",
+                    "url": "https://rezervasyon.basiskele.bel.tr/etkinlikler",
+                    "enabled": True}]
+
+_PORTAL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
@@ -66,6 +74,37 @@ def _target_from_dict(d: dict) -> Target:
     )
 
 
+def _portals_from(raw) -> list[dict]:
+    """Validated copy of ``config.portals``; an absent key means the default portal."""
+    if raw is None:
+        return copy.deepcopy(DEFAULT_PORTALS)
+    if not isinstance(raw, list):
+        raise ValueError("portals bir liste olmali")
+    if len(raw) > MAX_PORTALS:
+        raise ValueError(f"en fazla {MAX_PORTALS} portal olabilir")
+    out: list[dict] = []
+    seen: set[str] = set()
+    for p in raw:
+        if not isinstance(p, dict):
+            raise ValueError("portal bir nesne olmali")
+        pid, name, url = p.get("id"), p.get("name"), p.get("url")
+        enabled = p.get("enabled", True)
+        if not isinstance(pid, str) or not _PORTAL_ID_RE.match(pid):
+            raise ValueError(f"portal id gecersiz: {pid!r}")
+        if pid in seen:
+            raise ValueError(f"portal id tekrar ediyor: {pid}")
+        seen.add(pid)
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"portal adi bos olamaz: {pid}")
+        parts = urlsplit(url) if isinstance(url, str) else None
+        if parts is None or parts.scheme != "https" or not parts.netloc or not parts.hostname:
+            raise ValueError(f"portal url https olmali: {pid}")
+        if not isinstance(enabled, bool):
+            raise ValueError(f"portal enabled true/false olmali: {pid}")
+        out.append({"id": pid, "name": name, "url": url, "enabled": enabled})
+    return out
+
+
 def config_from_dict(d: dict) -> Config:
     plays: dict[str, PlayWatch] = {}
     for slug, w in (d.get("plays") or {}).items():
@@ -79,6 +118,7 @@ def config_from_dict(d: dict) -> Config:
         sources=list(d.get("sources") or [DEFAULT_SOURCE]),
         paused=bool(d.get("paused", False)),
         version=int(d.get("version", 1)),
+        portals=_portals_from(d.get("portals")),
     )
 
 
@@ -103,8 +143,10 @@ def config_to_dict(c: Config) -> dict:
         "sources": list(c.sources),
         "paused": c.paused,
         "version": c.version,
+        "portals": [dict(p) for p in c.portals],
     }
 
 
 def default_config() -> Config:
-    return Config(plays={}, sources=[DEFAULT_SOURCE], paused=False, version=1)
+    return Config(plays={}, sources=[DEFAULT_SOURCE], paused=False, version=1,
+                  portals=copy.deepcopy(DEFAULT_PORTALS))
