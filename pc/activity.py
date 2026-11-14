@@ -357,3 +357,101 @@ def _describe(old: dict, new: dict, titles: dict) -> list[str]:
     if old.get("sources") != new.get("sources") and ("sources" in old or "sources" in new):
         out.append("Kaynak (liste sayfası) ayarı değişti")
     return out
+
+
+# ---- scan wording (from the state) --------------------------------------------------
+
+_STATUS_ORDER = (("on_sale", "satışta"), ("upcoming", "yakında"), ("sold_out", "tükendi"))
+LIST_MAX = 6  # titles named in one line before "+N"
+
+
+def snapshot(state) -> dict:
+    """``{slug: {"title", "removed", "sessions": {sid: status}}}`` of a state dict."""
+    out: dict = {}
+    plays = state.get("plays") if isinstance(state, dict) else None
+    for slug, entry in (plays if isinstance(plays, dict) else {}).items():
+        if not isinstance(entry, dict):
+            continue
+        sessions = entry.get("sessions")
+        out[slug] = {
+            "title": str(entry.get("title") or slug), "removed": bool(entry.get("removed")),
+            "sessions": {sid: rec.get("status") for sid, rec in
+                         (sessions if isinstance(sessions, dict) else {}).items()
+                         if isinstance(rec, dict) and not rec.get("gone")}}
+    return out
+
+
+def counts(snap: dict) -> tuple[int, int, dict]:
+    """(plays, sessions, {status: n}) of the listed (not removed) plays."""
+    by_status = {key: 0 for key, _w in _STATUS_ORDER}
+    plays = sessions = 0
+    for entry in snap.values():
+        if entry["removed"]:
+            continue
+        plays += 1
+        for status in entry["sessions"].values():
+            sessions += 1
+            if status in by_status:
+                by_status[status] += 1
+    return plays, sessions, by_status
+
+
+def counts_text(snap: dict) -> str:
+    """"6 oyun, 17 seans (3 satışta, 1 yakında, 13 tükendi)"."""
+    plays, sessions, by_status = counts(snap)
+    parts = ", ".join(f"{by_status[key]} {word}" for key, word in _STATUS_ORDER)
+    return f"{plays} oyun, {sessions} seans ({parts})"
+
+
+def name_list(names: list[str]) -> str:
+    shown = ", ".join(names[:LIST_MAX])
+    return shown + (f" (+{len(names) - LIST_MAX})" if len(names) > LIST_MAX else "")
+
+
+def diff_snapshots(before: dict, after: dict) -> dict:
+    """What a scan changed in the play list: new / removed plays (titles), new sessions
+    per play ``[(title, n)]`` and how many known sessions changed status."""
+    out = {"new": [], "removed": [], "sessions": [], "status": 0}
+    if not before:  # no earlier list: nothing to compare with
+        return out
+    for slug, entry in after.items():
+        old = before.get(slug)
+        if old is None or (old["removed"] and not entry["removed"]):
+            if not entry["removed"]:
+                out["new"].append(entry["title"])
+            continue
+        if entry["removed"]:
+            if not old["removed"]:
+                out["removed"].append(entry["title"])
+            continue
+        added = [sid for sid in entry["sessions"] if sid not in old["sessions"]]
+        if added:
+            out["sessions"].append((entry["title"], len(added)))
+        out["status"] += sum(1 for sid, st in entry["sessions"].items()
+                             if sid in old["sessions"] and old["sessions"][sid] != st)
+    out["removed"] += [old["title"] for slug, old in before.items()
+                       if slug not in after and not old["removed"]]
+    return out
+
+
+def change_summary(diff: dict, events: int) -> list[str]:
+    parts = []
+    if diff["new"]:
+        parts.append(f"{len(diff['new'])} yeni oyun")
+    if diff["removed"]:
+        parts.append(f"{len(diff['removed'])} oyun kalktı")
+    if diff["sessions"]:
+        parts.append(f"{sum(n for _t, n in diff['sessions'])} yeni seans")
+    if diff["status"]:
+        parts.append(f"{diff['status']} seansın durumu değişti")
+    if events:
+        parts.append(f"{events} bildirim olayı")
+    return parts
+
+
+def plain_headline(text: str) -> str:
+    """A notification headline without its leading emoji/symbols."""
+    i = 0
+    while i < len(text) and not text[i].isalnum():
+        i += 1
+    return text[i:].strip()

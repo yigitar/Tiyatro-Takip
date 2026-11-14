@@ -48,10 +48,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
+from pc import activity as act
 from pc import configedit
+from pc.app_logic import ago_text
 from pc.settings import DEFAULT_LOCAL_DIR
-from pc.viewmodel import Row, build_rows, format_events_for_desktop, when_text
-from tiyatro.config import config_from_dict, default_config
+from pc.viewmodel import Row, build_rows, format_events_for_desktop, headline, when_text
+from tiyatro.config import config_from_dict, config_to_dict, default_config
 from tiyatro.fetcher import fetch
 from tiyatro.heartbeat import github_run_status, write_heartbeat
 from tiyatro.models import ISTANBUL, Config, Event, Play
@@ -72,6 +74,9 @@ LOCAL_STATE_MAX_AGE = timedelta(hours=24)  # older local state: GitHub's is the 
 LOCAL_STATE_SKEW = timedelta(minutes=5)  # last_scan further in the future: stale too
 BACKOFF_FIRST_S = 30
 BACKOFF_MAX_S = 300
+ROLLUP_EVERY = timedelta(minutes=5)   # burst scans without a change: one log line per 5 min
+ERROR_REPEAT = timedelta(minutes=10)  # the same error text is logged at most this often
+TITLE_MAX = 300
 
 
 def _next_backoff(current: int) -> int:
@@ -99,6 +104,23 @@ class TickResult:
 
 class RefreshError(RuntimeError):
     """"Listeyi güncelle" failed; the previous list is kept."""
+
+
+class _CountingTG:
+    """Telegram stand-in that counts successful sends (to tell "sent by the PC" from
+    "GitHub was first" in the activity log); everything else is passed through."""
+
+    def __init__(self, tg):
+        self._tg = tg
+        self.sent = 0
+
+    def send(self, text: str):
+        result = self._tg.send(text)
+        self.sent += 1
+        return result
+
+    def __getattr__(self, name):
+        return getattr(self._tg, name)
 
 
 class _NoChange(Exception):
@@ -138,9 +160,10 @@ class Service:
     def __init__(self, store, tg, claims, clock: Callable[[], datetime] = _default_clock,
                  fetch_fn: Callable = fetch, sleep: Callable = time.sleep,
                  local_dir: Path | str = DEFAULT_LOCAL_DIR,
-                 rand: Callable[[float, float], float] = random.uniform):
+                 rand: Callable[[float, float], float] = random.uniform,
+                 activity: act.ActivityLog | None = None):
         self._store = store
-        self._tg = tg
+        self._tg = _CountingTG(tg)
         self._claims = claims
         self._clock = clock
         self._fetch = fetch_fn
@@ -176,6 +199,164 @@ class Service:
         self.removed_slugs: set[str] = _str_set(listing.get("removed")) or set()
         self.refresh_failures: list[str] = []  # play pages that failed in the last refresh
         self._plays: list[Play] = []
+        self.activity = (activity if activity is not None else
+                         act.ActivityLog(self._local / "activity.jsonl", clock=clock))
+        self._rollup_n = 0                       # quiet burst scans not logged yet
+        self._rollup_since: datetime | None = None
+        self._rollup_counts = ""
+        self._gh_healthy: bool | None = None     # last GitHub health that was logged
+        self._err_seen: dict[str, datetime] = {}
+
+    # ---- activity log ------------------------------------------------------------
+    def _log(self, category: str, title: str, detail: str = "", level: str = "info") -> None:
+        try:
+            self.activity.add(category, title[:TITLE_MAX], detail, level)
+        except Exception:  # the log must never break scanning
+            pass
+
+    def _titles(self) -> dict[str, str]:
+        plays = (self._state or {}).get("plays") or {}
+        return {slug: e.get("title") for slug, e in plays.items()
+                if isinstance(e, dict) and e.get("title")}
+
+    def log_startup(self) -> None:
+        self._log(act.CAT_APP, "Uygulama başlatıldı")
+
+    def log_shutdown(self) -> None:
+        self._flush_rollup()
+        self._log(act.CAT_APP, "Uygulama kapatıldı")
+
+    def _flush_rollup(self) -> None:
+        if self._rollup_n:
+            self._log(act.CAT_SCAN, f"Hızlı mod: {self._rollup_n} kontrol, değişiklik yok",
+                      self._rollup_counts)
+        self._rollup_n, self._rollup_since = 0, None
+
+    def _log_scan(self, now: datetime, before: dict, new_state: dict, res, only,
+                  mode: str) -> None:
+        after = act.snapshot(new_state)
+        counts = act.counts_text(after)
+        diff = act.diff_snapshots(before, after)
+        if diff["new"]:
+            self._log(act.CAT_PLAYS, f"Yeni oyun: {act.name_list(diff['new'])}")
+        if diff["removed"]:
+            self._log(act.CAT_PLAYS, f"Listeden kalktı: {act.name_list(diff['removed'])}")
+        for title, n in diff["sessions"]:
+            self._log(act.CAT_PLAYS, f"{title}: {n} yeni seans")
+        streak = int(new_state["meta"].get("fetch_fail_streak", 0) or 0)
+        failed = (streak > 0 if only is None else (res.scanned == 0 and bool(only)))
+        parts = act.change_summary(diff, len(res.events))
+        how = "PC (otomatik) · " + ("Hızlı mod (satış açılışı yakın)" if mode == "burst"
+                                    else "Normal mod")
+        if failed:
+            first = (f"Biletinial okunamadı ({streak}. kez üst üste)" if only is None
+                     else "oyun sayfaları okunamadı")
+            self._flush_rollup()
+            self._log(act.CAT_SCAN, counts, f"{first}\n{how}", "warn")
+            return
+        quiet = not parts
+        if quiet and mode == "burst":
+            if self._rollup_n == 0:
+                self._rollup_since = now
+            self._rollup_n += 1
+            self._rollup_counts = counts
+            if self._rollup_since is not None and now - self._rollup_since >= ROLLUP_EVERY:
+                self._flush_rollup()
+            return
+        self._flush_rollup()
+        result = "değişiklik yok" if quiet else "değişiklik var: " + ", ".join(parts)
+        self._log(act.CAT_SCAN, counts, f"{result}\n{how}")
+
+    def _log_refresh(self, before: dict, current: set[str], events: list[Event]) -> None:
+        """"Listeyi güncelle": the list as the page showed it right now."""
+        after = {slug: dict(e, removed=e["removed"] or slug not in current)
+                 for slug, e in act.snapshot(self._state).items()}
+        diff = act.diff_snapshots(before, after)
+        diff["new"] = [self._titles().get(s, s) for s in sorted(self.new_slugs)]
+        diff["removed"] = [(before.get(s) or {}).get("title") or self._titles().get(s, s)
+                           for s in sorted(self.removed_slugs)]
+        if diff["new"]:
+            self._log(act.CAT_PLAYS, f"Yeni oyun: {act.name_list(diff['new'])}")
+        if diff["removed"]:
+            self._log(act.CAT_PLAYS, f"Listeden kalktı: {act.name_list(diff['removed'])}")
+        for title, n in diff["sessions"]:
+            self._log(act.CAT_PLAYS, f"{title}: {n} yeni seans")
+        parts = act.change_summary(diff, len(events))
+        result = "değişiklik yok" if not parts else "değişiklik var: " + ", ".join(parts)
+        self._flush_rollup()
+        self._log(act.CAT_SCAN, act.counts_text(after),
+                  f"Elle güncelleme: {result}\nPC (elle)")
+
+    def _log_delivery(self, before: dict, new_state: dict, res, sent: int,
+                      before_events: dict) -> None:
+        after = {e.get("key"): int(e.get("attempts", 0) or 0)
+                 for e in new_state.get("outbox") or [] if isinstance(e, dict)}
+        known = dict(before_events)
+        known.update({ev.key: ev for ev in res.events})
+        titles = self._titles()
+
+        def name(key: str) -> str:
+            ev = known.get(key)
+            if ev is None:
+                return "bildirim"
+            text = act.plain_headline(headline(ev))
+            play = titles.get(ev.play_slug)
+            return f"{text} ({play})" if play else text
+
+        left = [k for k in known if k not in after]
+        dropped = any(ev.kind == "DELIVERY_DROPPED" for ev in res.events)
+        if left and sent:
+            self._log(act.CAT_NOTIFY, "Telegram'a gönderildi: "
+                      + "; ".join(name(k) for k in left))
+        elif left and not dropped:
+            self._log(act.CAT_NOTIFY, "GitHub zaten göndermişti (PC göndermedi): "
+                      + "; ".join(name(k) for k in left))
+        retry = [k for k, n in after.items() if k in before and n > before[k]]
+        if retry:
+            self._log(act.CAT_NOTIFY, "Gönderilemedi, tekrar denenecek: "
+                      + "; ".join(name(k) for k in retry), level="warn")
+
+    def _log_events(self, events: list[Event]) -> None:
+        titles = self._titles()
+        plays = (self._state or {}).get("plays") or {}
+        for ev in events:
+            if ev.kind in ("NEW_PLAY", "REMOVED_PLAY"):
+                continue  # logged from the list comparison ("Oyun listesi")
+            category = act.EVENT_CATEGORY.get(ev.kind, act.CAT_ERROR)
+            level = ("error" if ev.kind == "DELIVERY_DROPPED"
+                     else "warn" if ev.kind in act.WARNING_KINDS else "info")
+            title = act.plain_headline(headline(ev))
+            play = titles.get(ev.play_slug)
+            if play:
+                title = f"{title} — {play}"
+            detail = str(ev.payload.get("detail") or "") if isinstance(ev.payload, dict) else ""
+            sessions = (plays.get(ev.play_slug) or {}).get("sessions") or {}
+            rec = sessions.get(ev.session_id) if ev.session_id else None
+            start = _dt(rec.get("start")) if isinstance(rec, dict) else None
+            if start is not None and not detail:
+                detail = f"Seans: {when_text(start)}"
+            self._log(category, title, detail, level)
+
+    def _log_errors(self, errors: list[str], now: datetime) -> None:
+        self._err_seen = {k: v for k, v in self._err_seen.items() if now - v < ERROR_REPEAT}
+        for text in errors:
+            if text in self._err_seen:
+                continue
+            self._err_seen[text] = now
+            note = ""
+            if text.startswith(("config.json", "GitHub state.json")) and self._start_backoff:
+                note = f"Yeniden deneme: {self._start_backoff} sn sonra"
+            elif text.startswith("heartbeat") and self._hb_backoff:
+                note = f"Yeniden deneme: {self._hb_backoff} sn sonra"
+            self._log(act.CAT_ERROR, text, note, "warn")
+
+    def _log_remote_change(self, old: Config, new: Config) -> None:
+        parts = act.describe_config_diff(config_to_dict(old), config_to_dict(new),
+                                         self._titles())
+        if parts:
+            self._log(act.CAT_WATCH, "Uzaktan (Telegram) değişiklik: " + "; ".join(parts),
+                      "\n".join(parts) + "\nDeğişiklik Telegram menüsünden veya başka bir "
+                      "yerden yapıldı.")
 
     # ---- local files -------------------------------------------------------------
     def _read_json(self, name: str):
@@ -297,7 +478,9 @@ class Service:
         with self._config_lock:
             if gen != self._edit_gen and self._config is not None:
                 return self._config  # an edit committed meanwhile: this read is stale
-            self._config = config
+            previous, self._config = self._config, config
+        if previous is not None:
+            self._log_remote_change(previous, config)  # PC edits are already in `previous`
         return config
 
     def _ensure_state(self, errors: list[str]) -> dict | None:
@@ -408,7 +591,7 @@ class Service:
                 if act:
                     try:
                         events = self._run(now, config, only, self._fetch, self._sleep,
-                                           not scanned, errors)
+                                           not scanned, errors, mode)
                     except Exception as exc:
                         errors.append(_err("tarama başarısız", exc))
                     finally:
@@ -419,16 +602,22 @@ class Service:
                 self._heartbeat(now, state, config, errors)
             self._check_github(now, errors)
             self._errors = errors
+            self._log_errors(errors, now)
             opening = next_opening(state, config, now) if state and config else None
             return TickResult(scanned, events, self._gh, list(errors), mode, opening,
                               self.status())
 
     def _run(self, now: datetime, config: Config, only: list[str] | None,
              fetch_fn: Callable, sleep: Callable, delivery_only: bool,
-             errors: list[str]) -> list[Event]:
+             errors: list[str], mode: str = "normal", manual: bool = False) -> list[Event]:
         state = self._state
         before = [ev for entry in state["outbox"] for ev in _entry_events(entry)]
         discarded = int(state["meta"].get("paused_discarded", 0) or 0)
+        snap_before = act.snapshot(state)
+        attempts = {e.get("key"): int(e.get("attempts", 0) or 0)
+                    for e in state["outbox"] if isinstance(e, dict)}
+        by_key = {ev.key: ev for ev in before}
+        sent_before = self._tg.sent
         res = run_once(self._store, self._tg, self._claims, now, who="pc",
                        fetch_fn=fetch_fn, sleep=sleep, persist_state=False, state=state,
                        only_slugs=only, config=config)
@@ -443,6 +632,9 @@ class Service:
             self._write_json("state.json", new)
         except Exception as exc:
             errors.append(_err("yerel durum yazılamadı", exc))
+        if not delivery_only and not manual:  # "Listeyi güncelle" logs itself
+            self._log_scan(now, snap_before, new, res, only, mode)
+        self._log_delivery(attempts, new, res, self._tg.sent - sent_before, by_key)
         if int(new["meta"].get("paused_discarded", 0) or 0) == discarded:
             after = [ev for entry in new["outbox"] for ev in _entry_events(entry)]
             self._notify(before + list(res.events) + after, now, errors)
@@ -456,6 +648,7 @@ class Service:
                 fresh.append(ev)
         if not fresh:
             return
+        self._log_events(fresh)
         for ev in fresh:
             self._notified[ev.key] = now.isoformat()
         self._notified = {k: v for k, v in self._notified.items()
@@ -508,12 +701,34 @@ class Service:
             self._gh = github_run_status(scan_runs(self._store.runs(per_page=30)), now)
         except Exception as exc:
             errors.append(_err("GitHub çalışmaları okunamadı", exc))
+        else:
+            self._log_github(self._gh)
+
+    def _log_github(self, gh: dict) -> None:
+        healthy = bool(gh.get("healthy"))
+        if healthy == self._gh_healthy:
+            return
+        first, self._gh_healthy = self._gh_healthy is None, healthy
+        age = (f"son çalışma {ago_text(gh['gap_s'])}" if gh.get("last_run")
+               else "henüz çalışma bulunamadı")
+        if healthy:
+            word = "GitHub taraması çalışıyor" if first else "GitHub taraması düzeldi"
+        else:
+            word = "GitHub taraması gecikiyor"
+        self._log(act.CAT_GITHUB, f"{word}: {age}", level="info" if healthy else "warn")
 
     # ---- "Listeyi güncelle" ----------------------------------------------------------
     def refresh_now(self) -> list[Play]:
         """Scan venue + play pages now, fold the result into the local state like a
         normal scan (events, alerts) and mark NEW/REMOVED plays against the previous
         list. A blocked/empty scrape raises ``RefreshError`` and changes nothing."""
+        try:
+            return self._refresh_now()
+        except RefreshError as exc:
+            self._log(act.CAT_ERROR, str(exc), "Elle güncelleme", "warn")
+            raise
+
+    def _refresh_now(self) -> list[Play]:
         with self._lock:
             now = self._clock()
             errors: list[str] = []
@@ -558,8 +773,11 @@ class Service:
                     return hit
                 return self._fetch(url)
 
+            snap_before = act.snapshot(self._state)
+            events: list[Event] = []
             try:
-                self._run(now, config, None, replay, lambda _s: None, False, errors)
+                events = self._run(now, config, None, replay, lambda _s: None, False,
+                                   errors, "normal", True)
             except Exception as exc:
                 errors.append(_err("tarama başarısız", exc))
             self._next_scan_at = self._plan_next_scan(now)
@@ -575,6 +793,7 @@ class Service:
             self._plays = ([self._display_play(p, config) for p in plays]
                            + [p for p in kept if p is not None])
             self.refresh_failures = sorted(unscanned)
+            self._log_refresh(snap_before, current, events)
             try:
                 self._write_json("plays.json", {"slugs": sorted(current),
                                                 "new": sorted(self.new_slugs),
@@ -648,6 +867,8 @@ class Service:
 
     # ---- config editing ----------------------------------------------------------------
     def _edit(self, op: Callable, *args) -> dict:
+        seen: list[dict] = []  # the raw config the last (successful) mutate started from
+
         def mutate(raw: dict) -> dict:
             new = copy.deepcopy(raw)
             op(new, *args)
@@ -657,6 +878,7 @@ class Service:
                 config_from_dict(new)
             except (ValueError, TypeError, KeyError, AttributeError) as exc:
                 raise ValueError(f"geçersiz ayar: {exc}") from None
+            seen[:] = [raw]
             return new
 
         with self._edit_lock:  # not _lock: an edit must not wait for a running scan
@@ -664,6 +886,15 @@ class Service:
                 new = self._store.update_json(CONFIG_PATH, mutate)
             except _NoChange as nc:
                 new = nc.data
+            except Exception as exc:
+                self._log(act.CAT_ERROR, f"Ayar kaydedilemedi: {exc}", level="warn")
+                raise
+            else:
+                parts = act.describe_config_diff(seen[0] if seen else None, new,
+                                                 self._titles())
+                if parts:
+                    self._log(act.CAT_WATCH, "PC'den: " + "; ".join(parts),
+                              "\n".join(parts))
             try:
                 config = config_from_dict(new)
             except (ValueError, TypeError, KeyError, AttributeError):
