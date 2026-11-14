@@ -210,7 +210,12 @@ def test_sent_claim_reclaimable_after_reclaim_after(store):
     assert b.claim("ON_SALE:s1", reclaim_after=gap) is False  # same episode
     assert b.claim("ON_SALE:s1") is False  # no reclaim rule: sent blocks forever
     store.advance(150)
-    assert b.claim("ON_SALE:s1", reclaim_after=gap) is True
+    # old enough, but this runner never saw it closed after the send: same episode
+    assert b.claim("ON_SALE:s1", reclaim_after=gap) is False
+    assert b.claim("ON_SALE:s1", reclaim_after=gap,
+                   closed_seen_at=store.now - timedelta(minutes=10)) is False
+    closed = store.now - timedelta(seconds=20)  # seen not on sale after the send
+    assert b.claim("ON_SALE:s1", reclaim_after=gap, closed_seen_at=closed) is True
     data, _ = store.get(claim_path("ON_SALE:s1"))
     assert data["status"] == "claimed" and data["claimed_by"] == "pc"
     assert data["attempts"] == 2 and data["sent_at"] is None
@@ -229,7 +234,16 @@ def test_reclaim_of_stale_sent_claim_is_cas_protected(store):
         return real_put(path, data, sha)
 
     store.put = racing_put
-    assert b.claim("k", reclaim_after=gap) is False
+    assert b.claim("k", reclaim_after=gap, closed_seen_at=store.now) is False
+
+
+def test_closed_observation_alone_is_not_enough_before_the_gap(store):
+    a, b = make(store, "gh"), make(store, "pc")
+    gap = timedelta(minutes=3)
+    a.claim("k")
+    a.mark_sent("k", 1)
+    store.advance(60)
+    assert b.claim("k", reclaim_after=gap, closed_seen_at=store.now) is False
 
 
 def test_send_with_claim_passes_reclaim_after(store):
@@ -239,5 +253,8 @@ def test_send_with_claim_passes_reclaim_after(store):
     store.advance(30)
     assert send_with_claim(make(store, "pc"), tg, "k", "dup", reclaim_after=gap) is False
     store.advance(600)
-    assert send_with_claim(make(store, "pc"), tg, "k", "two", reclaim_after=gap) is True
-    assert tg.sent == ["one", "two"]
+    assert send_with_claim(make(store, "pc"), tg, "k", "same", reclaim_after=gap) is False
+    closed = store.now - timedelta(minutes=5)
+    assert send_with_claim(make(store, "pc"), tg, "k", "two", reclaim_after=gap,
+                           closed_seen_at=closed) is True
+    assert tg.sent == ["one", "two"]  # the 'same' attempt was blocked

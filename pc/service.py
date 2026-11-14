@@ -277,6 +277,8 @@ class Service:
                     for key in ("status", "status_since", "prev_status", "on_sale_pending"):
                         if key in grec:
                             lrec[key] = grec[key]
+                if _newer(grec.get("closed_seen_at"), lrec.get("closed_seen_at")):
+                    lrec["closed_seen_at"] = grec["closed_seen_at"]
                 if _newer(grec.get("last_on_sale_notified"),
                           lrec.get("last_on_sale_notified")):
                     lrec["last_on_sale_notified"] = grec["last_on_sale_notified"]

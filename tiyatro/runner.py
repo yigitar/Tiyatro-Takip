@@ -205,6 +205,9 @@ def _fingerprint(state: dict) -> str:
     for entry in (st.get("plays") or {}).values():
         if isinstance(entry, dict):
             entry.pop("last_seen", None)
+            for rec in (entry.get("sessions") or {}).values():
+                if isinstance(rec, dict):
+                    rec.pop("closed_seen_at", None)
     return json.dumps(st, sort_keys=True, default=str)
 
 
@@ -261,10 +264,22 @@ def _reclaim_after(key: str) -> timedelta | None:
     return ON_SALE_GAP if claim_key(key) != key else None
 
 
-def _claim_sent(store, key: str, created: datetime) -> bool:
-    """True if the claim for outbox key ``key`` (entry created at ``created``) reads
-    ``sent``; for ON_SALE only if it was sent at most ``ON_SALE_GAP`` before the entry
-    was created (an older send was an earlier episode)."""
+def _closed_seen_at(entry: dict) -> datetime | None:
+    """When the runner that derived the entry last saw the session not on sale."""
+    for ev in _entry_events(entry):
+        try:
+            at = parse_iso((ev.payload or {}).get("closed_seen_at"))
+        except (TypeError, ValueError):
+            at = None
+        if at is not None:
+            return at
+    return None
+
+
+def _claim_sent(store, key: str, closed: datetime | None = None) -> bool:
+    """True if the claim for outbox key ``key`` reads ``sent``; for ON_SALE only if the
+    deriving runner did not see the session closed after that send (``closed`` newer
+    than ``sent_at`` means a later episode, which may be sent again)."""
     try:
         data, _sha = store.get(claim_path(claim_key(key)))
         if not isinstance(data, dict) or data.get("status") != "sent":
@@ -273,7 +288,7 @@ def _claim_sent(store, key: str, created: datetime) -> bool:
         if gap is None:
             return True
         sent_at = parse_iso(data.get("sent_at"))
-        return sent_at is not None and sent_at >= created - gap
+        return sent_at is None or closed is None or closed <= sent_at
     except Exception:
         return False  # fail open: rather try to send
 
@@ -334,14 +349,15 @@ def _deliver(state: dict, store, tg, claims: ClaimStore, now: datetime,
         expired = ("age" if now - created > OUTBOX_MAX_AGE
                    else "attempts" if attempts >= OUTBOX_MAX_ATTEMPTS else None)
         if expired:
-            if not _claim_sent(store, key, created):
+            if not _claim_sent(store, key, _closed_seen_at(entry)):
                 _log_drop(state, entry, expired, now)
                 dropped.append(entry)
             continue
         if not_before > now:
             keep.append(entry)
             continue
-        if _claim_sent(store, key, created):
+        closed = _closed_seen_at(entry)
+        if _claim_sent(store, key, closed):
             continue  # delivered by us earlier or by the other runner
         parts = [p for p in format_message(_entry_events(entry), plays, config) if p]
         if not parts:
@@ -349,7 +365,7 @@ def _deliver(state: dict, store, tg, claims: ClaimStore, now: datetime,
         entry["attempts"] = attempts + 1
         # False = held by the other runner or the send failed: retry next run.
         if not send_with_claim(claims, _AllParts(tg, parts), claim_key(key), parts[0],
-                               _reclaim_after(key)):
+                               _reclaim_after(key), closed):
             # Back off so a short outage during a 15 s burst cannot burn all attempts.
             delay = min(RETRY_BASE_S * 2 ** attempts, RETRY_MAX_S)
             entry["not_before"] = (now + timedelta(seconds=delay)).isoformat()

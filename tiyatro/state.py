@@ -180,10 +180,12 @@ def _merge_play(state: dict, play: Play, config: Config, now_iso: str) -> bool:
                 rec["on_sale_pending"] = True
         else:
             rec["on_sale_pending"] = False
+            rec["closed_seen_at"] = now_iso  # this runner saw it not on sale
         sessions[s.id] = rec
     for sid, rec in sessions.items():
         if sid not in seen:
             rec["gone"] = True
+            rec["closed_seen_at"] = now_iso
     return is_new
 
 
@@ -260,6 +262,7 @@ def diff(old: dict, plays: list[Play], config: Config, now: datetime, *,
                     n = rec.get("on_sale_count", 0) + 1
                     rec.update(on_sale_count=n, last_on_sale_notified=now_iso,
                                on_sale_pending=False)
+                    payload["closed_seen_at"] = rec.get("closed_seen_at")
                     emit("ON_SALE", f"ON_SALE:{sid}:{n}", slug, sid, ids, payload)
             elif (session.status is Status.SOLD_OUT and rec.get("status_since") == now_iso
                   and rec.get("prev_status") == Status.UPCOMING.value

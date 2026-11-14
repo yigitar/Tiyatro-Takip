@@ -60,9 +60,13 @@ class ClaimStore:
                 "lease_until": (now + LEASE).isoformat(), "status": "claimed",
                 "sent_at": None, "message_id": None, "attempts": attempts, "note": None}
 
-    def claim(self, key: str, reclaim_after: timedelta | None = None) -> bool:
+    def claim(self, key: str, reclaim_after: timedelta | None = None,
+              closed_seen_at: datetime | None = None) -> bool:
         """True if we may send ``key`` now. ``reclaim_after``: a ``sent`` claim whose
-        ``sent_at`` is at least this old may be claimed again (CAS on the sha)."""
+        ``sent_at`` is at least this old AND that this runner saw closed (not on sale)
+        after it was sent (``closed_seen_at`` later than ``sent_at``) may be claimed again
+        (CAS on the sha). Without the second condition a runner that merely sees the same
+        still-open episode late would re-send it."""
         try:
             now = self._now()
             path = claim_path(key)
@@ -74,7 +78,8 @@ class ClaimStore:
             status = cur.get("status")
             if status == "sent":
                 sent_at = parse_iso(cur.get("sent_at")) if reclaim_after else None
-                if sent_at is None or now - sent_at < reclaim_after:
+                if (sent_at is None or now - sent_at < reclaim_after
+                        or closed_seen_at is None or closed_seen_at <= sent_at):
                     return False
             if status == "claimed":
                 lease = parse_iso(cur.get("lease_until"))
@@ -134,8 +139,9 @@ class ClaimStore:
 
 
 def send_with_claim(claims: ClaimStore, tg, key: str, text: str,
-                    reclaim_after: timedelta | None = None) -> bool:
-    if not claims.claim(key, reclaim_after):
+                    reclaim_after: timedelta | None = None,
+                    closed_seen_at: datetime | None = None) -> bool:
+    if not claims.claim(key, reclaim_after, closed_seen_at):
         return False
     try:
         message_id = tg.send(text)

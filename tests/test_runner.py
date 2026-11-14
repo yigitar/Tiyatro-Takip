@@ -653,8 +653,8 @@ def test_save_failure_after_send_does_not_resend(monkeypatch):
     res = env.run(NOW + timedelta(minutes=5))
     assert len(env.tg.sent) == 1 and res.save_error
     store.fail_state = False
-    # next (burst) run within the 3-min ON_SALE gap; a later re-derive may duplicate
-    res = env.run(NOW + timedelta(minutes=7))
+    # a later run re-derives the event from the old state; the claim says sent
+    res = env.run(NOW + timedelta(minutes=10))
     assert [e.kind for e in res.events] == ["ON_SALE"]  # re-derived from the old state
     assert len(env.tg.sent) == 1  # but the claim says sent: no duplicate
     assert env.saved_state()["outbox"] == [] and res.save_error is None
