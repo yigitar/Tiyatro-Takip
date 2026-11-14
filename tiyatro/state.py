@@ -9,9 +9,10 @@ Notes on alerting semantics:
   after having dropped off the page) becomes "pending". The pending alert fires when an
   active watch has a matching target and the last ON_SALE alert for that session is at
   least ``ON_SALE_GAP`` (3 min) old: only a dedupe for parser glitches, so a cart-expiry
-  or iade re-open minutes after a sell-out alerts again. A pending alert survives the session vanishing for a scan. If a
-  matching active watch/target appears while the session is already ON_SALE, exactly
-  one ON_SALE alert fires ("ticket available right now").
+  or iade re-open minutes after a sell-out alerts again. A pending alert survives the
+  session vanishing for a scan. If a matching active watch/target appears while the
+  session is already ON_SALE, exactly one ON_SALE alert fires ("ticket available right
+  now").
 - UNKNOWN_STATUS is keyed per session id (``UNKNOWN_STATUS:<sid>``): once per session.
 - DAY_BEFORE fires from 10:00 the day before opening until 60 min before opening, so it
   never arrives as a near-duplicate of OPENING_SOON (last 10 min before opening).

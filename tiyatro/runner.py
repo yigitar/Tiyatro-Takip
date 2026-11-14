@@ -46,8 +46,9 @@ straight into the burst loop and does the full normal scan only afterwards, so t
 blind gap between two runs' bursts is only the next run's start-up (checkout, Python
 setup, ~20-40 s) instead of start-up plus a full venue scan; with the 16-min burst
 and the 5-min schedule the next run usually starts before the previous burst ends, but
-runs never overlap (``concurrency``), so a gap of roughly one start-up remains. Two runs never overlap: the scan workflow runs in
-one Actions ``concurrency`` group (set up in the workflow file).
+runs never overlap, so a gap of roughly one start-up remains. Two runs never overlap:
+the scan workflow runs in one Actions ``concurrency`` group (set up in the workflow
+file).
 
 Pausing: with ``config.paused`` the scan and state update run normally but the events
 (and anything still in the outbox) are discarded: they stay recorded in ``emitted`` and
@@ -617,8 +618,10 @@ def _burst_targets(state: dict, config: Config,
             elif status is Status.ON_SALE and since is not None \
                     and since <= now <= since + BURST_FLIP_TAIL:
                 end, window = since + BURST_FLIP_TAIL, opens
-            elif status is Status.SOLD_OUT and since is not None                     and rec.get("prev_status") in (Status.UPCOMING.value,
-                                                   Status.ON_SALE.value)                     and since <= now <= since + BURST_SOLD_OUT_TAIL:
+            elif status is Status.SOLD_OUT and since is not None \
+                    and rec.get("prev_status") in (Status.UPCOMING.value,
+                                                   Status.ON_SALE.value) \
+                    and since <= now <= since + BURST_SOLD_OUT_TAIL:
                 end, window = since + BURST_SOLD_OUT_TAIL, opens
             else:
                 continue
@@ -636,8 +639,8 @@ def plan_mode(state: dict, config: Config, now: datetime) -> tuple[str, datetime
     enables sales, observed 55+ min after the announced time), or flipped to ON_SALE
     within the last 10 min, or sold out (from UPCOMING/ON_SALE) within the last 30 min
     (cart-expiry re-opens). ``until`` is the latest such end (``opens_at + 4 h`` /
-    flip + 10 min / sell-out + 30 min); ``burst_loop`` caps a single run at ``max_seconds`` and the next
-    scheduled run re-enters burst mode. Cadence: every 15 s +-3 s for the whole window.
+    flip + 10 min / sell-out + 30 min); ``burst_loop`` caps a single run at
+    ``max_seconds`` and the next scheduled run re-enters burst mode. Cadence: every 15 s +-3 s for the whole window.
     """
     found = _burst_targets(state, config, now)
     if not found:
