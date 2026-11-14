@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover
 from pc import app_logic as L
 from pc.service import RefreshError
 from pc.settings import DEFAULT_LOCAL_DIR, SettingsError, load_settings
-from pc.viewmodel import APP_TITLE, DAY_SHORT
+from pc.viewmodel import APP_TITLE, DAY_SHORT, credit_lines
 from tiyatro.config import config_to_dict
 from tiyatro.models import ISTANBUL
 
@@ -38,6 +38,7 @@ POLL_MS = 200
 STATUS_MS = 5000
 RELOAD_MS = 60_000
 MAX_POPUPS = 3
+NO_INFO = "Bilgi yok"
 COLUMNS = (("title", "Oyun", 260), ("tags", "Etiketler", 110), ("genre", "Tür", 90),
            ("duration", "Süre", 60), ("age", "Yaş", 45), ("price", "Fiyat", 70),
            ("sessions", "Seans", 50), ("summary", "Durum özeti", 230),
@@ -400,6 +401,7 @@ class App:
         self.tree.tag_configure("new", background="#dbeafe")
         self.tree.tag_configure("removed", background="#fde2e2", foreground="#7f1d1d")
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.root.bind_all("<MouseWheel>", self._detail_wheel, add="+")
 
         self.detail = ttk.LabelFrame(pane, text="Oyun ayrıntısı")
         pane.add(self.detail, weight=2)
@@ -548,14 +550,14 @@ class App:
             return
         sessions = L.session_lines(self.entry(row.slug), self.now())
         sig = (L.row_values(row), tuple(row.target_lines), row.active,
-               tuple((s.when, s.status, s.opens) for s in sessions))
+               tuple((s.when, s.status, s.opens) for s in sessions),
+               row.summary, tuple(row.cast), tuple(row.credits))
         if sig == self._detail_sig and not force:
             return
         self._detail_sig = sig
-        for child in self.detail.winfo_children():
-            child.destroy()
+        body = self._detail_body()
 
-        head = ttk.Frame(self.detail)
+        head = ttk.Frame(body)
         head.pack(fill="x", padx=8, pady=4)
         ttk.Label(head, text=row.title, font=self.bold_font).pack(side="left")
         self.open_btn = ttk.Button(head, text="Sayfayı aç",
@@ -563,7 +565,7 @@ class App:
                                    state="normal" if row.url else "disabled")
         self.open_btn.pack(side="right")
 
-        acts = ttk.Frame(self.detail)
+        acts = ttk.Frame(body)
         acts.pack(fill="x", padx=8)
         self.active_var = tk.BooleanVar(value=row.active)
         self.active_chk = ttk.Checkbutton(
@@ -582,7 +584,7 @@ class App:
             btn.pack(side="left", padx=6)
             self.add_buttons[kind] = btn
 
-        cols = ttk.Frame(self.detail)
+        cols = ttk.Frame(body)
         cols.pack(fill="both", expand=True, padx=8, pady=6)
         self.session_tree = ttk.Treeview(cols, columns=("when", "status", "opens"),
                                          show="headings", height=6)
@@ -616,6 +618,69 @@ class App:
                               command=lambda tt=t: self.open_editor(row.slug, tt.id))
             edit.pack(side="right", padx=4)
             self.target_buttons[t.id] = edit
+
+        self._build_info(body, row)
+
+    def _detail_body(self) -> ttk.Frame:
+        """Empty, scrollable content frame of the detail pane (small windows stay usable)."""
+        for child in self.detail.winfo_children():
+            child.destroy()
+        canvas = tk.Canvas(self.detail, highlightthickness=0, borderwidth=0)
+        vsb = ttk.Scrollbar(self.detail, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        body = ttk.Frame(canvas)
+        window = canvas.create_window((0, 0), window=body, anchor="nw")
+        body.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(window, width=e.width))
+        self.detail_canvas, self.detail_vsb = canvas, vsb
+        return body
+
+    def _detail_wheel(self, event) -> None:
+        """Mouse wheel over the detail pane scrolls it (not over its own scrolling widgets)."""
+        widget = event.widget
+        try:
+            if widget.winfo_class() in ("Text", "Treeview", "Listbox"):
+                return
+            node = widget
+            while node is not None and node is not self.detail:
+                node = node.master
+        except (AttributeError, tk.TclError, KeyError):
+            return
+        canvas = getattr(self, "detail_canvas", None)
+        if node is self.detail and canvas is not None and canvas.winfo_exists():
+            canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+
+    def _build_info(self, body, row) -> None:
+        """Özet / Oyuncular / Yapım below the session list; "Bilgi yok" when unknown."""
+        info = ttk.Frame(body)
+        info.pack(fill="x", padx=8, pady=(0, 8))
+        ttk.Label(info, text="Özet", font=self.bold_font).pack(anchor="w")
+        box = ttk.Frame(info)
+        box.pack(fill="x")
+        self.summary_text = tk.Text(box, height=6, wrap="word", borderwidth=1, relief="solid",
+                                    font="TkDefaultFont")
+        sb = ttk.Scrollbar(box, orient="vertical", command=self.summary_text.yview)
+        self.summary_text.configure(yscrollcommand=sb.set)
+        self.summary_text.insert("1.0", row.summary or NO_INFO)
+        self.summary_text.configure(state="disabled")
+        self.summary_text.pack(side="left", fill="x", expand=True)
+        sb.pack(side="right", fill="y")
+        ttk.Label(info, text="Oyuncular", font=self.bold_font).pack(anchor="w", pady=(6, 0))
+        self.cast_label = ttk.Label(info, text=", ".join(row.cast) or NO_INFO,
+                                    wraplength=600, justify="left")
+        self.cast_label.pack(anchor="w", fill="x")
+        ttk.Label(info, text="Yapım", font=self.bold_font).pack(anchor="w", pady=(6, 0))
+        self.credits_label = ttk.Label(info, text="\n".join(credit_lines(row.credits)) or NO_INFO,
+                                       wraplength=600, justify="left")
+        self.credits_label.pack(anchor="w", fill="x")
+
+        def wrap(event):
+            for lbl in (self.cast_label, self.credits_label):
+                lbl.configure(wraplength=max(200, event.width - 20))
+        info.bind("<Configure>", wrap)
+
 
     # ---- config edits -----------------------------------------------------------------------
     def edit(self, fn, *args, key=None, widget=None) -> None:

@@ -42,6 +42,9 @@ class Row:
     is_removed: bool = False
     url: str = ""
     nearest: datetime | None = None  # earliest upcoming session start (sorting)
+    summary: str = ""          # plot description ("" = unknown)
+    cast: list[str] = field(default_factory=list)  # actors in the page's own order
+    credits: list[tuple[str, str]] = field(default_factory=list)  # ("Yönetmen", "Ad Soyad")
 
 
 def when_text(d: datetime) -> str:
@@ -115,6 +118,25 @@ def _tags(raw, watch) -> list[str]:
             + sorted(t for t in tags if t not in TAG_ORDER))
 
 
+def _details(entry: dict) -> tuple[str, list[str], list[tuple[str, str]]]:
+    """Summary / cast / credits of a stored play; wrong types (hand-edited state) -> empty."""
+    summary = entry.get("summary")
+    cast = entry.get("cast")
+    credits = entry.get("credits")
+    return (summary.strip() if isinstance(summary, str) else "",
+            [c.strip() for c in cast if isinstance(c, str) and c.strip()]
+            if isinstance(cast, list) else [],
+            [(k, v.strip()) for k, v in credits.items()
+             if isinstance(k, str) and k.strip() and isinstance(v, str) and v.strip()]
+            if isinstance(credits, dict) else [])
+
+
+def credit_lines(credits: list[tuple[str, str]], per_line: int = 2) -> list[str]:
+    """Compact crew lines: "Yazan: A  ·  Yönetmen: B" (``per_line`` entries per line)."""
+    items = [f"{k}: {v}" for k, v in credits]
+    return ["  ·  ".join(items[i:i + per_line]) for i in range(0, len(items), per_line)]
+
+
 def _row(slug: str, entry: dict, config: Config, seen: set[str], removed: set[str],
          now: datetime) -> Row:
     watch = config.plays.get(slug)
@@ -143,6 +165,7 @@ def _row(slug: str, entry: dict, config: Config, seen: set[str], removed: set[st
         lines = [NO_TARGET_TEXT]
     duration = entry.get("duration_min")
     age = entry.get("age_limit")
+    summary_text, cast, credits = _details(entry)
     return Row(
         slug=slug, title=str(entry.get("title") or slug),
         tags=_tags(entry.get("tags"), watch),
@@ -154,7 +177,8 @@ def _row(slug: str, entry: dict, config: Config, seen: set[str], removed: set[st
         next_opening=when_text(opening) if opening else "",
         watched=watched, active=active, target_lines=lines,
         is_new=slug not in seen, is_removed=is_removed,
-        url=str(entry.get("url") or ""), nearest=nearest)
+        url=str(entry.get("url") or ""), nearest=nearest,
+        summary=summary_text, cast=cast, credits=credits)
 
 
 def build_rows(state: dict, config: Config, seen_slugs, removed_slugs,
