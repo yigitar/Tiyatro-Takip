@@ -366,6 +366,22 @@ function sessionLine(rec) {
   return `${icon} ${esc(fmt(rec.start))} — ${esc(label)}`;
 }
 
+const SUMMARY_CHARS = 250;
+const CAST_SHOWN = 6;
+
+function shortSummary(raw) {
+  if (typeof raw !== "string") return "";
+  return trunc(raw.replace(/\s+/g, " ").trim(), SUMMARY_CHARS);
+}
+
+function castLine(raw) {
+  const names = (Array.isArray(raw) ? raw : []).filter((n) => typeof n === "string" && n.trim());
+  if (names.length === 0) return "";
+  const shown = names.slice(0, CAST_SHOWN).map((n) => esc(trunc(n.trim(), 40))).join(", ");
+  const more = names.length > CAST_SHOWN ? ` (+${names.length - CAST_SHOWN})` : "";
+  return `Oyuncular: ${shown}${more}`;
+}
+
 function playScreen(config, state, slug, idx) {
   const hh = idx.hashOf.get(slug);
   const entry = statePlays(state)[slug] ?? {};
@@ -378,6 +394,10 @@ function playScreen(config, state, slug, idx) {
   if (entry.duration_min) meta.push(`Süre: ${esc(entry.duration_min)} dk`);
   if (entry.age_limit != null) meta.push(`Yaş: ${esc(entry.age_limit)}+`);
   if (meta.length) lines.push(meta.join(" · "));
+  const summary = shortSummary(entry.summary);
+  if (summary) lines.push(`📝 ${esc(summary)}`);
+  const cast = castLine(entry.cast);
+  if (cast) lines.push(cast);
   lines.push(`Takip: ${active ? "🟢 aktif" : "⚪ pasif"}`);
 
   const sessions = sessionList(state, slug);

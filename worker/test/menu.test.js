@@ -352,3 +352,37 @@ test("final review M8: the paused screen says alerts raised while paused are dis
   assert.ok(text.includes("Duraklatılmışken oluşan bildirimler atılır"), text);
   assert.ok(!render("m", cfg, st).text.includes("atılır"));
 });
+
+// ---- wave 3a: summary + cast on the play screen ----
+test("play screen shows a short summary and the first 6 cast names (+N)", () => {
+  const s = makeState();
+  const e = s.plays["kusursuz-bir-aile"];
+  e.summary = "Bir <konu> & özet.\n\nİkinci paragraf " + "uzun ".repeat(100);
+  e.cast = ["Ali <A>", "Ece", "Can", "Deniz", "Efe", "Fulya", "Gül", "Hakan"];
+  const t = render(`p:${KB}`, cfg, s).text;
+  assert.ok(t.includes("Bir &lt;konu&gt; &amp; özet. İkinci paragraf"));
+  assert.ok(!t.includes("<konu>"));
+  const line = t.split("\n").find((l) => l.startsWith("📝"));
+  assert.ok(line.length <= 280 && line.endsWith("…"), line.length);
+  assert.ok(t.includes("Oyuncular: Ali &lt;A&gt;, Ece, Can, Deniz, Efe, Fulya (+2)"));
+  assert.ok(t.indexOf("Oyuncular:") < t.indexOf("Seanslar"));
+});
+
+test("play screen without summary/cast (or malformed ones) shows neither line", () => {
+  for (const bad of [{}, { summary: null, cast: [] }, { summary: 5, cast: "x" }, { summary: "  ", cast: [null, 3] }]) {
+    const s = makeState();
+    Object.assign(s.plays["kusursuz-bir-aile"], bad);
+    const t = render(`p:${KB}`, cfg, s).text;
+    assert.ok(!t.includes("Oyuncular:") && !t.includes("📝"), JSON.stringify(bad));
+  }
+});
+
+test("play screen stays <= 4096 chars with huge summary and cast", () => {
+  const s = makeState();
+  const e = s.plays["kusursuz-bir-aile"];
+  e.summary = "ü".repeat(20000);
+  e.cast = Array.from({ length: 500 }, (_, i) => `Oyuncu ${"ş".repeat(60)} ${i}`);
+  const r = render(`p:${KB}`, cfg, s);
+  assert.ok(r.text.length <= 4096);
+  assert.ok(r.text.includes("(+494)"));
+});

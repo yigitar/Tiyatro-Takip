@@ -147,3 +147,20 @@ def test_until_text_parity(hhmm):  # final review C2: same Turkish suffix on bot
     res = node({"config": raw_cfg, "state": START_STATE, "applies": [],
                 "renders": [f"ts:{KB}:y"]})
     assert until_text(hhmm) in res["rendered"][0]["text"]
+
+
+def test_worker_play_screen_shows_summary_and_cast_from_python_state():  # wave 3a
+    state, raw_cfg, plays = _python_state()
+    by_slug = {p.slug: p for p in plays}
+    gece = by_slug["on-ikinci-gece-kocaeli-bb"]
+    hic = by_slug["hic-kimsenin-oykusu-kocaeli-buyuksehir-sehir-tiyatrolari"]
+    assert state["plays"][gece.slug]["cast"][0] == "İbrahim Aydın"
+    res = node({"config": raw_cfg, "state": state, "applies": [],
+                "renders": [f"p:{{h:{gece.slug}}}", f"p:{{h:{hic.slug}}}"]})
+    text = res["rendered"][0]["text"]
+    assert "📝 Rüzgâr uğuldar, deniz yırtılır Gece ikiye" in text
+    assert "Oyuncular: İbrahim Aydın, İlker Bağlam, Sarper Saydam, Senem Akman Muratoğlu, " \
+           "Sevcan Kuş Efe, Su Özdemir (+5)" in text
+    assert len(text) <= 4096
+    hic_text = res["rendered"][1]["text"]
+    assert "📝 Bir tren kompartımanında" in hic_text and "Oyuncular:" not in hic_text
