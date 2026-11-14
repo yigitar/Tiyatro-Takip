@@ -221,6 +221,7 @@ class Service:
         self._rollup_counts = ""
         self._gh_healthy: bool | None = None     # last GitHub health that was logged
         self._err_seen: dict[str, datetime] = {}
+        self._cfg_fallback = False               # config.json was missing/empty last read
 
     # ---- activity log ------------------------------------------------------------
     def _log(self, category: str, title: str, detail: str = "", level: str = "info") -> None:
@@ -525,11 +526,14 @@ class Service:
             if gen != self._edit_gen and self._config is not None:
                 return self._config  # an edit committed meanwhile: this read is stale
             previous, self._config = self._config, config
+        recovered, self._cfg_fallback = self._cfg_fallback, not data
         if previous is not None:
-            if data:
-                self._log_remote_change(previous, config)  # PC edits are already in `previous`
-            else:  # missing/empty file: not "everything was removed" by someone
+            if not data:  # missing/empty file: not "everything was removed" by someone
                 self._log_config_fallback(self._clock())
+            elif recovered:  # file is back: not "everything was added" by someone
+                self._log(act.CAT_ERROR, "config.json yeniden okundu")
+            else:
+                self._log_remote_change(previous, config)  # PC edits are already in `previous`
         return config
 
     def _ensure_state(self, errors: list[str]) -> dict | None:

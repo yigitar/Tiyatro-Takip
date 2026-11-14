@@ -177,14 +177,15 @@ class ActivityLog:
                 with open(self.path, "a", encoding="utf-8") as fh:
                     fh.write(("\n" if needs_newline else "")
                              + json.dumps(entry, ensure_ascii=False) + "\n")
-                self._count += 1
-                if self._count > self.max_entries + self._slack:
+                if self._count is not None:  # None: the file was unreadable, recount later
+                    self._count += 1
+                if self._count is not None and self._count > self.max_entries + self._slack:
                     current = self._entries()
                     if current is not None:  # unreadable: never rewrite (would wipe the log)
                         kept = retain(current, self.max_entries)
                         self._rewrite(kept)
                         self._count = len(kept)
-            except OSError as exc:
+            except Exception as exc:  # never raise into the caller (disk, bugs, odd files)
                 log.warning("activity log not written: %s", type(exc).__name__)
                 self._count = None
                 return None
@@ -425,13 +426,18 @@ def friendly_error(text: str) -> tuple[str, str]:
     ``"what: ClassName: message"``; unknown shapes come back unchanged with no detail."""
     m = _ERR.match(text)
     if not m:
-        return text, ""
+        return short_paths(text), ""
     what, cls, msg = m["what"], m["cls"], m["msg"] or ""
     low = msg.lower()
     if cls == "PermissionError":
         friendly = "dosya yazılamadı (erişim reddedildi)"
-    elif re.search(r"HTTP (401|403)\b", msg):
+    elif re.search(r"HTTP (401|403)\b", msg) and (
+            cls == "StoreError" or "github" in text.lower()):
         friendly = "GitHub erişimi reddedildi (anahtarı kontrol edin)"
+    elif re.search(r"HTTP (401|403)\b", msg):
+        friendly = f"siteye erişilemedi (HTTP {re.search(r'HTTP (401|403)', msg)[1]})"
+    elif re.search(r"HTTP 429\b", msg):
+        friendly = "site çok fazla istek aldı, bekleniyor (HTTP 429)"
     elif re.search(r"HTTP 404\b", msg):
         friendly = "adres bulunamadı (HTTP 404)"
     elif re.search(r"HTTP 5\d\d\b", msg):
@@ -441,8 +447,8 @@ def friendly_error(text: str) -> tuple[str, str]:
     elif cls == "ParseError":
         friendly = "Biletinial sayfası okunamadı (sayfa yapısı değişmiş olabilir)"
     else:
-        return text, ""
-    return f"{what}: {friendly}", short_paths(f"{cls}: {msg}".rstrip(": "))
+        return short_paths(text), ""
+    return f"{short_paths(what)}: {friendly}", short_paths(f"{cls}: {msg}".rstrip(": "))
 
 
 # ---- scan wording (from the state) --------------------------------------------------
