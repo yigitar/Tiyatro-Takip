@@ -25,7 +25,9 @@ try:  # Windows only; beeps are skipped elsewhere
 except ImportError:  # pragma: no cover
     winsound = None
 
+from pc import activity as A
 from pc import app_logic as L
+from pc.activity_ui import ActivityTab, default_reveal
 from pc.service import RefreshError
 from pc.settings import DEFAULT_LOCAL_DIR, SettingsError, load_settings
 from pc.viewmodel import APP_TITLE, DAY_SHORT, credit_lines
@@ -37,6 +39,7 @@ log = logging.getLogger("pc.app")
 POLL_MS = 200
 STATUS_MS = 5000
 RELOAD_MS = 60_000
+ACTIVITY_MS = 2000
 MAX_POPUPS = 3
 NO_INFO = "Bilgi yok"
 COLUMNS = (("title", "Oyun", 260), ("tags", "Etiketler", 110), ("genre", "Tür", 90),
@@ -325,10 +328,13 @@ class TargetEditor(tk.Toplevel):
 class App:
     def __init__(self, root: tk.Tk, service, local_dir: Path | str = DEFAULT_LOCAL_DIR, *,
                  open_url=webbrowser.open, beep=default_beep, msgbox=messagebox,
-                 inline: bool = False):
+                 inline: bool = False, reveal=default_reveal):
         self.root, self.service = root, service
         self.local_dir = Path(local_dir)
         self.open_url, self.beep, self.mb = open_url, beep, msgbox
+        self.reveal = reveal
+        self.activity = getattr(service, "activity", None) \
+            or A.ActivityLog(self.local_dir / "activity.jsonl")
         self.inline = inline  # tests: run background calls synchronously
         self.q: queue.Queue = queue.Queue()
         self.worker: ScanWorker | None = None
@@ -386,8 +392,17 @@ class App:
         self.msg_label = ttk.Label(bar, textvariable=self.msg_var, wraplength=700)
         self.msg_label.pack(side="left", padx=10)
 
-        pane = ttk.PanedWindow(root, orient="vertical")
-        pane.pack(fill="both", expand=True, padx=8)
+        self.notebook = ttk.Notebook(root)
+        self.notebook.pack(fill="both", expand=True, padx=8)
+        games = ttk.Frame(self.notebook)
+        self.notebook.add(games, text="Oyunlar")
+        self.activity_tab = ActivityTab(
+            self.notebook, self.activity, A.load_filters(self.local_dir / "ui.json"),
+            self.save_ui, self.mb, self.reveal)
+        self.notebook.add(self.activity_tab, text="Etkinlik günlüğü")
+
+        pane = ttk.PanedWindow(games, orient="vertical")
+        pane.pack(fill="both", expand=True)
         top = ttk.Frame(pane)
         pane.add(top, weight=3)
         self.tree = ttk.Treeview(top, columns=[c[0] for c in COLUMNS], show="headings",
@@ -501,6 +516,7 @@ class App:
             log.warning("tick errors: %s", "; ".join(res.errors))
         self.refresh_rows()
         self.update_status()
+        self.activity_tab.poll()
 
     def _ui_exception(self, exc, val, tb) -> None:
         log.error("UI exception", exc_info=(exc, val, tb))
@@ -813,6 +829,12 @@ class App:
         self.update_status()
         self.root.after(STATUS_MS, self._status_timer)
 
+    def _activity_timer(self) -> None:
+        if self.closing:
+            return
+        self.activity_tab.poll()
+        self.root.after(ACTIVITY_MS, self._activity_timer)
+
     def _reload_timer(self) -> None:
         if self.closing:
             return
@@ -891,7 +913,8 @@ class App:
             L.save_ui(self.local_dir / "ui.json",
                       {"geometry": geom if geom and "x" in geom else old["geometry"],
                        "beep": self.beep_enabled,
-                       "sort": list(self.sort) if self.sort else None})
+                       "sort": list(self.sort) if self.sort else None,
+                       "activity": self.activity_tab.filters()})
         except Exception:
             log.exception("ui.json not saved")
 
@@ -899,11 +922,21 @@ class App:
         """Start the scan worker and the timers (not used by tests)."""
         self.refresh_rows()
         self.update_status()
+        self._service_hook("log_startup")
         self.worker = ScanWorker(self.service, self.q.put)
         self.worker.start()
         self.root.after(POLL_MS, self._poll)
         self.root.after(STATUS_MS, self._status_timer)
+        self.root.after(ACTIVITY_MS, self._activity_timer)
         self.root.after(RELOAD_MS, self._reload_timer)
+
+    def _service_hook(self, name: str) -> None:
+        hook = getattr(self.service, name, None)
+        if hook is not None:
+            try:
+                hook()
+            except Exception:
+                log.exception("%s failed", name)
 
     def close(self, destroy: bool = True) -> None:
         """Window closed = app exits (no tray). The service writes its files atomically
@@ -921,6 +954,7 @@ class App:
         if self.worker is not None:
             self.worker.stop()
             self.worker.join(timeout=2.0)
+        self._service_hook("log_shutdown")
         if destroy:
             self.root.destroy()
 
@@ -956,7 +990,9 @@ def main() -> int:
         store = Store(settings.repo, settings.gh_token)
         service = Service(store, Telegram(settings.tg_token, settings.chat_id),
                           ClaimStore(store, "pc", clock), clock=clock,
-                          local_dir=settings.local_dir)
+                          local_dir=settings.local_dir,
+                          activity=A.ActivityLog(Path(settings.local_dir) / "activity.jsonl",
+                                                 secrets=secrets))
         app = App(root, service, settings.local_dir)
         root.deiconify()
         app.start()
