@@ -20,8 +20,9 @@ Delivery guarantees (a missed alert is worse than a duplicate):
   the same events again; their claims already read ``sent`` so they are not re-sent
   (ON_SALE: only within the 3-min gap; a re-derive later than that may duplicate, which
   is accepted: a duplicate is better than a suppressed re-open).
-- The PC runner (``who="pc"``) queues with ``not_before = now + 60 s`` so GitHub gets
-  the first chance; afterwards the PC only sends if the claim is not ``sent``/held.
+- The PC runner (``who="pc"``) queues with ``not_before = now + 15 s`` for ON_SALE (a
+  sell-out takes ~30 s) and ``now + 60 s`` for every other kind, so GitHub gets the
+  first chance; afterwards the PC only sends if the claim is not ``sent``/held.
 
 Scan health: a venue failure, or a venue that loads while no play page (or at least
 max(2, 50 %) of them) parses, is a scan FAILURE: ``meta.fetch_fail_streak`` grows and
@@ -87,6 +88,7 @@ PLAY_FAIL_ALERT_AT = 3
 OUTBOX_MAX_AGE = timedelta(hours=6)
 OUTBOX_MAX_ATTEMPTS = 20
 PC_DELAY = timedelta(seconds=60)
+PC_ON_SALE_DELAY = timedelta(seconds=15)
 RETRY_BASE_S = 10
 RETRY_MAX_S = 600
 DROPPED_LOG_MAX = 50
@@ -207,11 +209,16 @@ def _emit(state: dict, kind: str, key: str, payload: dict, now: datetime,
 
 # ---- outbox ------------------------------------------------------------------
 
+def pc_delay(key: str) -> timedelta:
+    """How long the PC waits before sending outbox entry ``key`` (GitHub goes first)."""
+    return PC_ON_SALE_DELAY if key.startswith("ON_SALE:") else PC_DELAY
+
+
 def _enqueue(state: dict, key: str, events: list[Event], now: datetime, who: str) -> None:
     if any(e.get("key") == key for e in state["outbox"]):
         return
     entry = {"key": key, "created": now.isoformat(), "attempts": 0,
-             "not_before": (now + PC_DELAY if who == "pc" else now).isoformat()}
+             "not_before": (now + pc_delay(key) if who == "pc" else now).isoformat()}
     if key.startswith("SETUP:"):
         entry["events"] = [event_to_dict(e) for e in events]
     else:

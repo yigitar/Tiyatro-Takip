@@ -205,16 +205,16 @@ def test_pc_never_sends_when_github_already_sent(monkeypatch, tmp_path):
     assert note_keys(e) == [r.events[0].key]
 
 
-def test_pc_sends_after_60_s_when_github_is_silent(monkeypatch, tmp_path):
+def test_pc_sends_on_sale_after_15_s_when_github_is_silent(monkeypatch, tmp_path):
     e = make(monkeypatch, tmp_path)
     tick_at(e, NOW)
     t = NOW + timedelta(minutes=10)
     r = _flip_on_sale(e, t)
     key = r.events[0].key
     assert e.svc.next_interval(t) == 15  # burst tail after the flip
-    tick_at(e, t + timedelta(seconds=30))
+    tick_at(e, t + timedelta(seconds=10))
     assert e.tg.sent == []
-    tick_at(e, t + timedelta(seconds=61))
+    tick_at(e, t + timedelta(seconds=16))
     assert len(e.tg.sent) == 1 and "Bilet alınabilir" in e.tg.sent[0]
     assert e.store.files[claim_path(claim_key(key))][0]["status"] == "sent"
     tick_at(e, t + timedelta(seconds=120))
@@ -801,18 +801,18 @@ def test_local_entry_kept_when_github_still_pending(monkeypatch, tmp_path):
     e = make(monkeypatch, tmp_path)
     tick_at(e, NOW)
     t = NOW + timedelta(minutes=10)
-    _flip_on_sale(e, t)  # PC entry: not_before t + 60 s
+    _flip_on_sale(e, t)  # PC entry: not_before t + 15 s (ON_SALE grace)
     e.gh_tg.fail = True
-    e.gh_run(t + timedelta(seconds=10))  # GitHub emitted the key, send failed
+    e.gh_run(t + timedelta(seconds=5))  # GitHub emitted the key, send failed
     tg = FakeTG()
     svc = Service(e.store, tg, ClaimStore(e.store, "pc", e.clock), clock=e.clock,
                   fetch_fn=e.web.fetch, sleep=lambda s: None, local_dir=e.tmp,
                   rand=lambda a, b: 0.0)
-    e.clock.set(t + timedelta(seconds=20))
+    e.clock.set(t + timedelta(seconds=10))
     svc.tick()
     box = [x for x in svc.state["outbox"] if x["key"] == "ON_SALE:s1:1"]
-    assert len(box) == 1 and box[0]["not_before"] == (t + timedelta(seconds=60)).isoformat()
-    e.clock.set(t + timedelta(seconds=61))
+    assert len(box) == 1 and box[0]["not_before"] == (t + timedelta(seconds=15)).isoformat()
+    e.clock.set(t + timedelta(seconds=16))
     svc.tick()
     assert len(tg.sent) == 1
 
@@ -830,7 +830,7 @@ def test_adopted_entry_waits_the_pc_grace_period(monkeypatch, tmp_path):
                   rand=lambda a, b: 0.0)
     e.clock.set(at)
     svc.tick()
-    assert tg.sent == []  # GitHub still gets the first 60 s
+    assert tg.sent == []  # GitHub still gets the first 15 s (ON_SALE grace)
     e.clock.set(at + timedelta(seconds=61))
     svc.tick()
     assert len(tg.sent) == 1

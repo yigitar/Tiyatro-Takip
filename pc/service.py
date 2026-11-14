@@ -16,7 +16,8 @@ The PC is the second runner next to GitHub Actions (``who="pc"``):
   ``tiyatro.runner.plan_mode``) only the plays in the window, at the runner's burst
   cadence (15 s + jitter). Between scans a tick only delivers outbox
   entries whose ``not_before`` has passed (``run_once(only_slugs=[])``, no fetches).
-- Takeover: the runner queues PC sends with ``not_before = now + 60 s`` and the claims
+- Takeover: the runner queues PC sends with ``not_before = now + 15 s`` (ON_SALE) or
+  ``now + 60 s`` (other kinds) and the claims
   make the PC skip anything GitHub already sent. Nothing of that is re-implemented here.
 - Heartbeat: written every 4 min while a watched opening is <= 60 min away or a burst is
   active, with ``last_scan_ok`` and ``observed`` (session id -> status of the sessions
@@ -55,8 +56,9 @@ from tiyatro.fetcher import fetch
 from tiyatro.heartbeat import github_run_status, write_heartbeat
 from tiyatro.models import ISTANBUL, Config, Event, Play
 from tiyatro.runner import (BURST_INTERVAL_S, BURST_JITTER_S, BURST_LEAD, CONFIG_PATH,
-                            PC_DELAY, PC_WINDOW, _burst_targets, _entry_events, _prepare,
-                            _scan, load_config, load_state, plan_mode, run_once, scan_runs)
+                            PC_WINDOW, _burst_targets, _entry_events, _prepare,
+                            _scan, load_config, load_state, pc_delay, plan_mode, run_once,
+                            scan_runs)
 from tiyatro.state import clean_emitted, next_opening
 from tiyatro.tags import apply_overrides, derive_tags
 from tiyatro.timeutil import parse_iso
@@ -233,7 +235,7 @@ class Service:
         GitHub's outbox.
         - ``emitted``: GitHub's (valid) keys are added, so the PC never re-emits them.
         - outbox: local entries GitHub delivered are dropped; GitHub's pending entries
-          missing locally are adopted (``not_before`` at least now + 60 s, so a living
+          missing locally are adopted (``not_before`` at least now + the PC grace, so a living
           GitHub still sends first; claims prevent duplicates).
         - sessions: unknown plays/sessions are copied; for known sessions
           ``on_sale_count`` is the max of both (the next ON_SALE key cannot collide with
@@ -252,7 +254,7 @@ class Service:
                 continue
             adopted = copy.deepcopy(entry)
             not_before = _dt(entry.get("not_before"))
-            earliest = now + PC_DELAY
+            earliest = now + pc_delay(entry["key"])
             if not_before is None or not_before.tzinfo is None or not_before < earliest:
                 not_before = earliest
             adopted["not_before"] = not_before.isoformat()
@@ -348,7 +350,7 @@ class Service:
 
     def next_interval(self, now: datetime | None = None) -> float:
         """Seconds until ``tick()`` should run next: the next scan, the next outbox
-        delivery (PC sends wait 60 s) or the next heartbeat, whichever comes first."""
+        delivery (PC sends wait 15 s / 60 s) or the next heartbeat, whichever comes first."""
         now = now or self._clock()
         state, config = self.state, self._config
         if self._next_scan_at is not None:

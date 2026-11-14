@@ -599,9 +599,9 @@ def test_pc_runner_no_state_write_and_delayed_send(monkeypatch):
     assert [e.kind for e in res.events] == ["ON_SALE"]
     assert pc_tg.sent == []
     box = res.state["outbox"]
-    assert box[0]["not_before"] == (t + timedelta(seconds=60)).isoformat()
+    assert box[0]["not_before"] == (t + timedelta(seconds=15)).isoformat()
 
-    t2 = t + timedelta(seconds=61)
+    t2 = t + timedelta(seconds=16)
     gh.store.now = t2  # server clock (claim sent_at)
     res2 = run_once(gh.store, pc_tg, pc_claims, t2, who="pc", persist_state=False,
                     state=res.state, fetch_fn=gh.web.fetch, sleep=lambda s: None)
@@ -1622,3 +1622,19 @@ def test_outbox_skip_check_honours_the_reclaim_window(monkeypatch):
     pc.run(day + timedelta(seconds=30))  # queued, not_before + grace
     pc.run(day + timedelta(minutes=8))  # delivered late: still the same episode
     assert len(env.tg.sent) == 1 and pc.tg.sent == [] and pc.state["outbox"] == []
+
+
+# ==== final review I3: PC grace 15 s for ON_SALE, 60 s for everything else ==========
+
+def test_pc_grace_is_15_s_for_on_sale_and_60_s_for_other_kinds(monkeypatch):
+    env, pc = _two_runners(monkeypatch)
+    t = NOW + timedelta(minutes=5)
+    _status(env, Status.ON_SALE)
+    env.web.venue.append("q")
+    env.web.set(mkplay("q", sessions=[]))
+    res = pc.run(t)
+    box = {e["key"]: e["not_before"] for e in res.state["outbox"]}
+    assert box == {"ON_SALE:s1:1": (t + timedelta(seconds=15)).isoformat(),
+                   "NEW_PLAY:q": (t + timedelta(seconds=60)).isoformat()}
+    pc.run(t + timedelta(seconds=16))
+    assert len(pc.tg.sent) == 1 and "Bilet alınabilir" in pc.tg.sent[0]
