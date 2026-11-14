@@ -25,9 +25,14 @@ in a row fires one ``PLAY_FAILING`` (``plays[slug]["fail_streak"]``).
 Burst mode: the announced ``opens_at`` is only a plan; the site flips to ON_SALE when
 the organiser enables sales, which can be minutes late (observed live). So a watched
 UPCOMING session is polled from ``opens_at - 10 min`` up to ``opens_at + 4 h``
-(every 12 s +-3 s; 30 s +-3 s once 30 min overdue; 60 s +-5 s once 90 min overdue: a
-live opening was still "Yakında" 55+ min after its announced time), and for 10 min after
-a flip to ON_SALE (12 s). One run's burst ends before ``max_seconds`` (780 s); the next scheduled run
+(every 15 s +-3 s for the whole window: a live opening was still "Yakında" 55+ min after
+its announced time and real tickets sell out within ~30 s of the flip), and for 10 min
+after a flip to ON_SALE. GitHub API cost of a burst hour (GITHUB_TOKEN limit ~1000/h):
+one ``config.json`` GET per tick (needed so a pause is honoured within one tick) = at
+most 300 (ticks every 12-18 s), one heartbeat GET per minute (``pc_watch``) = 60, plus
+state saves on change and ~10 requests per run start (4 runs/h) = ~40: about 400/h
+(a test keeps a simulated hour under 600).
+One run's burst ends before ``max_seconds`` (780 s); the next scheduled run
 (every 5 min) re-enters burst mode by itself, which is cheap and idempotent (state,
 ``emitted`` and claims carry over). Two runs never overlap: the scan workflow runs in
 one Actions ``concurrency`` group (set up in the workflow file).
@@ -82,11 +87,9 @@ DROPPED_LOG_MAX = 50
 BURST_LEAD = timedelta(minutes=10)
 BURST_OVERDUE = timedelta(hours=4)
 BURST_FLIP_TAIL = timedelta(minutes=10)
-BURST_INTERVAL_S = 12
-# (overdue up to, tick seconds, jitter seconds); tier 0 uses ``interval`` (12 s)
-BURST_TIERS = ((timedelta(minutes=30), BURST_INTERVAL_S, 3),
-               (timedelta(minutes=90), 30, 3),
-               (BURST_OVERDUE, 60, 5))
+# One cadence for the whole window (sell-outs take ~30 s; a late flip is no slower).
+BURST_INTERVAL_S = 15
+BURST_JITTER_S = 3
 BURST_MAX_SECONDS = 780
 BURST_WATCH_EVERY = timedelta(seconds=60)
 PC_WINDOW = timedelta(minutes=60)
@@ -310,7 +313,7 @@ def _deliver(state: dict, store, tg, claims: ClaimStore, now: datetime,
         entry["attempts"] = attempts + 1
         # False = held by the other runner or the send failed: retry next run.
         if not send_with_claim(claims, _AllParts(tg, parts), key, parts[0]):
-            # Back off so a short outage during a 12 s burst cannot burn all attempts.
+            # Back off so a short outage during a 15 s burst cannot burn all attempts.
             delay = min(RETRY_BASE_S * 2 ** attempts, RETRY_MAX_S)
             entry["not_before"] = (now + timedelta(seconds=delay)).isoformat()
             keep.append(entry)
@@ -549,20 +552,12 @@ def run_once(store, tg, claims, now: datetime, who: str = "github",
 
 # ---- modes -----------------------------------------------------------------------
 
-def _tier(overdue: timedelta) -> int:
-    for i, (limit, _tick, _jitter) in enumerate(BURST_TIERS):
-        if overdue <= limit:
-            return i
-    return len(BURST_TIERS) - 1
-
-
 def _burst_targets(state: dict, config: Config,
-                   now: datetime) -> list[tuple[str, datetime, int]]:
-    """(slug, burst end, cadence tier) for watched sessions that need burst polling.
+                   now: datetime) -> list[tuple[str, datetime]]:
+    """(slug, burst end) for watched sessions that need burst polling.
 
-    UPCOMING with ``opens_at - 10 min <= now <= opens_at + 4 h`` (tier by how overdue:
-    0 = 12 s up to 30 min, 1 = 30 s up to 90 min, 2 = 60 s beyond), or flipped to
-    ON_SALE within the last 10 min (tier 0).
+    UPCOMING with ``opens_at - 10 min <= now <= opens_at + 4 h``, or flipped to
+    ON_SALE within the last 10 min.
     """
     out = []
     for slug, entry in (state.get("plays") or {}).items():
@@ -582,14 +577,14 @@ def _burst_targets(state: dict, config: Config,
                 continue
             if status is Status.UPCOMING and opens is not None \
                     and opens - BURST_LEAD <= now <= opens + BURST_OVERDUE:
-                hit = (opens + BURST_OVERDUE, _tier(now - opens))
+                end = opens + BURST_OVERDUE
             elif status is Status.ON_SALE and since is not None \
                     and since <= now <= since + BURST_FLIP_TAIL:
-                hit = (since + BURST_FLIP_TAIL, 0)
+                end = since + BURST_FLIP_TAIL
             else:
                 continue
             if matching_targets(watch, session):
-                out.append((slug, *hit))
+                out.append((slug, end))
     return out
 
 
@@ -602,13 +597,12 @@ def plan_mode(state: dict, config: Config, now: datetime) -> tuple[str, datetime
     enables sales, observed 55+ min after the announced time), or flipped to ON_SALE
     within the last 10 min. ``until`` is the latest such end (``opens_at + 4 h`` /
     flip + 10 min); ``burst_loop`` caps a single run at ``max_seconds`` and the next
-    scheduled run re-enters burst mode. Cadence: 12 s up to 30 min overdue, 30 s up to
-    90 min, 60 s beyond (each with jitter).
+    scheduled run re-enters burst mode. Cadence: every 15 s +-3 s for the whole window.
     """
     found = _burst_targets(state, config, now)
     if not found:
         return "normal", None
-    return "burst", max(end for _, end, _fast in found)
+    return "burst", max(end for _, end in found)
 
 
 def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callable,
@@ -619,9 +613,8 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
                rand: Callable[[float, float], float] = random.uniform) -> RunResult:
     """Re-scan only the plays inside a burst window.
 
-    Tick interval: the fastest tier among the targets: ``interval`` (12 s) +-3 s, 30 s
-    +-3 s once more than 30 min overdue, 60 s +-5 s once more than 90 min overdue
-    (``rand`` gives the jitter). A tick fetches only the targeted play pages and reads
+    Tick interval: ``interval`` (15 s) +-3 s for the whole window (``rand`` gives the
+    jitter). A tick fetches only the targeted play pages and reads
     ``config.json`` exactly once, so a config change (pause, new watch/target) is
     honoured by the next tick at the latest (bounded by one tick). If that read fails,
     the last good config is used for scanning, but a paused config is re-read again
@@ -640,7 +633,7 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
     deadline = min(until, start + timedelta(seconds=max_seconds))
     state = _prepare(copy.deepcopy(state)) if state is not None else load_state(store)
     config: Config | None = None
-    base, jitter = interval, BURST_TIERS[0][2]
+    base, jitter = interval, BURST_JITTER_S
     errors: list[str] = []
     result: RunResult | None = None
     saved_fp = _fingerprint(state)
@@ -660,10 +653,7 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
             targets = _burst_targets(state, config, now)
             if not targets:
                 break
-            slugs = sorted({slug for slug, _end, _tier_ in targets})
-            tier = min(t for *_x, t in targets)
-            base = interval if tier == 0 else BURST_TIERS[tier][1]
-            jitter = BURST_TIERS[tier][2]
+            slugs = sorted({slug for slug, _end in targets})
             result = run_once(store, tg, claims, now, who=who, fetch_fn=fetch_fn,
                               sleep=sleep, persist_state=False, state=state,
                               only_slugs=slugs, config=config)

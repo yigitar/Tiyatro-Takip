@@ -294,11 +294,11 @@ def test_burst_loop_respects_until_and_max_seconds(monkeypatch):
 
     burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
                opens + timedelta(minutes=10), fetch_fn=env.web.fetch, max_seconds=60)
-    assert clock[0] - NOW <= timedelta(seconds=60 + 15)
+    assert clock[0] - NOW <= timedelta(seconds=60 + 18)
     clock[0] = NOW
     burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
                NOW + timedelta(seconds=30), fetch_fn=env.web.fetch)
-    assert clock[0] - NOW <= timedelta(seconds=30 + 15)
+    assert clock[0] - NOW <= timedelta(seconds=30 + 18)
 
 
 # ---- (e) pc_watch ------------------------------------------------------------
@@ -1053,8 +1053,8 @@ def test_overdue_opening_flip_inside_burst_sends_once(monkeypatch):
                      rand=lambda a, b: 0.0)
     assert len(env.tg.sent) == 1 and "Bilet alınabilir" in env.tg.sent[0]
     assert res.state["plays"]["p"]["sessions"]["s1"]["status"] == "on_sale"
-    assert set(ticks) == {12}  # fast polling: within 30 min of opens_at / recent flip
-    assert clock[0] - start <= timedelta(seconds=780 + 12)
+    assert set(ticks) == {15}  # one cadence for the whole window
+    assert clock[0] - start <= timedelta(seconds=runner.BURST_MAX_SECONDS + 15)
     # the next scheduled run re-enters burst cheaply and does not re-send
     res2 = burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
                       OPENS + timedelta(minutes=90), fetch_fn=env.web.fetch,
@@ -1062,9 +1062,11 @@ def test_overdue_opening_flip_inside_burst_sends_once(monkeypatch):
     assert len(env.tg.sent) == 1 and res2.errors == []
 
 
-def test_burst_backs_off_after_30_min_and_jitters(monkeypatch):
+@pytest.mark.parametrize("overdue_min", [-5, 5, 31, 95, 200])
+def test_burst_polls_every_15_s_for_the_whole_overdue_window(monkeypatch, overdue_min):
+    """Final review I2: no slower tiers; ~15 s (+-3 s jitter) up to opens_at + 4 h."""
     env = _overdue_env(monkeypatch, OPENS)
-    clock = [OPENS + timedelta(minutes=31)]
+    clock = [OPENS + timedelta(minutes=overdue_min)]
     ticks = []
 
     def sleep(s):
@@ -1073,19 +1075,33 @@ def test_burst_backs_off_after_30_min_and_jitters(monkeypatch):
         clock[0] += timedelta(seconds=s)
 
     burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
-               OPENS + timedelta(minutes=90), fetch_fn=env.web.fetch, max_seconds=120)
-    assert ticks and all(27 <= t <= 33 for t in ticks)
-    clock[0] = OPENS + timedelta(minutes=5)
-    ticks.clear()
-    burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
-               OPENS + timedelta(minutes=90), fetch_fn=env.web.fetch, max_seconds=120)
-    assert ticks and all(9 <= t <= 15 for t in ticks)
-    clock[0] = OPENS + timedelta(minutes=95)
-    ticks.clear()
-    burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
-               OPENS + timedelta(hours=4), fetch_fn=env.web.fetch, max_seconds=400)
-    assert ticks and all(55 <= t <= 65 for t in ticks)
+               OPENS + timedelta(hours=4), fetch_fn=env.web.fetch, max_seconds=180)
+    assert ticks and all(12 <= t <= 18 for t in ticks)
     assert len(set(ticks)) > 1  # jittered
+
+
+def test_burst_github_api_requests_per_hour_stay_under_600(monkeypatch):
+    """Final review I2: worst-case jitter (every 12 s) for a whole hour of overdue burst
+    must stay well under the ~1000/h GITHUB_TOKEN limit (estimate ~400/h)."""
+    env = _overdue_env(monkeypatch, OPENS)
+    calls = []
+    for name in ("get", "put", "create_file", "delete", "list_paths", "update_json"):
+        real = getattr(env.store, name)
+        monkeypatch.setattr(env.store, name,
+                            (lambda real, name: lambda *a, **k: (calls.append(name),
+                                                                 real(*a, **k))[1])(real, name))
+    clock = [OPENS + timedelta(minutes=30)]
+
+    def sleep(s):
+        clock[0] += timedelta(seconds=s)
+        env.store.now = clock[0]
+
+    burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
+               OPENS + timedelta(hours=4), fetch_fn=env.web.fetch, max_seconds=3600,
+               rand=lambda a, b: a)  # always the shortest tick
+    # FakeStore.update_json goes through the patched get/put: count those, not the wrapper
+    requests = len(calls) - calls.count("update_json")
+    assert requests < 600
 
 
 def test_burst_ends_after_4_h_overdue(monkeypatch):
@@ -1359,7 +1375,7 @@ def test_pc_watch_check_gh_false_skips_github_check():
 
 # ==== 6c: 4-hour overdue window, request rate, per-tick cost ======================
 
-def test_three_hours_overdue_polls_every_60_s(monkeypatch):
+def test_three_hours_overdue_polls_every_15_s(monkeypatch):
     env = _overdue_env(monkeypatch, OPENS)
     start = OPENS + timedelta(hours=3)
     assert plan_mode(env.saved_state(), config_from_dict(WATCH_CFG), start) == (
@@ -1379,11 +1395,11 @@ def test_three_hours_overdue_polls_every_60_s(monkeypatch):
 
     burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
                OPENS + timedelta(hours=4), fetch_fn=fetch_fn, rand=lambda a, b: 0.0)
-    assert ticks and set(ticks) == {60}
-    # request rate per relevant play: at most 2 per minute
+    assert ticks and set(ticks) == {15}
+    # request rate per relevant play: at most 5 per minute (every 12-18 s)
     for t in fetch_times:
         window = [u for u in fetch_times if t <= u < t + timedelta(minutes=1)]
-        assert len(window) <= 2
+        assert len(window) <= 5
     assert set(env.web.calls) == {BASE + "p"}
 
 
@@ -1412,7 +1428,7 @@ def test_fast_tier_tick_cost_is_low(monkeypatch):
     burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
                opens + timedelta(minutes=10), fetch_fn=env.web.fetch,
                rand=lambda a, b: 0.0, max_seconds=300)
-    assert set(ticks) == {12}
+    assert set(ticks) == {15}
     n_ticks = len(ticks)
     assert env.web.calls == [BASE + "p"] * n_ticks  # one page per tick, nothing else
     # config is read exactly once per tick (+1 for a final tick that ends the loop)
@@ -1494,4 +1510,4 @@ def test_watch_added_mid_burst_honored_next_tick(monkeypatch):
                opens + timedelta(minutes=10), fetch_fn=env.web.fetch,
                rand=lambda a, b: 0.0, max_seconds=120)
     on_sale = [t for t, m in sent_at if "Bilet alınabilir" in m]
-    assert len(on_sale) == 1 and on_sale[0] <= start + timedelta(seconds=13)
+    assert len(on_sale) == 1 and on_sale[0] <= start + timedelta(seconds=16)

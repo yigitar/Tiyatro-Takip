@@ -14,7 +14,7 @@ The PC is the second runner next to GitHub Actions (``who="pc"``):
   success resets the backoff.
 - ``tick()`` scans when due: every 300 s normally; in a burst window (see
   ``tiyatro.runner.plan_mode``) only the plays in the window, at the runner's burst
-  cadence (12 s / 30 s / 60 s + jitter). Between scans a tick only delivers outbox
+  cadence (15 s + jitter). Between scans a tick only delivers outbox
   entries whose ``not_before`` has passed (``run_once(only_slugs=[])``, no fetches).
 - Takeover: the runner queues PC sends with ``not_before = now + 60 s`` and the claims
   make the PC skip anything GitHub already sent. Nothing of that is re-implemented here.
@@ -54,7 +54,7 @@ from tiyatro.config import config_from_dict, default_config
 from tiyatro.fetcher import fetch
 from tiyatro.heartbeat import github_run_status, write_heartbeat
 from tiyatro.models import ISTANBUL, Config, Event, Play
-from tiyatro.runner import (BURST_INTERVAL_S, BURST_LEAD, BURST_TIERS, CONFIG_PATH,
+from tiyatro.runner import (BURST_INTERVAL_S, BURST_JITTER_S, BURST_LEAD, CONFIG_PATH,
                             PC_DELAY, PC_WINDOW, _burst_targets, _entry_events, _prepare,
                             _scan, load_config, load_state, plan_mode, run_once, scan_runs)
 from tiyatro.state import clean_emitted, next_opening
@@ -321,18 +321,14 @@ class Service:
 
     # ---- cadence -------------------------------------------------------------------
     def scan_interval(self, now: datetime) -> float:
-        """Seconds between scans: 300 normally, the runner's burst tier cadence (with
+        """Seconds between scans: 300 normally, the runner's burst cadence (15 s with
         jitter) while a watched session is in its burst window."""
         state, config = self.state, self._config
         if state is None or config is None:
             return float(NORMAL_INTERVAL_S)
-        targets = _burst_targets(state, config, now)
-        if not targets:
+        if not _burst_targets(state, config, now):
             return float(NORMAL_INTERVAL_S)
-        tier = min(t for *_rest, t in targets)
-        base = BURST_INTERVAL_S if tier == 0 else BURST_TIERS[tier][1]
-        jitter = BURST_TIERS[tier][2]
-        return max(1.0, base + self._rand(-jitter, jitter))
+        return max(1.0, BURST_INTERVAL_S + self._rand(-BURST_JITTER_S, BURST_JITTER_S))
 
     def _plan_next_scan(self, now: datetime) -> datetime:
         at = now + timedelta(seconds=self.scan_interval(now))

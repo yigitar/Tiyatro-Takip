@@ -119,12 +119,12 @@ def _opening_env(monkeypatch, tmp_path, opens_at, plays_extra=()):
 
 
 @pytest.mark.parametrize("opens_delta_min, interval", [
-    (5, 12),       # inside the 10 min lead: 12 s
-    (-40, 30),     # 40 min overdue and still upcoming: 30 s
-    (-100, 60),    # 100 min overdue: 60 s
+    (5, 15),       # inside the 10 min lead: 15 s
+    (-40, 15),     # 40 min overdue and still upcoming: still 15 s (no slower tiers)
+    (-100, 15),    # 100 min overdue: 15 s
     (60 * 24, 300),  # far away: normal
 ])
-def test_scan_interval_follows_burst_tiers(monkeypatch, tmp_path, opens_delta_min,
+def test_scan_interval_follows_burst_cadence(monkeypatch, tmp_path, opens_delta_min,
                                            interval):
     e = _opening_env(monkeypatch, tmp_path, NOW + timedelta(minutes=opens_delta_min))
     r = tick_at(e, NOW)
@@ -137,7 +137,7 @@ def test_burst_tick_scans_only_burst_plays(monkeypatch, tmp_path):
     e = _opening_env(monkeypatch, tmp_path, NOW + timedelta(minutes=5), [other])
     tick_at(e, NOW)
     e.web.calls.clear()
-    r = tick_at(e, NOW + timedelta(seconds=12))
+    r = tick_at(e, NOW + timedelta(seconds=15))
     assert r.scanned is True and r.mode == "burst"
     assert e.web.calls == ["https://biletinial.com/tr-tr/tiyatro/p"]
 
@@ -211,7 +211,7 @@ def test_pc_sends_after_60_s_when_github_is_silent(monkeypatch, tmp_path):
     t = NOW + timedelta(minutes=10)
     r = _flip_on_sale(e, t)
     key = r.events[0].key
-    assert e.svc.next_interval(t) == 12  # burst tail after the flip
+    assert e.svc.next_interval(t) == 15  # burst tail after the flip
     tick_at(e, t + timedelta(seconds=30))
     assert e.tg.sent == []
     tick_at(e, t + timedelta(seconds=61))
