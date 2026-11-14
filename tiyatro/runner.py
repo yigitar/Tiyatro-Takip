@@ -101,6 +101,7 @@ BURST_INTERVAL_S = 15
 BURST_JITTER_S = 3
 BURST_MAX_SECONDS = 780
 BURST_WATCH_EVERY = timedelta(seconds=60)
+BURST_FAIL_ALERT_AT = 5  # consecutive burst ticks in which every page fetch failed
 PC_WINDOW = timedelta(minutes=60)
 PC_SECOND_WARNING = timedelta(minutes=10)
 DAILY_AT = dtime(12, 0)
@@ -581,8 +582,8 @@ def run_once(store, tg, claims, now: datetime, who: str = "github",
 # ---- modes -----------------------------------------------------------------------
 
 def _burst_targets(state: dict, config: Config,
-                   now: datetime) -> list[tuple[str, datetime]]:
-    """(slug, burst end) for watched sessions that need burst polling.
+                   now: datetime) -> list[tuple[str, datetime, datetime | None]]:
+    """(slug, burst end, opens_at or None) for watched sessions that need burst polling.
 
     UPCOMING (or UNKNOWN: unrecognised markup at opening time) with
     ``opens_at - 10 min <= now <= opens_at + 4 h``, flipped to ON_SALE
@@ -607,17 +608,17 @@ def _burst_targets(state: dict, config: Config,
                 continue
             if status in (Status.UPCOMING, Status.UNKNOWN) and opens is not None \
                     and opens - BURST_LEAD <= now <= opens + BURST_OVERDUE:
-                end = opens + BURST_OVERDUE
+                end, window = opens + BURST_OVERDUE, opens
             elif status is Status.ON_SALE and since is not None \
                     and since <= now <= since + BURST_FLIP_TAIL:
-                end = since + BURST_FLIP_TAIL
+                end, window = since + BURST_FLIP_TAIL, opens
             elif status is Status.SOLD_OUT and since is not None                     and rec.get("prev_status") in (Status.UPCOMING.value,
                                                    Status.ON_SALE.value)                     and since <= now <= since + BURST_SOLD_OUT_TAIL:
-                end = since + BURST_SOLD_OUT_TAIL
+                end, window = since + BURST_SOLD_OUT_TAIL, opens
             else:
                 continue
             if matching_targets(watch, session):
-                out.append((slug, end))
+                out.append((slug, end, window))
     return out
 
 
@@ -636,7 +637,7 @@ def plan_mode(state: dict, config: Config, now: datetime) -> tuple[str, datetime
     found = _burst_targets(state, config, now)
     if not found:
         return "normal", None
-    return "burst", max(end for _, end in found)
+    return "burst", max(end for _, end, _opens in found)
 
 
 def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callable,
@@ -661,7 +662,9 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
     about every 60 s (heartbeat/run list only, no Biletinial requests) so the second
     PC warning is not lost. A failing tick (e.g. one store 502) is recorded by
     exception type name in ``RunResult.errors`` and the loop goes on with the last good
-    config/state.
+    config/state. After ``BURST_FAIL_ALERT_AT`` (5) consecutive ticks in which every page
+    fetch failed, one ``FETCH_FAILING`` (key ``FETCH_FAILING:burst:<opens_at>``, once per
+    opening window) goes through the outbox; a tick with a parsed page resets the count.
     """
     start = now_fn()
     deadline = min(until, start + timedelta(seconds=max_seconds))
@@ -673,6 +676,7 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
     saved_fp = _fingerprint(state)
     save_error: str | None = None
     last_watch: datetime | None = None
+    fail_ticks = 0
     while True:
         now = now_fn()
         if now >= deadline:
@@ -687,11 +691,21 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
             targets = _burst_targets(state, config, now)
             if not targets:
                 break
-            slugs = sorted({slug for slug, _end in targets})
+            slugs = sorted({slug for slug, _end, _opens in targets})
             result = run_once(store, tg, claims, now, who=who, fetch_fn=fetch_fn,
                               sleep=sleep, persist_state=False, state=state,
                               only_slugs=slugs, config=config)
             state = result.state
+            fail_ticks = fail_ticks + 1 if result.scanned == 0 else 0
+            if fail_ticks == BURST_FAIL_ALERT_AT:
+                opens = [o for *_x, o in targets if o is not None]
+                window = min(opens) if opens else deadline
+                ev = _emit(state, "FETCH_FAILING",
+                           f"FETCH_FAILING:burst:{window.isoformat()}",
+                           {"detail": f"Hızlı modda Biletinial {BURST_FAIL_ALERT_AT} kez "
+                                      f"üst üste okunamadı"}, now)
+                if ev is not None:
+                    _dispatch(state, [ev], False, store, tg, claims, now, {}, config, who)
             if who == "github" and (last_watch is None
                                     or now - last_watch >= BURST_WATCH_EVERY):
                 last_watch = now

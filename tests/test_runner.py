@@ -1653,3 +1653,52 @@ def test_unknown_session_in_opening_window_stays_a_burst_target(monkeypatch):
     assert rec["status"] == "unknown" and rec["opens_at"] == opens.isoformat()
     assert plan_mode(res.state, config_from_dict(WATCH_CFG), opens + timedelta(minutes=30)) \
         == ("burst", opens + timedelta(hours=4))
+
+
+# ==== final review I5: burst-mode fetch failures are reported once ==================
+
+def test_burst_all_fetches_failing_emits_one_fetch_failing(monkeypatch):
+    opens = NOW + timedelta(minutes=5)
+    env = Env(monkeypatch, [mkplay(sessions=[sess(opens_at=opens)])], WATCH_CFG)
+    env.run(NOW)
+    env.tg.sent.clear()
+    env.web.plays["p"] = FetchError("HTTP 503: blocked")
+    clock = [opens]
+    ticks = []
+
+    def sleep(s):
+        if s >= 5:
+            ticks.append(s)
+        clock[0] += timedelta(seconds=s)
+        env.store.now = clock[0]
+
+    res = burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
+                     opens + timedelta(hours=4), fetch_fn=env.web.fetch,
+                     rand=lambda a, b: 0.0, max_seconds=60 * 15)
+    assert len(ticks) == 60
+    failing = [m for m in env.tg.sent if "taraması başarısız" in m]
+    assert len(failing) == 1 and "hızlı" in failing[0].lower()
+    keys = [k for k in res.state["emitted"] if k.startswith("FETCH_FAILING:burst:")]
+    assert keys == [f"FETCH_FAILING:burst:{opens.isoformat()}"]
+
+
+def test_burst_fetch_failure_streak_resets_on_success(monkeypatch):
+    opens = NOW + timedelta(minutes=5)
+    good = mkplay(sessions=[sess(opens_at=opens)])
+    env = Env(monkeypatch, [good], WATCH_CFG)
+    env.run(NOW)
+    env.tg.sent.clear()
+    clock = [opens]
+    n = [0]
+
+    def sleep(s):
+        clock[0] += timedelta(seconds=s)
+        n[0] += 1
+        # 4 failing ticks, 1 good tick, repeated: never 5 in a row
+        env.web.plays["p"] = good if n[0] % 4 == 0 else FetchError("HTTP 503: x")
+
+    env.web.plays["p"] = FetchError("HTTP 503: x")
+    burst_loop(env.store, env.tg, env.claims, lambda: clock[0], sleep,
+               opens + timedelta(hours=4), fetch_fn=env.web.fetch,
+               rand=lambda a, b: 0.0, max_seconds=600)
+    assert not any("taraması başarısız" in m for m in env.tg.sent)
