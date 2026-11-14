@@ -46,6 +46,13 @@ KIND_TEXT = {
     "CONFIG_INVALID": "⚠️ Ayar dosyası geçersiz",
     "OPENED_SOLD_OUT": "⚡ Satış açıldı ve görülmeden tükendi — iade için izleniyor",
 }
+PORTAL_TEXT = {
+    "PORTAL_OPENED": "etkinlik açıldı",
+    "PORTAL_CHANGED": "güncellendi",
+    "PORTAL_FAILING": "okunamıyor",
+}
+PORTAL_NOTE_ITEMS = 5
+PORTAL_LABELS = {"basiskele": "Başiskele rezervasyon portalı"}
 DAY_BEFORE_TEXT = "\U0001f514 Satış açılış hatırlatması: "
 
 
@@ -104,10 +111,44 @@ def _targets(ev: Event, config: Config, ids: list[str]) -> str:
                      for i in ids if i in by_id)
 
 
+def portal_label(portal_id, name) -> str:
+    """Short display name of a reservation portal (also used by the PC app)."""
+    return PORTAL_LABELS.get(portal_id) or str(name or portal_id or "Portal")
+
+
+def _portal_entry(ev: Event) -> str:
+    p = ev.payload if isinstance(ev.payload, dict) else {}
+    label = _esc(portal_label(p.get("portal_id"), p.get("title")), TITLE_MAX)
+    sep = ": " if ev.kind != "PORTAL_FAILING" else " "
+    lines = [f"🏛️ {label}{sep}{PORTAL_TEXT.get(ev.kind, html.escape(ev.kind))}"]
+    items = [i for i in (p.get("items") or []) if isinstance(i, dict)]
+    for i in items[:PORTAL_NOTE_ITEMS]:
+        line = f"• {_esc(i.get('title') or 'Etkinlik', TITLE_MAX)}"
+        if i.get("url"):
+            line += f" — {_esc(i['url'], URL_MAX)}"
+        lines.append(line)
+    try:
+        total = max(len(items), int(p.get("item_count") or 0))
+    except (TypeError, ValueError):
+        total = len(items)
+    if total > PORTAL_NOTE_ITEMS:
+        lines.append(f"… +{total - PORTAL_NOTE_ITEMS} etkinlik daha")
+    if not items:
+        extra = [x for x in (p.get("lines") or []) if isinstance(x, str) and x.strip()]
+        lines.extend(_esc(x, TITLE_MAX + 100) for x in extra[:PORTAL_NOTE_ITEMS])
+    if p.get("detail"):
+        lines.append(_esc(p["detail"], DETAIL_MAX))
+    if p.get("url"):
+        lines.append(f"🔗 {_esc(p['url'], URL_MAX)}")
+    return chr(10).join(lines)
+
+
 KIND_FIRST = ("ON_SALE", "OPENING_SOON")  # lock-screen preview shows the first line
 
 
 def _entry(ev: Event, plays: dict[str, Play], config: Config, ids: list[str]) -> str:
+    if ev.kind in PORTAL_TEXT:
+        return _portal_entry(ev)
     lines = []
     if ev.kind in KIND_FIRST:
         lines.append(_kind_line(ev))

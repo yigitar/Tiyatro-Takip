@@ -50,6 +50,17 @@ runs never overlap, so a gap of roughly one start-up remains. Two runs never ove
 the scan workflow runs in one Actions ``concurrency`` group (set up in the workflow
 file).
 
+Portals (Başiskele reservation portal, ``config.portals``): normal scans only, and only
+when the caller injects ``portal_fetch_fn`` (so no caller can reach the network by
+accident). Every enabled portal is fetched on its own daemon thread that overlaps the
+Biletinial scan; the Biletinial events are dispatched first, then the portal result is
+waited for at most ``PORTAL_WAIT_S`` and its events are dispatched separately, so a slow or
+broken portal can neither abort nor delay a Biletinial alert. ``state["portals"][id]`` keeps
+the last snapshot; ``PORTAL_OPENED`` (empty -> open, or the very first observation is open;
+key ``PORTAL_OPENED:<id>:<sig12>``), ``PORTAL_CHANGED`` (open, signature changed) and
+``PORTAL_FAILING`` (3 failed checks in a row) go through the normal outbox/claims; open ->
+empty only updates the state; a first empty observation is a silent baseline.
+
 Pausing: with ``config.paused`` the scan and state update run normally but the events
 (and anything still in the outbox) are discarded: they stay recorded in ``emitted`` and
 are never sent, also not after unpausing. The count is kept in
@@ -67,6 +78,7 @@ import json
 import os
 import random
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, time as dtime, timedelta
@@ -79,6 +91,7 @@ from tiyatro.heartbeat import github_run_status, pc_status, read_heartbeat
 from tiyatro.models import ISTANBUL, Config, Event, Play, Session, Status
 from tiyatro.notify import MONTHS, Telegram, default_transport, format_message
 from tiyatro.parser import ParseError, parse_play, parse_venue
+from tiyatro.portals import parse_portal
 from tiyatro.rules import matching_targets
 from tiyatro.state import (ON_SALE_GAP, clean_emitted, cleanup, diff, empty_state,
                            next_opening, valid_session_record)
@@ -91,6 +104,9 @@ REQUEST_GAP_S = 2
 BURST_GAP_S = 0.5
 FETCH_FAIL_ALERT_AT = 3
 PLAY_FAIL_ALERT_AT = 3
+PORTAL_FAIL_ALERT_AT = 3
+PORTAL_WAIT_S = 5  # how long after the Biletinial work the portal result may still take
+PORTAL_LINES_KEPT, PORTAL_ITEMS_KEPT, PORTAL_NOTE_MAX = 40, 20, 5
 OUTBOX_MAX_AGE = timedelta(hours=6)
 OUTBOX_MAX_ATTEMPTS = 20
 PC_DELAY = timedelta(seconds=60)
@@ -168,6 +184,10 @@ def _prepare(state) -> dict:
             entry["sessions"] = {}
         for sid in [s for s, r in entry["sessions"].items() if not valid_session_record(r)]:
             del entry["sessions"][sid]
+    portals = state.get("portals")
+    state["portals"] = ({k: v for k, v in portals.items()
+                         if isinstance(k, str) and isinstance(v, dict)}
+                        if isinstance(portals, dict) else {})
     state["emitted"] = clean_emitted(state.get("emitted"))
     box = state.get("outbox")
     state["outbox"] = [e for e in (box if isinstance(box, list) else [])
@@ -198,10 +218,14 @@ def save_state(store, state: dict) -> str | None:
 
 
 def _fingerprint(state: dict) -> str:
-    """State identity without the per-scan timestamps (``last_scan``/``last_seen``),
+    """State identity without the per-scan timestamps (``last_scan``/``last_seen``/portal
+    ``last_check``),
     so a burst tick that only re-confirmed the page does not cause a write."""
     st = copy.deepcopy(state)
     st.get("meta", {}).pop("last_scan", None)
+    for rec in (st.get("portals") or {}).values():
+        if isinstance(rec, dict):
+            rec.pop("last_check", None)
     for entry in (st.get("plays") or {}).values():
         if isinstance(entry, dict):
             entry.pop("last_seen", None)
@@ -407,6 +431,106 @@ def _dispatch(state: dict, events: list[Event], first_scan: bool, store, tg, cla
     return _deliver(state, store, tg, claims, now, plays, config)
 
 
+# ---- portals -------------------------------------------------------------------
+
+class _PortalFetch:
+    """Fetches and parses the enabled portals, one daemon thread each, so the work
+    overlaps the Biletinial scan and a hanging portal can only ever be abandoned."""
+
+    def __init__(self, portals: list[dict], fetch_fn: Callable):
+        self.results: dict[str, object] = {}  # id -> PortalSnapshot | exception type name
+        self._threads = []
+        for p in portals:
+            t = threading.Thread(target=self._work, args=(p, fetch_fn), daemon=True)
+            self._threads.append(t)
+            t.start()
+
+    def _work(self, portal: dict, fetch_fn: Callable) -> None:
+        try:
+            self.results[portal["id"]] = parse_portal(fetch_fn(portal["url"]).html,
+                                                      portal["url"])
+        except Exception as exc:
+            self.results[portal["id"]] = type(exc).__name__
+
+    def wait(self, timeout: float) -> dict[str, object]:
+        deadline = time.monotonic() + max(0.0, timeout)
+        for t in self._threads:
+            t.join(max(0.0, deadline - time.monotonic()))
+        return dict(self.results)
+
+
+def _start_portals(config: Config, fetch_fn: Callable | None) -> _PortalFetch | None:
+    enabled = [p for p in config.portals if p.get("enabled", True)]
+    return _PortalFetch(enabled, fetch_fn) if fetch_fn is not None and enabled else None
+
+
+def _portal_payload(portal: dict, snap, new_lines: list[str]) -> dict:
+    return {"portal_id": portal["id"], "title": portal["name"], "url": portal["url"],
+            "items": [{"title": i["title"], "url": i["url"]}
+                      for i in snap.items[:PORTAL_NOTE_MAX]],
+            "item_count": len(snap.items), "lines": new_lines[:PORTAL_NOTE_MAX]}
+
+
+def _apply_portal(state: dict, portal: dict, result, now: datetime) -> list[Event]:
+    pid, now_iso = portal["id"], now.isoformat()
+    rec = state["portals"].setdefault(pid, {})
+    rec.update(name=portal["name"], url=portal["url"])
+    if not hasattr(result, "signature"):  # a failed check (exception type name / timeout)
+        rec["fail_streak"] = int(rec.get("fail_streak") or 0) + 1
+        rec.setdefault("empty", None)
+        if rec["fail_streak"] != PORTAL_FAIL_ALERT_AT:
+            return []
+        day = now.astimezone(ISTANBUL).date().isoformat()
+        ev = _emit(state, "PORTAL_FAILING", f"PORTAL_FAILING:{pid}:{day}",
+                   {"portal_id": pid, "title": portal["name"], "url": portal["url"],
+                    "detail": f"{PORTAL_FAIL_ALERT_AT} taramadır okunamıyor"}, now)
+        return [ev] if ev else []
+
+    snap = result
+    prev_empty, prev_sig = rec.get("empty"), rec.get("signature")
+    old_lines = rec.get("lines") if isinstance(rec.get("lines"), list) else []
+    events: list[Event] = []
+    sig12 = snap.signature[:12]
+    if not snap.empty:
+        new_lines = ([l for l in snap.lines if l not in old_lines] if prev_empty is False
+                     else list(snap.lines))
+        if prev_empty is None or prev_empty is True:
+            kind, key = "PORTAL_OPENED", f"PORTAL_OPENED:{pid}:{sig12}"
+        elif snap.signature != prev_sig:
+            kind, key = "PORTAL_CHANGED", f"PORTAL_CHANGED:{pid}:{sig12}"
+        else:
+            kind = key = None
+        # a signature that was announced before (as opened or as changed) never alerts again
+        announced = any(f"{k}:{pid}:{sig12}" in state["emitted"]
+                        for k in ("PORTAL_OPENED", "PORTAL_CHANGED"))
+        if kind and not announced:
+            ev = _emit(state, kind, key, _portal_payload(portal, snap, new_lines), now)
+            if ev:
+                events.append(ev)
+    changed = snap.signature != prev_sig or snap.empty != prev_empty
+    rec.update(signature=snap.signature, empty=snap.empty,
+               lines=list(snap.lines[:PORTAL_LINES_KEPT]),
+               items=[dict(i) for i in snap.items[:PORTAL_ITEMS_KEPT]],
+               fail_streak=0, last_check=now_iso)
+    rec.setdefault("first_seen", now_iso)
+    if changed or not rec.get("last_change"):
+        rec["last_change"] = now_iso
+    return events
+
+
+def _apply_portals(state: dict, config: Config, results: dict, now: datetime) -> list[Event]:
+    events: list[Event] = []
+    for portal in config.portals:
+        if not portal.get("enabled", True):
+            continue
+        try:
+            events.extend(_apply_portal(state, portal, results.get(portal["id"], "Timeout"),
+                                        now))
+        except Exception:  # one portal's bug must never reach the Biletinial result
+            continue
+    return events
+
+
 # ---- scanning ------------------------------------------------------------------
 
 def _scan(config: Config, state: dict, fetch_fn: Callable, sleep: Callable,
@@ -540,7 +664,8 @@ def run_once(store, tg, claims, now: datetime, who: str = "github",
              fetch_fn: Callable = fetch, sleep: Callable = time.sleep,
              persist_state: bool = True, state: dict | None = None,
              only_slugs: list[str] | None = None,
-             config: Config | None = None) -> RunResult:
+             config: Config | None = None,
+             portal_fetch_fn: Callable | None = None) -> RunResult:
     config = config if config is not None else load_config(store)
     state = _prepare(copy.deepcopy(state) if state is not None else load_state(store))
     burst = only_slugs is not None
@@ -552,6 +677,12 @@ def run_once(store, tg, claims, now: datetime, who: str = "github",
     else:
         failures += _deliver(state, store, tg, claims, now, {}, config)
 
+    portal_job = None
+    if only_slugs is None:  # portals: normal scans only, overlapping the Biletinial scan
+        try:
+            portal_job = _start_portals(config, portal_fetch_fn)
+        except Exception:
+            portal_job = None
     plays, unscanned, play_failures, venue_error = _scan(config, state, fetch_fn, sleep,
                                                          only_slugs)
     failures += play_failures
@@ -597,6 +728,17 @@ def run_once(store, tg, claims, now: datetime, who: str = "github",
 
     failures += _dispatch(state, events, first_scan, store, tg, claims, now,
                           {p.slug: p for p in plays}, config, who)
+
+    if portal_job is not None:  # after the Biletinial dispatch: never delays its alerts
+        try:
+            portal_events = _apply_portals(state, config, portal_job.wait(PORTAL_WAIT_S),
+                                           now)
+            if portal_events:
+                events.extend(portal_events)
+                failures += _dispatch(state, portal_events, False, store, tg, claims, now,
+                                      {}, config, who)
+        except Exception:
+            pass
 
     save_error = save_state(store, state) if persist_state else None
     return RunResult(events, "burst" if burst else "normal", len(plays), state,
@@ -936,7 +1078,7 @@ def main() -> int:
                       "github")
         if plan_mode(state, config, started)[0] != "burst":
             res = run_once(store, tg, claims, now_fn(), fetch_fn=fetch, sleep=time.sleep,
-                           state=state, config=config)
+                           state=state, config=config, portal_fetch_fn=fetch)
             state = res.state
             errors.append(res.save_error)
         # else: already inside a burst window: burst first, the normal scan afterwards
@@ -965,7 +1107,8 @@ def main() -> int:
                 problems.append(f"burst failed: {type(exc).__name__}")
         if res is None:  # the normal scan skipped at run start
             res = run_once(store, tg, claims, now_fn(), fetch_fn=fetch, sleep=time.sleep,
-                           state=state, config=_fresh_config(store, config))
+                           state=state, config=_fresh_config(store, config),
+                           portal_fetch_fn=fetch)
             state = res.state
             errors.append(res.save_error)
         before = _fingerprint(state)
