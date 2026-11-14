@@ -85,6 +85,7 @@ EVENT_KINDS = (
     "PLAY_FAILING",
     "NEW_SESSIONS",
     "DELIVERY_DROPPED",
+    "OPENED_SOLD_OUT",
 )
 
 

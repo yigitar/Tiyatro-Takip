@@ -16,6 +16,9 @@ Notes on alerting semantics:
 - UNKNOWN_STATUS is keyed per session id (``UNKNOWN_STATUS:<sid>``): once per session.
 - DAY_BEFORE fires from 10:00 the day before opening until 60 min before opening, so it
   never arrives as a near-duplicate of OPENING_SOON (last 10 min before opening).
+- OPENED_SOLD_OUT: a watched session with a matching target that goes UPCOMING ->
+  SOLD_OUT in one scan (the opening was never seen ON_SALE) fires once per session and
+  day (``OPENED_SOLD_OUT:<sid>:<Istanbul date>``); burst keeps watching for iade.
 """
 from __future__ import annotations
 
@@ -257,6 +260,12 @@ def diff(old: dict, plays: list[Play], config: Config, now: datetime, *,
                     rec.update(on_sale_count=n, last_on_sale_notified=now_iso,
                                on_sale_pending=False)
                     emit("ON_SALE", f"ON_SALE:{sid}:{n}", slug, sid, ids, payload)
+            elif (session.status is Status.SOLD_OUT and rec.get("status_since") == now_iso
+                  and rec.get("prev_status") == Status.UPCOMING.value
+                  and not rec.get("on_sale_count")):
+                day = now.astimezone(ISTANBUL).date().isoformat()
+                emit("OPENED_SOLD_OUT", f"OPENED_SOLD_OUT:{sid}:{day}", slug, sid, ids,
+                     payload)
             elif session.status is Status.UPCOMING and session.opens_at is not None:
                 soon_from = session.opens_at - OPENING_SOON_LEAD
                 if soon_from <= now < session.opens_at:

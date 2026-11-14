@@ -517,3 +517,36 @@ def test_status_change_records_previous_status():
                  T0 + timedelta(minutes=5))
     rec = st["plays"]["p"]["sessions"]["s1"]
     assert rec["status"] == "sold_out" and rec["prev_status"] == "upcoming"
+
+
+# ==== final review M3: opened and sold out before ON_SALE was ever seen =============
+
+def test_upcoming_to_sold_out_emits_opened_sold_out_once_per_day():
+    from tiyatro.models import EVENT_KINDS
+    assert "OPENED_SOLD_OUT" in EVENT_KINDS
+    st, _ = diff(empty_state(), [play(sessions=[sess()])], WATCH, T0)
+    t = OPENS + timedelta(minutes=1)
+    st, ev = diff(st, [play(sessions=[sess(status=Status.SOLD_OUT)])], WATCH, t)
+    day = t.date().isoformat()
+    assert [e.key for e in ev] == [f"OPENED_SOLD_OUT:s1:{day}"]
+    assert ev[0].target_ids == ["t1"] and ev[0].session_id == "s1"
+    st, ev = diff(st, [play(sessions=[sess(status=Status.SOLD_OUT)])], WATCH,
+                  t + timedelta(minutes=5))
+    assert ev == []
+
+
+def test_on_sale_then_sold_out_is_not_opened_sold_out():
+    st, _ = diff(empty_state(), [play(sessions=[sess()])], WATCH, T0)
+    st, _ = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, OPENS)
+    st, ev = diff(st, [play(sessions=[sess(status=Status.SOLD_OUT)])], WATCH,
+                  OPENS + timedelta(minutes=1))
+    assert ev == []
+
+
+def test_opened_sold_out_needs_a_matching_target_and_a_transition():
+    st, _ = diff(empty_state(), [play(sessions=[sess(start=WED_15)])], WATCH, T0)
+    st, ev = diff(st, [play(sessions=[sess(start=WED_15, status=Status.SOLD_OUT)])], WATCH,
+                  OPENS)
+    assert ev == []  # Wednesday afternoon: no matching target
+    _, ev = diff(empty_state(), [play(sessions=[sess(status=Status.SOLD_OUT)])], WATCH, T0)
+    assert kinds(ev) == ["NEW_PLAY"]  # first seen sold out: no transition observed
