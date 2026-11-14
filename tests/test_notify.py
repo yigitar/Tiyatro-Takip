@@ -193,12 +193,28 @@ def test_retry_after_capped():
     assert slept == [] and len(tr.calls) == 1
 
 
-def test_retry_after_at_cap_waits():
-    tr = Transport((429, {"parameters": {"retry_after": 60}}),
+def test_retry_after_within_total_cap_waits():
+    tr = Transport((429, {"parameters": {"retry_after": 30}}),
                    (200, {"ok": True, "result": {"message_id": 1}}))
     slept = []
     assert Telegram("T", "1", tr, sleep=slept.append).send("x") == 1
-    assert slept == [60]
+    assert slept == [30]
+
+
+def test_total_429_wait_stays_below_the_claim_lease():  # final review M4
+    from tiyatro.claims import LEASE
+    tr = Transport((429, {"parameters": {"retry_after": 20}}),
+                   (429, {"parameters": {"retry_after": 20}}),
+                   (200, {"ok": True, "result": {"message_id": 1}}))
+    slept = []
+    with pytest.raises(TelegramError):
+        Telegram("T", "1", tr, sleep=slept.append).send("x")
+    assert sum(slept) < LEASE.total_seconds() and slept == [20]
+    tr = Transport((429, {"parameters": {"retry_after": 60}}))
+    slept = []
+    with pytest.raises(TelegramError):
+        Telegram("T", "1", tr, sleep=slept.append).send("x")
+    assert slept == []
 
 
 def test_retry_after_string_parsed():
@@ -217,3 +233,19 @@ def test_ok_without_message_id_is_success():
 def test_ok_false_raises():
     with pytest.raises(TelegramError):
         Telegram("T", "1", Transport((200, {"ok": False}))).send("x")
+
+
+# ==== final review M2 / M3 ==========================================================
+
+def test_on_sale_and_opening_soon_lead_with_the_kind_line():
+    for kind, text in (("ON_SALE", "Bilet alınabilir!"),
+                       ("OPENING_SOON", "10 dk sonra satış açılıyor")):
+        first = format_message([ev(kind)], PLAYS, CFG)[0].splitlines()[0]
+        assert text in first, first
+    first = format_message([ev("DAY_BEFORE")], PLAYS, CFG)[0].splitlines()[0]
+    assert first == "<b>Oyun</b>"  # other kinds keep the title first
+
+
+def test_opened_sold_out_text():
+    t = format_message([ev("OPENED_SOLD_OUT")], PLAYS, CFG)[0]
+    assert "Satış açıldı ve görülmeden tükendi — iade için izleniyor" in t

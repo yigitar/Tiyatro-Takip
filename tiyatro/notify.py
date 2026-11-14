@@ -17,7 +17,10 @@ from tiyatro.timeutil import parse_iso
 MAX_LEN = 4096
 FOLD_NEW_PLAYS_ABOVE = 3
 MAX_ATTEMPTS = 3
-MAX_RETRY_AFTER = 60
+# Total 429 back-off per send stays below the 45 s claim lease, so a slow send can never
+# outlive its claim (the other runner would take over and send a duplicate); beyond it
+# the send fails and the claim ends `failed` (retryable).
+MAX_TOTAL_WAIT = 35
 TITLE_MAX = 200
 NAME_MAX = 100
 DETAIL_MAX = 500
@@ -40,6 +43,7 @@ KIND_TEXT = {
     "PLAY_FAILING": "\U0001f9e9 Oyun sayfası okunamıyor",
     "NEW_SESSIONS": "\U0001f4c5 Yeni seanslar/dönem",
     "DELIVERY_DROPPED": "⚠️ bildirim iletilemedi",
+    "OPENED_SOLD_OUT": "⚡ Satış açıldı ve görülmeden tükendi — iade için izleniyor",
 }
 DAY_BEFORE_TEXT = "\U0001f514 Satış açılış hatırlatması: "
 
@@ -99,15 +103,21 @@ def _targets(ev: Event, config: Config, ids: list[str]) -> str:
                      for i in ids if i in by_id)
 
 
+KIND_FIRST = ("ON_SALE", "OPENING_SOON")  # lock-screen preview shows the first line
+
+
 def _entry(ev: Event, plays: dict[str, Play], config: Config, ids: list[str]) -> str:
     lines = []
+    if ev.kind in KIND_FIRST:
+        lines.append(_kind_line(ev))
     title = _title(ev, plays)
     if title:
         lines.append(f"<b>{title}</b>")
     start = _dt(ev.payload.get("start"))
     if start and ev.session_id is not None:
         lines.append(f"\U0001f4c5 {_when(start)}")
-    lines.append(_kind_line(ev))
+    if ev.kind not in KIND_FIRST:
+        lines.append(_kind_line(ev))
     people = _targets(ev, config, ids)
     if people:
         lines.append(f"\U0001f465 {people}")
@@ -277,6 +287,7 @@ class Telegram:
         url = f"https://api.telegram.org/bot{self._token}/sendMessage"
         payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML",
                    "disable_web_page_preview": True}
+        waited = 0.0
         for attempt in range(1, MAX_ATTEMPTS + 1):
             # Errors are recorded inside `except` and raised outside it, so the token can
             # never survive in an exception's __context__.
@@ -293,10 +304,11 @@ class Telegram:
             body = body if isinstance(body, dict) else {}
             if status == 429:
                 wait = self._retry_after(body)
-                if wait > MAX_RETRY_AFTER:
+                if waited + wait > MAX_TOTAL_WAIT:
                     raise TelegramError(f"telegram rate limited: retry_after={wait:g}s too long")
                 if attempt < MAX_ATTEMPTS:
                     self._sleep(int(wait) if wait == int(wait) else wait)
+                    waited += wait
                     continue
             if status == 200 and body.get("ok") is True:
                 result = body.get("result")
