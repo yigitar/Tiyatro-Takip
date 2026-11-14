@@ -282,4 +282,158 @@ def parse_play(html: str, url: str) -> Play:
         age_limit=int(age.group(1)) if age else None,
         price_from=price,
         sessions=sessions,
+        **_details(html),
     )
+
+
+# ---- play details: summary / cast / credits ---------------------------------------------
+
+SUMMARY_MAX = 1500
+CREDITS_MAX = 12
+_ABOUT_RE = re.compile(r'<div\b[^>]*\bevent-card-v2__about\b[^>]*>(.*?)</div>', re.S | re.I)
+_P_RE = re.compile(r"<p\b[^>]*>(.*?)</p>", re.S | re.I)
+_BR_RE = re.compile(r"<br\s*/?>", re.I)
+_TITLE_ONLY_RE = re.compile(r"\s*<strong>[^<]*</strong>\s*", re.I)
+_LEAD_STRONGS_RE = re.compile(r"\s*((?:<strong>[^<]*</strong>[ \t\xa0]*)+)(.*)", re.S | re.I)
+_CAST_HEADS = {"oyuncular", "oyuncu kadrosu", "oynayanlar"}
+_GROUP_RE = re.compile(r'<section\b[^>]*\bdata-cast-group="(\w+)"[^>]*>(.*?)</section>', re.S | re.I)
+_PERSON_RE = re.compile(r'<span\b[^>]*\bcast-v2__person-copy\b[^>]*>(.*?)</span>', re.S | re.I)
+_STRONG_RE = re.compile(r"<strong>(.*?)</strong>", re.S | re.I)
+_SMALL_RE = re.compile(r"<small>(.*?)</small>", re.S | re.I)
+_FOREIGN_LETTERS = set("WQXwqx")  # not Turkish: such a word's capital I is an English "i"
+
+
+def _flat(fragment: str) -> str:
+    """Tags dropped, entities decoded, every whitespace run folded to one space."""
+    return re.sub(r"\s+", " ", htmlmod.unescape(_TAG_STRIP_RE.sub("", fragment))).strip()
+
+
+def _tr_word(word: str, first_cap: bool) -> str:
+    foreign = any(c in _FOREIGN_LETTERS for c in word)
+    out = []
+    for i, ch in enumerate(word):
+        if foreign:
+            low = ch.lower().replace("i\u0307", "i")
+            up = low.upper()
+        else:
+            low = {"I": "ı", "İ": "i"}.get(ch) or ch.lower()
+            up = {"i": "İ", "ı": "I"}.get(low) or low.upper()
+        out.append(up if i == 0 and first_cap else low)
+    return "".join(out)
+
+
+def tr_title(text: str) -> str:
+    """ALL-CAPS text to Turkish Title Case ("İBRAHİM AYDIN" -> "İbrahim Aydın"); text
+    that already has lowercase letters is returned unchanged. Words with W/Q/X are
+    treated as foreign (I -> i), e.g. "WILLIAM"."""
+    if any(c.isalpha() and c != c.upper() for c in text):
+        return text
+    parts = re.split(r"([\s\-'’(),]+)", text)
+    out, start = [], True
+    for part in parts:
+        if re.fullmatch(r"[\s\-'’(),]*", part):
+            out.append(part)
+            start = start or part.strip() == "" or part.strip() in ("(",)
+            continue
+        out.append(_tr_word(part, start))
+        start = False
+    return "".join(out)
+
+
+def _cast_name(raw: str) -> str:
+    """Name in Title Case; a trailing "(role)" is kept as the page wrote it."""
+    m = re.fullmatch(r"(.*?)\s*(\([^()]*\))", raw.strip())
+    if m and m.group(1):
+        return f"{tr_title(m.group(1))} {m.group(2)}"
+    return tr_title(raw.strip())
+
+
+def _cap_summary(text: str) -> str:
+    if len(text) <= SUMMARY_MAX:
+        return text
+    cut = text[:SUMMARY_MAX - 1]
+    if not text[SUMMARY_MAX - 1].isspace():
+        head = cut.rsplit(None, 1)
+        cut = head[0] if len(head) == 2 else cut
+    return cut.rstrip() + "…"
+
+
+def _para_text(inner: str) -> str:
+    text = _BR_RE.sub("\x00", inner)
+    text = re.sub(r"\s+", " ", htmlmod.unescape(_TAG_STRIP_RE.sub("", text)))
+    return re.sub(r" ?\x00 ?", "\n", text).strip()
+
+
+def _credit_line(line: str) -> tuple[str, str] | None:
+    m = _LEAD_STRONGS_RE.fullmatch(line)
+    if not m:
+        return None
+    label, rest = _flat(m.group(1)), m.group(2).strip()
+    if not label.endswith(":") and not rest.startswith(":"):
+        return None
+    label = label.rstrip(":").strip()
+    value = _flat(rest.lstrip().lstrip(":"))
+    return (label, tr_title(value)) if label and value else None
+
+
+def _about_details(html: str) -> tuple[str | None, list[str], dict[str, str]]:
+    m = _ABOUT_RE.search(html)
+    if not m:
+        return None, [], {}
+    summary: list[str] = []
+    cast: list[str] = []
+    credits: dict[str, str] = {}
+    for inner in _P_RE.findall(m.group(1)):
+        lines = [ln for ln in _BR_RE.split(inner) if _flat(ln)]
+        parsed = [_credit_line(ln) for ln in lines]
+        if lines and all(parsed):
+            for label, value in parsed:
+                credits.setdefault(label, value)
+            continue
+        head = _LEAD_STRONGS_RE.fullmatch(lines[0]) if len(lines) > 1 else None
+        if head and not head.group(2).strip():
+            if _flat(head.group(1)).lower().replace("ı", "i") in _CAST_HEADS:
+                names = re.split(r"[,;]", ",".join(_flat(ln) for ln in lines[1:]))
+                cast.extend(_cast_name(n) for n in names if n.strip())
+            continue  # other headed groups (e.g. chorus) are not summary text
+        if _TITLE_ONLY_RE.fullmatch(inner):
+            continue
+        text = _para_text(inner)
+        if text:
+            summary.append(text)
+    return ("\n\n".join(summary) or None), cast, credits
+
+
+def _cast_section_details(html: str) -> tuple[list[str], dict[str, str]]:
+    cast: list[str] = []
+    credits: dict[str, str] = {}
+    for kind, body in _GROUP_RE.findall(html):
+        for person in _PERSON_RE.findall(body):
+            name = _STRONG_RE.search(person)
+            name = _flat(name.group(1)) if name else ""
+            role = _SMALL_RE.search(person)
+            role = _flat(role.group(1)) if role else ""
+            if not name:
+                continue
+            if kind.lower() == "actor":
+                cast.append(f"{name} ({role})" if role else name)
+            elif role:
+                credits[role] = f"{credits[role]}, {name}" if role in credits else name
+    return cast, credits
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    return list(dict.fromkeys(items))
+
+
+def _details(html: str) -> dict:
+    """``summary`` / ``cast`` / ``credits`` of a play page. The structured "Kadro"
+    section is preferred (proper casing); the "Detay" paragraphs are the fallback."""
+    summary, a_cast, a_credits = _about_details(html)
+    s_cast, s_credits = _cast_section_details(html)
+    credits = s_credits or a_credits
+    return {
+        "summary": _cap_summary(summary) if summary else None,
+        "cast": _dedupe(s_cast or a_cast),
+        "credits": dict(list(credits.items())[:CREDITS_MAX]),
+    }

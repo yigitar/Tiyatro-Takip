@@ -37,6 +37,9 @@ class Play:
     price_from: float | None
     sessions: list[Session] = field(default_factory=list)
     tags: set[str] = field(default_factory=set)
+    summary: str | None = None
+    cast: list[str] = field(default_factory=list)
+    credits: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
