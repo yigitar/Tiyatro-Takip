@@ -215,6 +215,7 @@ def test_worker_renders_python_produced_portal_state():
                                '<div class="c"><h4>Pinokyo</h4>'
                                '<a href="/e/2">Rezervasyon Yap</a></div>'))
     _apply_portals(state, cfg, {"basiskele": opened}, NOW + timedelta(minutes=5))
+    _apply_portals(state, cfg, {"basiskele": opened}, NOW + timedelta(minutes=10))  # confirmed
     res = node({"config": raw_cfg, "state": json.loads(json.dumps(state)), "applies": [],
                 "renders": ["m", "up"]})
     for screen in res["rendered"]:

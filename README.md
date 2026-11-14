@@ -41,6 +41,14 @@ rezervasyonu **şu anda açık** olan etkinlikleri listeler; çoğu zaman liste 
   gözlemlenmedi; bu yüzden algılama, sayfanın tasarımına bağlı kalmayan genel bir
   yöntemle yapılır (bağlantı/düğmeler ve boş olmayan metin satırları). Tasarım değişirse
   yanlış "açıldı" ya da kaçan açılış olabilir; ilk gerçek açılışta sonuç kontrol edilmelidir.
+- **Doğrulama gecikmesi:** Boştan dolu görünen bir sayfa için "etkinlik açıldı"
+  bildirimi, aynı içeriğin bir sonraki taramada da görülmesiyle (en fazla bir tarama,
+  yaklaşık 5 dk gecikmeyle) gönderilir; tek seferlik bozuk/hatalı bir sayfa bildirim
+  üretmez. "Güncellendi" bildirimi portal başına en çok 6 saatte bir gelir; saat,
+  sayaç gibi değişken metinler ve bağlantı sırası dikkate alınmaz.
+- **Bilinen boşluk:** Bağlantısı olmayan ve tek satır düz metin olarak gösterilen bir
+  etkinlik "boş" sayılır (iki ve daha fazla düz metin satırı ya da bir bağlantı/düğme
+  olursa açık sayılır). Hata/bakım/çerez uyarısı gibi sayfalar "boş" sayılır.
 - **Ayar:** `config.json` içindeki `portals` listesi (en çok 5 portal; `id`, `name`,
   `url` (https), `enabled`). Anahtar yoksa Başiskele portalı varsayılan olarak açıktır.
   Telegram menüsü ve PC uygulaması bu listeye dokunmaz.

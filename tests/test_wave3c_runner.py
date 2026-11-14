@@ -61,6 +61,13 @@ def go(env, n, **kw):
     return env.run(at(n), **kw)
 
 
+def go2(env, n, **kw):
+    """Two consecutive scans (n and n + 1 min): the second confirms an opening."""
+    kw.setdefault("portal_fetch_fn", env.portal.fetch)
+    go(env, n, **kw)
+    return env.run(at(n) + timedelta(minutes=1), **kw)
+
+
 def pstate(env):
     return env.saved_state()["portals"]["basiskele"]
 
@@ -100,7 +107,7 @@ def test_first_observation_empty_is_a_silent_baseline(monkeypatch):
 
 def test_first_observation_non_empty_opens(monkeypatch):
     env = make(monkeypatch, html=opened_html("Kuğu Gölü Balesi", "Pinokyo"))
-    res = go(env, 0)
+    res = go2(env, 0)
     assert kinds(res) == ["PORTAL_OPENED"]
     [ev] = [e for e in res.events if e.kind == "PORTAL_OPENED"]
     rec = pstate(env)
@@ -120,24 +127,25 @@ def test_empty_to_open_then_deduped_across_runs(monkeypatch):
     env = make(monkeypatch)
     go(env, 0)
     env.portal.html = opened_html("Konser")
-    res = go(env, 1)
+    res = go2(env, 1)
     assert kinds(res) == ["PORTAL_OPENED"] and len(pm(env)) == 1
     before = pstate(env)
-    assert before["last_change"] == at(1).isoformat() and before["first_seen"] == at(0).isoformat()
+    assert before["last_change"] == (at(1) + timedelta(minutes=1)).isoformat() and before["first_seen"] == at(0).isoformat()
     for n in (2, 3):
         res = go(env, n)
         assert kinds(res) == []
     assert len(pm(env)) == 1
     after = pstate(env)
     assert after["signature"] == before["signature"]
-    assert after["last_change"] == at(1).isoformat() and after["last_check"] == at(3).isoformat()
+    assert after["last_change"] == (at(1) + timedelta(minutes=1)).isoformat() \
+        and after["last_check"] == at(3).isoformat()
 
 
 def test_open_to_changed_alerts_once_per_signature(monkeypatch):
     env = make(monkeypatch)
     go(env, 0)
     env.portal.html = opened_html("Konser")
-    go(env, 1)
+    go2(env, 1)
     env.portal.html = opened_html("Konser", "Tiyatro Gecesi")
     res = go(env, 2)
     assert kinds(res) == ["PORTAL_CHANGED"]
@@ -152,7 +160,7 @@ def test_open_to_empty_only_updates_state(monkeypatch):
     env = make(monkeypatch)
     go(env, 0)
     env.portal.html = opened_html("Konser")
-    go(env, 1)
+    go2(env, 1)
     env.tg.sent.clear()
     env.portal.html = real_empty()
     res = go(env, 2)
@@ -160,7 +168,7 @@ def test_open_to_empty_only_updates_state(monkeypatch):
     rec = pstate(env)
     assert rec["empty"] is True and rec["items"] == [] and rec["last_change"] == at(2).isoformat()
     env.portal.html = opened_html("Başka Etkinlik")  # a different list: a fresh opening
-    assert kinds(go(env, 3)) == ["PORTAL_OPENED"]
+    assert kinds(go2(env, 3)) == ["PORTAL_OPENED"]
 
 
 # ---- failures ------------------------------------------------------------------------
@@ -295,7 +303,7 @@ def test_paused_discards_portal_events(monkeypatch):
     env = make(monkeypatch, config=cfg)
     go(env, 0)
     env.portal.html = opened_html("Konser")
-    res = go(env, 1)
+    res = go2(env, 1)
     assert kinds(res) == ["PORTAL_OPENED"] and pm(env) == []
     st = env.saved_state()
     assert st["outbox"] == [] and st["meta"]["paused_discarded"] == 2  # NEW_PLAY + PORTAL_OPENED
@@ -308,7 +316,7 @@ def test_delivery_through_outbox_retry_and_claim(monkeypatch):
     go(env, 0)
     env.portal.html = opened_html("Konser")
     env.tg.fail = True
-    res = go(env, 1)
+    res = go2(env, 1)
     key = [e.key for e in res.events][0]
     [entry] = env.saved_state()["outbox"]
     assert entry["key"] == key and entry["event"]["kind"] == "PORTAL_OPENED"
@@ -326,16 +334,17 @@ def test_pc_runner_waits_60s_and_defers_to_github_claim(monkeypatch):
     env = make(monkeypatch, who="pc")
     go(env, 0)
     env.portal.html = opened_html("Konser")
-    res = env.run(at(1), portal_fetch_fn=env.portal.fetch)
+    res = go2(env, 1)
+    confirm = at(1) + timedelta(minutes=1)
     [entry] = env.saved_state()["outbox"]
-    assert entry["not_before"] == (at(1) + timedelta(seconds=60)).isoformat()
+    assert entry["not_before"] == (confirm + timedelta(seconds=60)).isoformat()
     assert pm(env) == []
     key = [e.key for e in res.events if e.kind.startswith("PORTAL_")][0]
     # GitHub delivers in between: the PC's later attempt finds the claim "sent"
     other = Env(monkeypatch, [], copy.deepcopy(CFG), who="github", store=env.store)
     from tiyatro.claims import send_with_claim
     assert send_with_claim(other.claims, other.tg, key, "x")
-    env.run(at(1) + timedelta(seconds=61), portal_fetch_fn=env.portal.fetch)
+    env.run(confirm + timedelta(seconds=61), portal_fetch_fn=env.portal.fetch)
     assert pm(env) == [] and env.saved_state()["outbox"] == []
 
 
@@ -343,8 +352,8 @@ def test_pc_runner_sends_after_grace_when_nobody_else_did(monkeypatch):
     env = make(monkeypatch, who="pc")
     go(env, 0)
     env.portal.html = opened_html("Konser")
-    env.run(at(1), portal_fetch_fn=env.portal.fetch)
-    env.run(at(1) + timedelta(seconds=61), portal_fetch_fn=env.portal.fetch)
+    go2(env, 1)
+    env.run(at(1) + timedelta(minutes=1, seconds=61), portal_fetch_fn=env.portal.fetch)
     assert len(pm(env)) == 1 and "etkinlik açıldı" in pm(env)[0]
 
 
@@ -417,5 +426,7 @@ def test_main_wires_the_portal_fetch(monkeypatch):
     monkeypatch.setattr(runner.time, "sleep", lambda s: None)
     assert runner.main() == 0
     state = made[0].files["state.json"][0]
-    assert state["portals"]["basiskele"]["empty"] is False
-    assert any("etkinlik açıldı" in m for m in tgs[0].sent)
+    rec = state["portals"]["basiskele"]
+    # first-ever non-empty observation: held back until the next scan confirms it
+    assert rec["empty"] is None and rec["pending_signature"]
+    assert not any("etkinlik açıldı" in m for m in tgs[0].sent)

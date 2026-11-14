@@ -18,3 +18,7 @@ node_modules/
 *.local
 pc/local/
 .wrangler/
+
+# stray debug dumps
+p.out
+*.out

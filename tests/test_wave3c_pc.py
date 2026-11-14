@@ -131,7 +131,9 @@ def test_service_logs_opening_as_ticket_event_and_notifies(monkeypatch, tmp_path
     e = make_portal(monkeypatch, tmp_path)
     tick_at(e, NOW)
     e.portal.html = opened_html("Kuğu Gölü Balesi")
-    res = tick_at(e, NOW + timedelta(minutes=5))
+    tick_at(e, NOW + timedelta(minutes=5))        # first sight: held back for confirmation
+    assert not any(x for x in entries(e, "Bilet açılışı") if "portal" in x["title"].lower())
+    res = tick_at(e, NOW + timedelta(minutes=10))
     assert [ev.kind for ev in res.events if ev.kind.startswith("PORTAL")] == ["PORTAL_OPENED"]
     [opened] = [x for x in entries(e, "Bilet açılışı") if "portal" in x["title"].lower()]
     assert "etkinlik açıldı" in opened["title"]
@@ -146,13 +148,14 @@ def test_service_logs_opening_as_ticket_event_and_notifies(monkeypatch, tmp_path
 def test_service_logs_close_and_failures(monkeypatch, tmp_path):
     e = make_portal(monkeypatch, tmp_path, html=opened_html("Konser"))
     tick_at(e, NOW)
+    tick_at(e, NOW + timedelta(minutes=5))       # confirmation scan: now it is open
     e.portal.html = real_empty()
-    tick_at(e, NOW + timedelta(minutes=5))
+    tick_at(e, NOW + timedelta(minutes=10))
     closed = portal_lines(e, "Liste kontrolü")[-1]
     assert closed["title"] == f"{LABEL}: boş"
     assert closed["detail"].startswith("değişiklik var: etkinlik listesi boşaldı")
     e.portal.error = FetchError("HTTP 503")
-    for n in (2, 3, 4):
+    for n in (3, 4, 5):
         tick_at(e, NOW + timedelta(minutes=5 * n))
     errs = portal_lines(e, "Hata/Uyarı")
     assert [x["level"] for x in errs[:3]] == ["warn"] * 3

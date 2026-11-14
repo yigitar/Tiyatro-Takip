@@ -17,14 +17,15 @@ import hashlib
 import re
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 DEFAULT_BASE_URL = "https://rezervasyon.basiskele.bel.tr/etkinlikler"
-MAX_HTML = 2_000_000
+MAX_HTML = 500_000
 MAX_LINES = 200
 MAX_LINE = 300
 MAX_ITEMS = 50
 MAX_DEPTH = 300
+MAX_TAGS = 20_000   # parsing stops after this many start tags (a real portal has hundreds)
 CONTENT_LINE_MIN = 20   # a "substantial" line
 CONTENT_LINES_NEEDED = 2
 
@@ -54,8 +55,32 @@ GENERIC_ACTIONS = frozenset({
     "detaylar", "detayli bilgi", "devami", "devamini oku", "incele", "kayit ol", "katil",
     "basvur", "bilgi al", "yer ayirt", "ayirt", "tikla", "tiklayin", "sec", "git",
 })
-_KEYWORDS = ("rezerv", "etkinlik", "bilet", "kayit", "katil", "basvur", "detay", "ayirt",
+_KEYWORDS = ("rezerv", "etkinlik", "bilet", "katil", "basvur", "ayirt",
              "tiyatro", "konser", "gosteri", "sinema", "festival")
+_WEAK_KEYWORDS = ("detay", "kayit")        # count only together with an event path
+_EVENT_PATH = ("etkinlik", "rezerv")
+# Pager / consent / navigation controls: never an event, whatever their href says.
+_NOT_ITEM_TEXT = frozenset({
+    "sonraki", "sonraki sayfa", "onceki", "onceki sayfa", "ilk", "son", "ilk sayfa",
+    "son sayfa", "geri", "ileri", "kabul et", "kabul ediyorum", "tamam", "reddet", "kapat",
+    "detayli bilgi", "daha fazla", "anladim", "ok", "yukle", "yenile", "ara", "giris",
+})
+_NOT_ITEM_WORDS = ("cerez", "cookie", "kvkk", "gizlilik")
+# Text that says "nothing here" / "something is wrong": a page made only of such lines is empty.
+_NEGATIVE = ("bulunamad", "bulunmamakta", "bulunmuyor", "hata olustu", "hata olu", "bakim",
+             "erisim", "izin", "cerez", "cookie", "kvkk", "gizlilik", "session", "oturum",
+             "captcha", "dogrulama", "unauthorized", "forbidden", "server error",
+             "sunucu hatasi", "error", "exception", "hatasi", "tekrar deneyin",
+             "tekrar deneyiniz", "access denied", "blocked", "firewall")
+_NOT_FOUND = ("bulunamad", "bulunmamakta", "bulunmuyor")
+_VOLATILE_WORDS = re.compile(
+    r"son guncelleme|guncelleme|guncellenme|ziyaretci|ziyaret|sayac|sayisi|toplam|online|"
+    r"cevrimici|bugun|zaman|sayi")
+_VOLATILE_PARAMS = frozenset({"ts", "t", "_", "time", "timestamp", "rnd", "rand", "random",
+                              "nocache", "cache", "cb", "v", "sid", "sessionid", "session",
+                              "token", "nonce", "r"})
+_SESSION_SEGMENT = re.compile(r"/\([A-Za-z]\([^)]*\)\)")
+_CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _DATE_WORDS = re.compile(
     r"ocak|subat|mart|nisan|mayis|haziran|temmuz|agustos|eylul|ekim|kasim|aralik|"
     r"pazartesi|sali|carsamba|persembe|cuma|cumartesi|pazar|saat|tarih|gun")
@@ -81,6 +106,7 @@ class PortalSnapshot:
     items: list[dict] = field(default_factory=list)
     empty: bool = True
     signature: str = ""
+    valid: bool = True   # False: the page is garbled/binary, to be treated as a failed fetch
 
 
 def fold(text: str) -> str:
@@ -125,13 +151,21 @@ def _is_chrome(node: _Node) -> bool:
     return "sitemap" in (a.get("id") or "").lower()
 
 
+class _TooBig(Exception):
+    pass
+
+
 class _Builder(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.root = _Node("#root", {}, None)
         self.cur = self.root
+        self.tags = 0
 
     def _open(self, tag, attrs, selfclose=False):
+        self.tags += 1
+        if self.tags > MAX_TAGS:
+            raise _TooBig()
         a = {k.lower(): (v or "") for k, v in attrs}
         rule = _CLOSES.get(tag)
         if rule:
@@ -218,13 +252,42 @@ def _lines_of(node: _Node) -> list[str]:
 
 
 def _is_chrome_line(line: str) -> bool:
-    f = fold(line)
+    f = fold(line[:MAX_LINE])  # bounded: the e-mail pattern backtracks on very long lines
     return f in CHROME_LINES or any(p.search(f) for p in _CHROME_PATTERNS)
 
 
 def _date_only(line: str) -> bool:
     rest = _DATE_WORDS.sub("", fold(line))
     return not re.sub(r"[\d\s.:/,\-–]", "", rest)
+
+
+def _volatile_line(line: str) -> bool:
+    """A clock, counter or date on its own line: changes without the content changing."""
+    f = fold(line)
+    for phrase in sorted(_NOT_ITEM_TEXT, key=len, reverse=True):  # consent/pager link text
+        f = f.replace(phrase, "")
+    rest = _DATE_WORDS.sub("", _VOLATILE_WORDS.sub("", f))
+    return not re.sub(r"[\d\s.:/,\-–|]", "", rest)
+
+
+def _negative(line: str) -> bool:
+    f = fold(line)
+    return any(k in f for k in _NEGATIVE)
+
+
+def _clean_url(url: str) -> str:
+    """URL without fragment, ASP.NET cookieless-session segments and volatile parameters."""
+    try:
+        p = urlsplit(_SESSION_SEGMENT.sub("", url))
+        q = sorted((k, v) for k, v in parse_qsl(p.query, keep_blank_values=True)
+                   if k.lower() not in _VOLATILE_PARAMS and not k.startswith("__"))
+        return urlunsplit((p.scheme, p.netloc, p.path, urlencode(q), ""))
+    except Exception:
+        return url
+
+
+def _garbled(html: str) -> bool:
+    return bool(_CTRL.search(html)) or html.count("\ufffd") > max(20, len(html) // 50)
 
 
 def _titleish(line: str) -> bool:
@@ -279,8 +342,18 @@ def _candidate(n: _Node, base: str):
     f = fold(text)
     if f in CHROME_LINES and f not in GENERIC_ACTIONS:
         return None
-    hay = f + " " + fold(url if url != base else "")
-    if not any(k in hay for k in _KEYWORDS):
+    if (f in _NOT_ITEM_TEXT or re.fullmatch(r"[\d\s.<>«»…-]*", f)
+            or any(w in f for w in _NOT_ITEM_WORDS) or _is_chrome_line(text)
+            or "page$" in (a.get("href") or "").lower()):
+        return None
+    path = fold(url) if url != base else ""
+    hay = f + " " + path
+    strong = any(k in hay for k in _KEYWORDS)
+    weak = any(k in hay for k in _WEAK_KEYWORDS) and any(k in path for k in _EVENT_PATH)
+    # a content link of the portal itself whose text reads like a title (title-only rows)
+    plain = (n.tag == "a" and _titleish(text) and len(f) >= 4
+             and (url == base or urlsplit(url).netloc == urlsplit(base).netloc))
+    if not (strong or weak or plain):
         return None
     return text, url
 
@@ -316,7 +389,12 @@ def _candidate_counts(root: _Node, cands: dict) -> dict:
 
 
 def _signature(lines: list[str], items: list[dict]) -> str:
-    raw = "\n".join(lines) + "\n--\n" + "\n".join(i["url"] for i in items)
+    """With items: the SORTED SET of (title, cleaned url), so clocks, counters, order and
+    volatile URL parameters do not matter; without: the (non-volatile) content lines."""
+    if items:
+        raw = "\n".join(sorted({fold(i["title"]) + "\t" + _clean_url(i["url"]) for i in items}))
+    else:
+        raw = "\n".join(lines)
     return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()
 
 
@@ -334,11 +412,13 @@ def parse_portal(html, base_url: str = DEFAULT_BASE_URL) -> PortalSnapshot:
     if not isinstance(html, str):
         html = ""
     html = html[:MAX_HTML]
+    if _garbled(html):
+        return PortalSnapshot([], [], True, _signature([], []), False)
     try:
         root = _build(html)
         seen, lines = set(), []
         for line in _lines_of(root):
-            if _is_chrome_line(line):
+            if _is_chrome_line(line) or _volatile_line(line):
                 continue
             line = line[:MAX_LINE]
             if line not in seen or len(line) < CONTENT_LINE_MIN:
@@ -346,7 +426,12 @@ def parse_portal(html, base_url: str = DEFAULT_BASE_URL) -> PortalSnapshot:
             seen.add(line)
             if len(lines) >= MAX_LINES:
                 break
-        cands = {n: c for n in _walk(root) if (c := _candidate(n, base_url))}
+        cands: dict = {}
+        for n in _walk(root):
+            if (c := _candidate(n, base_url)):
+                cands[n] = c
+                if len(cands) >= MAX_ITEMS * 3:
+                    break
         count = _candidate_counts(root, cands)
         items, keys = [], set()
         for n, (text, url) in cands.items():
@@ -359,7 +444,11 @@ def parse_portal(html, base_url: str = DEFAULT_BASE_URL) -> PortalSnapshot:
             if len(items) >= MAX_ITEMS:
                 break
         substantial = [l for l in lines if len(l) >= CONTENT_LINE_MIN]
-        empty = not items and len(substantial) < CONTENT_LINES_NEEDED
+        empty = False
+        if not items:
+            empty = (len(substantial) < CONTENT_LINES_NEEDED
+                     or any(k in fold(l) for l in lines for k in _NOT_FOUND)
+                     or all(_negative(l) for l in substantial))
         return PortalSnapshot(lines, items, empty, _signature(lines, items))
     except Exception:  # a parser bug must not turn into a crash of the scan
         return _fallback(html, base_url)

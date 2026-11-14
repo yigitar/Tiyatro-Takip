@@ -107,6 +107,7 @@ PLAY_FAIL_ALERT_AT = 3
 PORTAL_FAIL_ALERT_AT = 3
 PORTAL_WAIT_S = 5  # how long after the Biletinial work the portal result may still take
 PORTAL_LINES_KEPT, PORTAL_ITEMS_KEPT, PORTAL_NOTE_MAX = 40, 20, 5
+PORTAL_CHANGED_COOLDOWN = timedelta(hours=6)  # at most one PORTAL_CHANGED per portal
 OUTBOX_MAX_AGE = timedelta(hours=6)
 OUTBOX_MAX_ATTEMPTS = 20
 PC_DELAY = timedelta(seconds=60)
@@ -447,8 +448,9 @@ class _PortalFetch:
 
     def _work(self, portal: dict, fetch_fn: Callable) -> None:
         try:
-            self.results[portal["id"]] = parse_portal(fetch_fn(portal["url"]).html,
-                                                      portal["url"])
+            snap = parse_portal(fetch_fn(portal["url"]).html, portal["url"])
+            # a garbled/binary page is a failed fetch, never content
+            self.results[portal["id"]] = snap if snap.valid else "GarbledPage"
         except Exception as exc:
             self.results[portal["id"]] = type(exc).__name__
 
@@ -491,22 +493,44 @@ def _apply_portal(state: dict, portal: dict, result, now: datetime) -> list[Even
     old_lines = rec.get("lines") if isinstance(rec.get("lines"), list) else []
     events: list[Event] = []
     sig12 = snap.signature[:12]
-    if not snap.empty:
+    pending = False
+    if snap.empty:
+        rec.pop("pending_signature", None)
+        rec.pop("pending_since", None)
+    else:
         new_lines = ([l for l in snap.lines if l not in old_lines] if prev_empty is False
                      else list(snap.lines))
-        if prev_empty is None or prev_empty is True:
-            kind, key = "PORTAL_OPENED", f"PORTAL_OPENED:{pid}:{sig12}"
-        elif snap.signature != prev_sig:
-            kind, key = "PORTAL_CHANGED", f"PORTAL_CHANGED:{pid}:{sig12}"
-        else:
-            kind = key = None
         # a signature that was announced before (as opened or as changed) never alerts again
         announced = any(f"{k}:{pid}:{sig12}" in state["emitted"]
                         for k in ("PORTAL_OPENED", "PORTAL_CHANGED"))
+        kind = key = None
+        if prev_empty is None or prev_empty is True:
+            if rec.get("pending_signature") == snap.signature or announced:
+                kind, key = "PORTAL_OPENED", f"PORTAL_OPENED:{pid}:{sig12}"
+                rec.pop("pending_signature", None)
+                rec.pop("pending_since", None)
+            else:  # confirmation: the SAME non-empty page must be seen by the next scan too
+                pending = True
+                if rec.get("pending_signature") != snap.signature:
+                    rec["pending_signature"], rec["pending_since"] = snap.signature, now_iso
+        elif snap.signature != prev_sig:
+            last = parse_iso(rec.get("last_changed_alert")) if isinstance(
+                rec.get("last_changed_alert"), str) else None
+            if last is None or now - last >= PORTAL_CHANGED_COOLDOWN:
+                kind, key = "PORTAL_CHANGED", f"PORTAL_CHANGED:{pid}:{sig12}"
         if kind and not announced:
             ev = _emit(state, kind, key, _portal_payload(portal, snap, new_lines), now)
             if ev:
                 events.append(ev)
+                if kind == "PORTAL_CHANGED":
+                    rec["last_changed_alert"] = now_iso
+    if pending:  # unconfirmed: keep the confirmed state (empty/signature), refresh the rest
+        rec.update(lines=list(snap.lines[:PORTAL_LINES_KEPT]),
+                   items=[dict(i) for i in snap.items[:PORTAL_ITEMS_KEPT]],
+                   fail_streak=0, last_check=now_iso)
+        rec.setdefault("empty", None)
+        rec.setdefault("first_seen", now_iso)
+        return events
     changed = snap.signature != prev_sig or snap.empty != prev_empty
     rec.update(signature=snap.signature, empty=snap.empty,
                lines=list(snap.lines[:PORTAL_LINES_KEPT]),
