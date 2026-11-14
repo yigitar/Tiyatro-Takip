@@ -147,6 +147,13 @@ def _merge_play(state: dict, play: Play, config: Config, now_iso: str) -> bool:
             entry[key] = value
         else:
             entry.setdefault(key, None)
+    # Descriptive details: stored only when the page had them; a thin parse keeps the old.
+    for key, value, empty in (("summary", play.summary, None), ("cast", play.cast, []),
+                              ("credits", play.credits, {})):
+        if value:
+            entry[key] = copy.deepcopy(value)
+        else:
+            entry.setdefault(key, empty)
 
     sessions = entry.setdefault("sessions", {})
     seen = set()
