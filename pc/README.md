@@ -47,7 +47,7 @@ der. Pencereyi kapatmak uygulamayı kapatır, küçültmek çalışmaya devam et
 çalışma sırasında herhangi bir hata olursa bir hata penceresi açılır ve ayrıntı (jetonlar
 maskelenmiş) şu dosyalara yazılır:
 
-- `pc/local/crash.log` (depo klasörü altında; yazılamazsa `%TEMP%	iyatro-takip-crash.log`)
+- `pc/local/crash.log` (depo klasörü altında; yazılamazsa `%TEMP%/tiyatro-takip-crash.log`)
 - `pc/local/app.log` (normal çalışma günlüğü)
 
 Pencerede dosyanın tam yolu gösterilir. `python -m pc.app` ya da `python -m pc` aynı koruma

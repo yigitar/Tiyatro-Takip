@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import threading
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -976,3 +977,68 @@ def test_edit_completes_while_a_scan_is_blocked_on_the_network(monkeypatch, tmp_
     finally:
         release.set()
         scan.join(10)
+
+
+# ---- fix round 2: stale reload vs. edits, ordered edits ----------------------------
+
+class SlowGetStore(FakeStore):
+    """``get("config.json")`` returns the old content, then blocks until released."""
+
+    def __init__(self):
+        super().__init__()
+        self.block = False
+        self.reading, self.release = threading.Event(), threading.Event()
+
+    def get(self, path):
+        result = super().get(path)  # snapshot taken before blocking
+        if path == "config.json" and self.block:
+            self.block = False
+            self.reading.set()
+            self.release.wait(10)
+        return result
+
+
+def test_stale_reload_does_not_overwrite_a_newer_edit(tmp_path):
+    store = SlowGetStore()
+    _s, svc = editor(tmp_path, store)
+    svc.reload_config()
+    assert svc.config.paused is False
+    store.block = True
+    t = threading.Thread(target=svc.reload_config)
+    t.start()
+    assert store.reading.wait(5)
+    svc.set_paused(True)  # commits between the reload's read and its swap
+    store.release.set()
+    t.join(5)
+    assert svc.config.paused is True
+
+
+def test_reload_without_an_edit_still_updates(tmp_path):
+    store = SlowGetStore()
+    _s, svc = editor(tmp_path, store)
+    svc.reload_config()
+    store.files["config.json"][0]["paused"] = True  # changed by the Telegram menu
+    svc.reload_config()
+    assert svc.config.paused is True
+
+
+def test_two_quick_edits_both_end_up_in_the_cached_config(tmp_path):
+    store, svc = editor(tmp_path)
+    slugs = list(cfg(store)["plays"])[:2]
+    assert len(slugs) == 2
+    for slug in slugs:
+        svc.set_active(slug, False)
+    assert all(not svc.config.plays[s].active for s in slugs)
+    threads = [threading.Thread(target=svc.set_active, args=(s, True)) for s in slugs]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(5)
+    assert all(svc.config.plays[s].active for s in slugs)
+    assert all(cfg(store)["plays"][s]["active"] for s in slugs)
+
+
+def test_readme_has_no_tab_characters_and_names_crash_log():
+    from pathlib import Path
+    text = (Path(__file__).resolve().parents[1] / "pc" / "README.md").read_text(encoding="utf-8")
+    assert "\t" not in text and "crash.log" in text

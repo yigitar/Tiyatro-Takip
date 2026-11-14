@@ -147,6 +147,8 @@ class Service:
         self._rand = rand
         self._lock = threading.RLock()  # held by tick()/refresh_now(), network I/O included
         self._config_lock = threading.Lock()  # only guards the _config swap, never I/O
+        self._edit_lock = threading.Lock()  # edits apply (store write + swap) in order
+        self._edit_gen = 0  # bumped by every committed edit; stale reloads are discarded
         self._callbacks: list[Callable] = []
         self._config: Config | None = None
         self._state: dict | None = None
@@ -285,8 +287,12 @@ class Service:
     def reload_config(self) -> Config:
         """Re-read ``config.json`` (Worker edits become visible); keeps the last good
         config if the read fails (the exception propagates)."""
+        with self._config_lock:
+            gen = self._edit_gen
         config = load_config(self._store)
         with self._config_lock:
+            if gen != self._edit_gen and self._config is not None:
+                return self._config  # an edit committed meanwhile: this read is stale
             self._config = config
         return config
 
@@ -653,16 +659,18 @@ class Service:
                 raise ValueError(f"geçersiz ayar: {exc}") from None
             return new
 
-        try:
-            new = self._store.update_json(CONFIG_PATH, mutate)
-        except _NoChange as nc:
-            new = nc.data
-        try:
-            config = config_from_dict(new)
-        except (ValueError, TypeError, KeyError, AttributeError):
-            return new
-        with self._config_lock:  # not _lock: an edit must not wait for a running scan
-            self._config = config
+        with self._edit_lock:  # not _lock: an edit must not wait for a running scan
+            try:
+                new = self._store.update_json(CONFIG_PATH, mutate)
+            except _NoChange as nc:
+                new = nc.data
+            try:
+                config = config_from_dict(new)
+            except (ValueError, TypeError, KeyError, AttributeError):
+                return new
+            with self._config_lock:
+                self._edit_gen += 1
+                self._config = config
         return new
 
     def set_active(self, slug: str, active: bool) -> dict:
