@@ -18,6 +18,7 @@ from pathlib import Path
 
 from pc import configedit
 from pc.viewmodel import DAY_SHORT, target_summary, when_text
+from tiyatro.notify import DAYS, MONTHS
 from tiyatro.config import MAX_PEOPLE, MIN_PEOPLE, config_from_dict
 from tiyatro.models import ISTANBUL, Target
 from tiyatro.timeutil import parse_iso
@@ -127,6 +128,12 @@ def _istanbul(value):
     except ValueError:
         return None
     return d.astimezone(ISTANBUL) if d else None
+
+
+def date_label(iso: str) -> str:
+    """"2026-11-20" -> "20 Kasım Cuma" (checklist label in the target editor)."""
+    d = datetime.fromisoformat(iso)
+    return f"{d.day} {MONTHS[d.month - 1]} {DAYS[d.weekday()]}"
 
 
 def editor_dates(entry, existing_excludes, now: datetime) -> list[str]:

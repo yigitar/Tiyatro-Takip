@@ -147,6 +147,10 @@ def test_apply_plan_calls_service_methods_in_order():
     assert calls == plan
 
 
+def test_date_label():
+    assert L.date_label("2026-11-20") == "20 Kasım Cuma"
+
+
 def test_editor_dates_union_of_sessions_and_existing_excludes():
     entry = {"sessions": {
         "a": {"start": "2026-11-20T20:00:00+03:00"},
