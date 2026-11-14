@@ -16,15 +16,15 @@ permissions:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    # must exceed the burst window (780 s) plus two scans and startup, with margin
-    timeout-minutes: 20
+    # must exceed one run's burst (BURST_MAX_SECONDS = 960 s) plus two scans and
+    # startup, with margin
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      # the runner is stdlib-only (tzdata is needed on Windows only): no pip step
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-      - run: pip install -r requirements.txt
       - run: python -m tiyatro.runner
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}

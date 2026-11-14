@@ -39,9 +39,14 @@ one ``config.json`` GET per tick (needed so a pause is honoured within one tick)
 most 300 (ticks every 12-18 s), one heartbeat GET per minute (``pc_watch``) = 60, plus
 state saves on change and ~10 requests per run start (4 runs/h) = ~40: about 400/h
 (a test keeps a simulated hour under 600).
-One run's burst ends before ``max_seconds`` (780 s); the next scheduled run
+One run's burst ends before ``max_seconds`` (960 s); the next scheduled run
 (every 5 min) re-enters burst mode by itself, which is cheap and idempotent (state,
-``emitted`` and claims carry over). Two runs never overlap: the scan workflow runs in
+``emitted`` and claims carry over). A run that starts inside a burst window goes
+straight into the burst loop and does the full normal scan only afterwards, so the
+blind gap between two runs' bursts is only the next run's start-up (checkout, Python
+setup, ~20-40 s) instead of start-up plus a full venue scan; with the 16-min burst
+and the 5-min schedule the next run usually starts before the previous burst ends, but
+runs never overlap (``concurrency``), so a gap of roughly one start-up remains. Two runs never overlap: the scan workflow runs in
 one Actions ``concurrency`` group (set up in the workflow file).
 
 Pausing: with ``config.paused`` the scan and state update run normally but the events
@@ -99,7 +104,7 @@ BURST_SOLD_OUT_TAIL = timedelta(minutes=30)  # cart-expiry re-opens come 10-15 m
 # One cadence for the whole window (sell-outs take ~30 s; a late flip is no slower).
 BURST_INTERVAL_S = 15
 BURST_JITTER_S = 3
-BURST_MAX_SECONDS = 780
+BURST_MAX_SECONDS = 960  # 16 min > the 5-min schedule + Actions start-up jitter
 BURST_WATCH_EVERY = timedelta(seconds=60)
 BURST_FAIL_ALERT_AT = 5  # consecutive burst ticks in which every page fetch failed
 PC_WINDOW = timedelta(minutes=60)
@@ -849,10 +854,17 @@ def main() -> int:
         started = now_fn()
         claims = ClaimStore(store, "github", now_fn)
         store.ensure_branch()
-        res = run_once(store, tg, claims, now_fn(), fetch_fn=fetch, sleep=time.sleep)
-        state, errors = res.state, [res.save_error]
-        problems: list[str] = []
         config = load_config(store)
+        res: RunResult | None = None
+        errors: list[str | None] = []
+        state = load_state(store)
+        if plan_mode(state, config, started)[0] != "burst":
+            res = run_once(store, tg, claims, now_fn(), fetch_fn=fetch, sleep=time.sleep,
+                           state=state, config=config)
+            state = res.state
+            errors.append(res.save_error)
+        # else: already inside a burst window: burst first, the normal scan afterwards
+        problems: list[str] = []
         watch_events: list[Event] = []
         before = _fingerprint(state)
         try:  # GitHub cadence: once per run, measured at run start
@@ -875,6 +887,11 @@ def main() -> int:
                     print(f"burst tick errors: {', '.join(br.errors)}", file=sys.stderr)
             except Exception as exc:
                 problems.append(f"burst failed: {type(exc).__name__}")
+        if res is None:  # the normal scan skipped at run start
+            res = run_once(store, tg, claims, now_fn(), fetch_fn=fetch, sleep=time.sleep,
+                           state=state)
+            state = res.state
+            errors.append(res.save_error)
         before = _fingerprint(state)
         try:
             watch_events += pc_watch(store, state, config, now_fn(), claims, tg,

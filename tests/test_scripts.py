@@ -255,8 +255,10 @@ def test_scan_workflow():
     job = next(iter(wf["jobs"].values()))
     assert len(wf["jobs"]) == 1 and job["runs-on"] == "ubuntu-latest"
     assert job["timeout-minutes"] * 60 >= BURST_MAX_SECONDS + 300
-    runs = [s.get("run") for s in job["steps"]]
-    assert "pip install -r requirements.txt" in runs
+    assert job["timeout-minutes"] == 25 and BURST_MAX_SECONDS == 960  # final review I4
+    runs = [s.get("run") or "" for s in job["steps"]]
+    # stdlib-only runtime: no pip step (Ubuntu ships the tz database)
+    assert not any("pip install" in r for r in runs)
     step = next(s for s in job["steps"] if s.get("run") == "python -m tiyatro.runner")
     assert step["env"] == {
         "TELEGRAM_BOT_TOKEN": "${{ secrets.TELEGRAM_BOT_TOKEN }}",
@@ -267,7 +269,23 @@ def test_scan_workflow():
     }
     py = next(s for s in job["steps"]
               if str(s.get("uses", "")).startswith("actions/setup-python"))
-    assert py["with"]["python-version"] == "3.12" and py["with"]["cache"] == "pip"
+    assert py["with"] == {"python-version": "3.12"}  # no pip cache without a pip step
+
+
+def test_runtime_is_stdlib_only_and_tzdata_only_on_windows():
+    import ast
+    import sys as _sys
+    req = [ln.strip() for ln in (ROOT / "requirements.txt").read_text(encoding="utf-8")
+           .splitlines() if ln.strip() and not ln.startswith("#")]
+    assert req == ['tzdata; sys_platform == "win32"']
+    for f in sorted((ROOT / "tiyatro").glob("*.py")):
+        for node in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
+            names = ([a.name for a in node.names] if isinstance(node, ast.Import)
+                     else [node.module] if isinstance(node, ast.ImportFrom)
+                     and node.level == 0 and node.module else [])
+            for name in names:
+                top = name.split(".")[0]
+                assert top == "tiyatro" or top in _sys.stdlib_module_names, (f.name, name)
 
 
 def test_keepalive_workflow():

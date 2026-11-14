@@ -1,1 +1,1 @@
-tzdata
+tzdata; sys_platform == "win32"

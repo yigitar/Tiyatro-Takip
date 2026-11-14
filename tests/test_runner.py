@@ -1702,3 +1702,49 @@ def test_burst_fetch_failure_streak_resets_on_success(monkeypatch):
                opens + timedelta(hours=4), fetch_fn=env.web.fetch,
                rand=lambda a, b: 0.0, max_seconds=600)
     assert not any("taraması başarısız" in m for m in env.tg.sent)
+
+
+# ==== final review I4: a run that starts inside a burst window bursts first =========
+
+def test_main_starting_in_burst_window_bursts_before_the_normal_scan(monkeypatch):
+    _main_env(monkeypatch)
+    start = datetime(2026, 11, 16, 9, 55, tzinfo=ISTANBUL)
+    opens = start + timedelta(minutes=2)
+    clock = [start]
+
+    class FakeDT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock[0]
+
+    store = CadenceStore(start, [start - timedelta(minutes=4)])
+    store.files["config.json"] = (WATCH_CFG, "c")
+    web = Web(monkeypatch, [mkplay(sessions=[sess(opens_at=opens)])])
+    seed = FakeStore(now=start)
+    run_once(seed, FakeTG(), ClaimStore(seed, "github", lambda: start),
+             start - timedelta(hours=1), fetch_fn=web.fetch, sleep=lambda s: None)
+    store.files["state.json"] = seed.files["state.json"]
+    web.calls.clear()
+    fetched = []
+
+    def fetch(url):
+        fetched.append((clock[0], url))
+        return web.fetch(url)
+
+    def sleep(s):
+        clock[0] += timedelta(seconds=s)
+        store.now = clock[0]
+        if clock[0] >= opens:
+            web.set(mkplay(sessions=[sess(status=Status.ON_SALE)]))
+
+    tgs = []
+    monkeypatch.setattr(runner, "datetime", FakeDT)
+    monkeypatch.setattr(runner, "Store", lambda *a, **k: store)
+    monkeypatch.setattr(runner, "Telegram", lambda *a, **k: tgs.append(FakeTG()) or tgs[-1])
+    monkeypatch.setattr(runner, "fetch", fetch)
+    monkeypatch.setattr(runner.time, "sleep", sleep)
+    assert runner.main() == 0
+    assert fetched[0] == (start, BASE + "p")  # no full venue scan before the burst
+    venue = [t for t, u in fetched if u == DEFAULT_SOURCE]
+    assert venue and venue[0] > opens  # the normal scan runs after the burst
+    assert sum("Bilet alınabilir" in m for m in tgs[0].sent) == 1
