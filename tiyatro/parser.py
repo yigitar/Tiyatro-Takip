@@ -123,18 +123,34 @@ def _acilis(value) -> datetime | None:
     return opens.astimezone(ISTANBUL)
 
 
+_TAG_STRIP_RE = re.compile(r"<[^>]*>")
+
+
+def _closed_text(block: str, start: int) -> bool:
+    """True if the button's inner text (from ``start`` to ``</button``) says it is not
+    open: "Yakında" (soon) or "Tükendi" (sold out). Turkish-aware: ``İ``/``I`` lowercase
+    to ``i̇``/``ı`` in Python, so both dotted and plain spellings are matched."""
+    end = re.compile(r"</button", re.I).search(block, start)
+    inner = block[start:end.start() if end else len(block)]
+    text = htmlmod.unescape(_TAG_STRIP_RE.sub(" ", inner)).lower()
+    text = text.replace("i̇", "i").replace("ı", "i")
+    return "yakinda" in text or "tükend" in text or "tukend" in text
+
+
 def _button_state(block: str) -> tuple[Status, datetime | None]:
     """Status from the row's ``seanceSelect`` button.
 
     ON_SALE = enabled ``seanceSelect`` without ``off``/``sold-out``; extra classes or a
     leftover ``data-acilis`` do not demote it (the markup of a first opening was never
-    observed: a missed alert is worse than a rare false one). A parseable
+    observed: a missed alert is worse than a rare false one), unless the button text
+    says "Yakında"/"Tükendi" (then UNKNOWN). A parseable
     ``data-acilis`` is kept as ``opens_at`` for every status but SOLD_OUT.
     """
     at = None
-    for _, cand in _tags(block, "button"):
+    text_from = 0
+    for m, cand in _tags(block, "button"):
         if "seanceselect" in (cand.get("class") or "").lower().split():
-            at = cand
+            at, text_from = cand, m.end()
             break
     if at is None:
         return Status.UNKNOWN, None
@@ -146,6 +162,8 @@ def _button_state(block: str) -> tuple[Status, datetime | None]:
     if "off" in classes and disabled and opens is not None:
         return Status.UPCOMING, opens
     if "off" not in classes and not disabled:
+        if _closed_text(block, text_from):
+            return Status.UNKNOWN, opens  # "Yakında"/"Tükendi" text: never a false alert
         return Status.ON_SALE, opens
     return Status.UNKNOWN, opens
 
