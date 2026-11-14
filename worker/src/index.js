@@ -132,7 +132,9 @@ export async function handle(request, env, fetchImpl = globalThis.fetch) {
   return OK();
 }
 
-const STALE_SCAN_MS = 20 * 60 * 1000;
+// A 16-min burst run (BURST_MAX_SECONDS) does not refresh last_scan until it ends, so the
+// threshold must exceed 5-min cadence + burst + Actions start-up jitter.
+const STALE_SCAN_MS = 30 * 60 * 1000;
 
 /**
  * Dead-man warnings fire at most once per 3 hours without any storage: only in the
@@ -144,7 +146,7 @@ function inWarnBucket(now) {
 
 /**
  * Cron trigger: kick the scan workflow, then (dead-man's switch) warn on Telegram if the
- * dispatch failed or state.json's meta.last_scan is older than 20 minutes, rate-limited
+ * dispatch failed or state.json's meta.last_scan is older than 30 minutes, rate-limited
  * by inWarnBucket. Never throws; logs only error type names.
  */
 export async function runScheduled(env, fetchImpl = globalThis.fetch, now = new Date()) {

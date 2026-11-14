@@ -383,12 +383,17 @@ async function scheduledAt(when, opts) {
 }
 
 test("scheduled: stale last_scan -> one warning inside the 3-hour bucket only", async () => {
-  const r = await scheduledAt(IN_BUCKET, { state: stateWithLastScan(25 * 60000, IN_BUCKET) });
+  const r = await scheduledAt(IN_BUCKET, { state: stateWithLastScan(35 * 60000, IN_BUCKET) });
   assert.equal(r.warnings.length, 1);
   assert.match(r.warnings[0].body.text, /Tarama gecikiyor\/başlatılamadı/);
   assert.equal(String(r.warnings[0].body.chat_id), ENV.TELEGRAM_CHAT_ID);
-  const out = await scheduledAt(OUT_BUCKET, { state: stateWithLastScan(25 * 60000, OUT_BUCKET) });
+  const out = await scheduledAt(OUT_BUCKET, { state: stateWithLastScan(35 * 60000, OUT_BUCKET) });
   assert.equal(out.warnings.length, 0);
+});
+
+test("scheduled: last_scan 25 min old (a long burst run in progress) -> no warning", async () => {
+  const r = await scheduledAt(IN_BUCKET, { state: stateWithLastScan(25 * 60000, IN_BUCKET) });
+  assert.equal(r.warnings.length, 0);
 });
 
 test("scheduled: fresh last_scan -> no warning", async () => {
