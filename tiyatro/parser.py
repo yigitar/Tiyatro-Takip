@@ -112,7 +112,25 @@ def _iso(value: str | None) -> datetime | None:
     return dt.astimezone(ISTANBUL)
 
 
+def _acilis(value) -> datetime | None:
+    """``data-acilis`` (UTC ``YYYYMMDDHHMM``) as Istanbul time; None if absent/invalid."""
+    if not value or not re.fullmatch(r"\d{12}", value.strip()):
+        return None
+    try:
+        opens = datetime.strptime(value.strip(), "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return opens.astimezone(ISTANBUL)
+
+
 def _button_state(block: str) -> tuple[Status, datetime | None]:
+    """Status from the row's ``seanceSelect`` button.
+
+    ON_SALE = enabled ``seanceSelect`` without ``off``/``sold-out``; extra classes or a
+    leftover ``data-acilis`` do not demote it (the markup of a first opening was never
+    observed: a missed alert is worse than a rare false one). A parseable
+    ``data-acilis`` is kept as ``opens_at`` for every status but SOLD_OUT.
+    """
     at = None
     for _, cand in _tags(block, "button"):
         if "seanceselect" in (cand.get("class") or "").lower().split():
@@ -122,19 +140,14 @@ def _button_state(block: str) -> tuple[Status, datetime | None]:
         return Status.UNKNOWN, None
     classes = set((at.get("class") or "").lower().split())
     disabled = "disabled" in at
-    acilis = at.get("data-acilis")
+    opens = _acilis(at.get("data-acilis"))
     if "sold-out" in classes:
         return Status.SOLD_OUT, None
-    if "off" in classes and disabled and acilis and re.fullmatch(r"\d{12}", acilis.strip()):
-        try:
-            opens = datetime.strptime(acilis.strip(), "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
-        except ValueError:
-            return Status.UNKNOWN, None
-        return Status.UPCOMING, opens.astimezone(ISTANBUL)
-    # Confirmed on a real on-sale page (plain cta seanceSelect button).
-    if classes == {"cta", "seanceselect"} and not disabled and "data-acilis" not in at:
-        return Status.ON_SALE, None
-    return Status.UNKNOWN, None
+    if "off" in classes and disabled and opens is not None:
+        return Status.UPCOMING, opens
+    if "off" not in classes and not disabled:
+        return Status.ON_SALE, opens
+    return Status.UNKNOWN, opens
 
 
 def _row_div_end(html: str, pos: int, limit: int) -> int:

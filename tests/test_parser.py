@@ -173,11 +173,38 @@ def test_missing_button_is_unknown():
     assert p.sessions[0].status == Status.UNKNOWN
 
 
-def test_data_acilis_on_non_off_button_is_unknown():
+def test_data_acilis_on_non_off_button_is_on_sale():  # final review I6 (was UNKNOWN)
     btn = '<button class="cta seanceSelect" data-acilis="202611130700">Bilet Al</button>'
     p = parse_play(_page([_row(1, 5, "Kasım", "20", "00", btn)], [_event("2026-11-05T20:00:00+03:00")]), U)
+    assert p.sessions[0].status == Status.ON_SALE
+    assert p.sessions[0].opens_at == datetime(2026, 11, 13, 10, 0, tzinfo=ISTANBUL)
+
+
+@pytest.mark.parametrize("btn", [
+    '<button class="cta seanceSelect active">Bilet Al</button>',
+    '<button class="seanceSelect">Bilet Al</button>',
+    '<button class="btn SEANCESELECT cta">Bilet Al</button>',
+])
+def test_enabled_seanceselect_with_extra_classes_is_on_sale(btn):  # final review I6
+    p = parse_play(_page([_row(1, 5, "Kasım", "20", "00", btn)], [_event("2026-11-05T20:00:00+03:00")]), U)
+    assert p.sessions[0].status == Status.ON_SALE
+
+
+@pytest.mark.parametrize("btn", [
+    '<button class="cta seanceSelect" disabled>Bilet Al</button>',
+    '<button class="cta seanceSelect off">Yakında</button>',
+    '<button class="cta buy">Bilet Al</button>',
+])
+def test_disabled_off_or_unrecognised_buttons_stay_unknown(btn):
+    p = parse_play(_page([_row(1, 5, "Kasım", "20", "00", btn)], [_event("2026-11-05T20:00:00+03:00")]), U)
     assert p.sessions[0].status == Status.UNKNOWN
-    assert p.sessions[0].opens_at is None
+
+
+def test_unknown_button_keeps_a_parseable_data_acilis():
+    btn = '<button class="cta seanceSelect off" data-acilis="202611130700">Yakında</button>'
+    p = parse_play(_page([_row(1, 5, "Kasım", "20", "00", btn)], [_event("2026-11-05T20:00:00+03:00")]), U)
+    assert p.sessions[0].status == Status.UNKNOWN
+    assert p.sessions[0].opens_at == datetime(2026, 11, 13, 10, 0, tzinfo=ISTANBUL)
 
 
 def test_december_page_with_january_session():
@@ -300,10 +327,11 @@ def test_last_row_not_polluted_by_footer_when_section_missing():
     assert last.venue == "Loc"
 
 
-def test_valueless_data_acilis_is_unknown():
+def test_valueless_data_acilis_on_enabled_button_is_on_sale():  # final review I6
     btn = '<button class="cta seanceSelect" data-acilis>Bilet Al</button>'
     p = parse_play(_page([_row(1, 5, "Kasım", "20", "00", btn)], [_event("2026-11-05T20:00:00+03:00")]), U)
-    assert p.sessions[0].status == Status.UNKNOWN
+    assert p.sessions[0].status == Status.ON_SALE
+    assert p.sessions[0].opens_at is None
 
 
 @pytest.mark.parametrize("bad", ["inf", "Infinity", "nan"])

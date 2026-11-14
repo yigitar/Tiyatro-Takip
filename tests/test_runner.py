@@ -1638,3 +1638,18 @@ def test_pc_grace_is_15_s_for_on_sale_and_60_s_for_other_kinds(monkeypatch):
                    "NEW_PLAY:q": (t + timedelta(seconds=60)).isoformat()}
     pc.run(t + timedelta(seconds=16))
     assert len(pc.tg.sent) == 1 and "Bilet alınabilir" in pc.tg.sent[0]
+
+
+# ==== final review I6: an UNKNOWN session inside its opening window keeps bursting ==
+
+def test_unknown_session_in_opening_window_stays_a_burst_target(monkeypatch):
+    opens = NOW + timedelta(minutes=5)
+    env = Env(monkeypatch, [mkplay(sessions=[sess(opens_at=opens)])], WATCH_CFG)
+    env.run(NOW)
+    odd = Session("s1", SAT_20, None, Status.UNKNOWN, None, f"{BASE}x/s1", "Sahne")
+    env.web.set(mkplay(sessions=[odd]))
+    res = env.run(opens, only_slugs=["p"])
+    rec = res.state["plays"]["p"]["sessions"]["s1"]
+    assert rec["status"] == "unknown" and rec["opens_at"] == opens.isoformat()
+    assert plan_mode(res.state, config_from_dict(WATCH_CFG), opens + timedelta(minutes=30)) \
+        == ("burst", opens + timedelta(hours=4))

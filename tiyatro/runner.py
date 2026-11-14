@@ -584,7 +584,8 @@ def _burst_targets(state: dict, config: Config,
                    now: datetime) -> list[tuple[str, datetime]]:
     """(slug, burst end) for watched sessions that need burst polling.
 
-    UPCOMING with ``opens_at - 10 min <= now <= opens_at + 4 h``, flipped to ON_SALE
+    UPCOMING (or UNKNOWN: unrecognised markup at opening time) with
+    ``opens_at - 10 min <= now <= opens_at + 4 h``, flipped to ON_SALE
     within the last 10 min, or sold out (coming from UPCOMING or ON_SALE) within the
     last 30 min.
     """
@@ -604,7 +605,7 @@ def _burst_targets(state: dict, config: Config,
                                   rec.get("url", ""), "")
             except (KeyError, ValueError, TypeError):
                 continue
-            if status is Status.UPCOMING and opens is not None \
+            if status in (Status.UPCOMING, Status.UNKNOWN) and opens is not None \
                     and opens - BURST_LEAD <= now <= opens + BURST_OVERDUE:
                 end = opens + BURST_OVERDUE
             elif status is Status.ON_SALE and since is not None \

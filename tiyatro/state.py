@@ -159,7 +159,10 @@ def _merge_play(state: dict, play: Play, config: Config, now_iso: str) -> bool:
             rec["prev_status"] = prev_status  # None: new or reappearing after "gone"
         elif "status_since" not in rec:
             rec["status_since"] = None  # pre-field record: change time unknown
-        rec.update(status=s.status.value, opens_at=_iso(s.opens_at), start=_iso(s.start),
+        opens_at = _iso(s.opens_at)
+        if opens_at is None and s.status is Status.UNKNOWN:
+            opens_at = rec.get("opens_at")  # odd markup at opening time: keep the plan
+        rec.update(status=s.status.value, opens_at=opens_at, start=_iso(s.start),
                    url=s.url or rec.get("url", ""), gone=False)
         if s.end is not None:
             rec["end"] = _iso(s.end)
