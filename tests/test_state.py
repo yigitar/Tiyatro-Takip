@@ -93,23 +93,23 @@ def test_on_sale_transition_once():
     st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, t1 + timedelta(minutes=5))
     assert ev == []
 
-    # sold out, then back on sale >= 30 min after last notification -> new event
+    # sold out, then back on sale >= 3 min after last notification -> new event
     st, _ = diff(st, [play(sessions=[sess(status=Status.SOLD_OUT)])], WATCH, t1 + timedelta(minutes=10))
     st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, t1 + timedelta(minutes=30))
     assert [e.key for e in ev] == ["ON_SALE:s1:2"]
     assert st["plays"]["p"]["sessions"]["s1"]["on_sale_count"] == 2
 
 
-def test_on_sale_retransition_within_30_min_suppressed():
+def test_on_sale_retransition_within_3_min_suppressed():
     st, _ = diff(empty_state(), [play(sessions=[sess()])], WATCH, T0)
     st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, T0)
     assert kinds(ev) == ["ON_SALE"]
-    st, _ = diff(st, [play(sessions=[sess(status=Status.SOLD_OUT)])], WATCH, T0 + timedelta(minutes=5))
-    st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, T0 + timedelta(minutes=29))
+    st, _ = diff(st, [play(sessions=[sess(status=Status.SOLD_OUT)])], WATCH, T0 + timedelta(minutes=1))
+    st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, T0 + timedelta(minutes=2))
     assert ev == []
     assert st["plays"]["p"]["sessions"]["s1"]["on_sale_count"] == 1
-    # still on sale once the 30 min gap has passed -> the deferred alert fires (not lost)
-    st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, T0 + timedelta(minutes=31))
+    # still on sale once the 3 min gap has passed -> the deferred alert fires (not lost)
+    st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, T0 + timedelta(minutes=4))
     assert [e.key for e in ev] == ["ON_SALE:s1:2"]
 
 
@@ -329,12 +329,12 @@ def test_on_sale_after_session_vanished_and_returned():  # C1a
 
 def test_pending_on_sale_survives_vanish_cycle():  # C1b
     st, _ = diff(empty_state(), [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, T0)
-    st, _ = diff(st, [play(sessions=[sess(status=Status.SOLD_OUT)])], WATCH, T0 + timedelta(minutes=5))
-    st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, T0 + timedelta(minutes=20))
-    assert ev == []  # held by the 30-min gap
-    st, ev = diff(st, [play(sessions=[])], WATCH, T0 + timedelta(minutes=31))
+    st, _ = diff(st, [play(sessions=[sess(status=Status.SOLD_OUT)])], WATCH, T0 + timedelta(minutes=1))
+    st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, T0 + timedelta(minutes=2))
+    assert ev == []  # held by the 3-min gap
+    st, ev = diff(st, [play(sessions=[])], WATCH, T0 + timedelta(minutes=4))
     assert ev == []  # gone: nothing emitted
-    st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, T0 + timedelta(minutes=40))
+    st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, T0 + timedelta(minutes=5))
     assert [e.key for e in ev] == ["ON_SALE:s1:2"]
 
 
@@ -485,3 +485,35 @@ def test_runner_prepare_drops_malformed_emitted_entries():
     st = empty_state()
     st["emitted"] = dict(BAD_EMITTED, ok=T0.isoformat())
     assert _prepare(st)["emitted"] == {"ok": T0.isoformat()}
+
+
+# ==== final review I1: 3-min ON_SALE gap ===========================================
+
+def test_reopen_12_min_after_alert_alerts_again_but_1_min_is_suppressed():
+    st, _ = diff(empty_state(), [play(sessions=[sess()])], WATCH, T0)
+    st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH, T0)
+    assert [e.key for e in ev] == ["ON_SALE:s1:1"]
+    t = T0 + timedelta(seconds=30)
+    st, _ = diff(st, [play(sessions=[sess(status=Status.SOLD_OUT)])], WATCH, t)
+    st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH,
+                  T0 + timedelta(minutes=1))
+    assert ev == []  # parser-glitch dedupe: within 3 min of the last alert
+    st, _ = diff(st, [play(sessions=[sess(status=Status.SOLD_OUT)])], WATCH,
+                 T0 + timedelta(minutes=2))
+    st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE)])], WATCH,
+                  T0 + timedelta(minutes=12))
+    assert [e.key for e in ev] == ["ON_SALE:s1:2"]  # cart-expiry re-open: alert
+
+
+def test_on_sale_gap_is_3_minutes():
+    from tiyatro.state import ON_SALE_GAP
+    assert ON_SALE_GAP == timedelta(minutes=3)
+
+
+def test_status_change_records_previous_status():
+    st, _ = diff(empty_state(), [play(sessions=[sess()])], WATCH, T0)
+    assert st["plays"]["p"]["sessions"]["s1"]["prev_status"] is None
+    st, _ = diff(st, [play(sessions=[sess(status=Status.SOLD_OUT)])], WATCH,
+                 T0 + timedelta(minutes=5))
+    rec = st["plays"]["p"]["sessions"]["s1"]
+    assert rec["status"] == "sold_out" and rec["prev_status"] == "upcoming"

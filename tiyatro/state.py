@@ -8,7 +8,8 @@ Notes on alerting semantics:
 - ON_SALE: a session entering ON_SALE (or first seen ON_SALE, or reappearing ON_SALE
   after having dropped off the page) becomes "pending". The pending alert fires when an
   active watch has a matching target and the last ON_SALE alert for that session is at
-  least 30 min old. A pending alert survives the session vanishing for a scan. If a
+  least ``ON_SALE_GAP`` (3 min) old: only a dedupe for parser glitches, so a cart-expiry
+  or iade re-open minutes after a sell-out alerts again. A pending alert survives the session vanishing for a scan. If a
   matching active watch/target appears while the session is already ON_SALE, exactly
   one ON_SALE alert fires ("ticket available right now").
 - UNKNOWN_STATUS is keyed per session id (``UNKNOWN_STATUS:<sid>``): once per session.
@@ -26,7 +27,7 @@ from tiyatro.rules import matching_targets
 from tiyatro.tags import apply_overrides, derive_tags
 from tiyatro.timeutil import parse_iso
 
-ON_SALE_GAP = timedelta(minutes=30)
+ON_SALE_GAP = timedelta(minutes=3)
 OPENING_SOON_LEAD = timedelta(minutes=10)
 DAY_BEFORE_HOUR = time(10, 0)
 DAY_BEFORE_CUTOFF = timedelta(minutes=60)
@@ -155,6 +156,7 @@ def _merge_play(state: dict, play: Play, config: Config, now_iso: str) -> bool:
         }
         if prev is None or prev_status != s.status.value:
             rec["status_since"] = now_iso
+            rec["prev_status"] = prev_status  # None: new or reappearing after "gone"
         elif "status_since" not in rec:
             rec["status_since"] = None  # pre-field record: change time unknown
         rec.update(status=s.status.value, opens_at=_iso(s.opens_at), start=_iso(s.start),

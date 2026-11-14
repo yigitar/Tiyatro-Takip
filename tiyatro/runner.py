@@ -87,6 +87,7 @@ DROPPED_LOG_MAX = 50
 BURST_LEAD = timedelta(minutes=10)
 BURST_OVERDUE = timedelta(hours=4)
 BURST_FLIP_TAIL = timedelta(minutes=10)
+BURST_SOLD_OUT_TAIL = timedelta(minutes=30)  # cart-expiry re-opens come 10-15 min later
 # One cadence for the whole window (sell-outs take ~30 s; a late flip is no slower).
 BURST_INTERVAL_S = 15
 BURST_JITTER_S = 3
@@ -556,8 +557,9 @@ def _burst_targets(state: dict, config: Config,
                    now: datetime) -> list[tuple[str, datetime]]:
     """(slug, burst end) for watched sessions that need burst polling.
 
-    UPCOMING with ``opens_at - 10 min <= now <= opens_at + 4 h``, or flipped to
-    ON_SALE within the last 10 min.
+    UPCOMING with ``opens_at - 10 min <= now <= opens_at + 4 h``, flipped to ON_SALE
+    within the last 10 min, or sold out (coming from UPCOMING or ON_SALE) within the
+    last 30 min.
     """
     out = []
     for slug, entry in (state.get("plays") or {}).items():
@@ -581,6 +583,9 @@ def _burst_targets(state: dict, config: Config,
             elif status is Status.ON_SALE and since is not None \
                     and since <= now <= since + BURST_FLIP_TAIL:
                 end = since + BURST_FLIP_TAIL
+            elif status is Status.SOLD_OUT and since is not None                     and rec.get("prev_status") in (Status.UPCOMING.value,
+                                                   Status.ON_SALE.value)                     and since <= now <= since + BURST_SOLD_OUT_TAIL:
+                end = since + BURST_SOLD_OUT_TAIL
             else:
                 continue
             if matching_targets(watch, session):
@@ -595,8 +600,9 @@ def plan_mode(state: dict, config: Config, now: datetime) -> tuple[str, datetime
     Burst iff a watched session (active play, >= 1 matching target) is UPCOMING with
     ``opens_at - 10 min <= now <= opens_at + 4 h`` (the site flips when the organiser
     enables sales, observed 55+ min after the announced time), or flipped to ON_SALE
-    within the last 10 min. ``until`` is the latest such end (``opens_at + 4 h`` /
-    flip + 10 min); ``burst_loop`` caps a single run at ``max_seconds`` and the next
+    within the last 10 min, or sold out (from UPCOMING/ON_SALE) within the last 30 min
+    (cart-expiry re-opens). ``until`` is the latest such end (``opens_at + 4 h`` /
+    flip + 10 min / sell-out + 30 min); ``burst_loop`` caps a single run at ``max_seconds`` and the next
     scheduled run re-enters burst mode. Cadence: every 15 s +-3 s for the whole window.
     """
     found = _burst_targets(state, config, now)

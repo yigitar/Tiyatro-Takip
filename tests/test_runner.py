@@ -1511,3 +1511,25 @@ def test_watch_added_mid_burst_honored_next_tick(monkeypatch):
                rand=lambda a, b: 0.0, max_seconds=120)
     on_sale = [t for t, m in sent_at if "Bilet alınabilir" in m]
     assert len(on_sale) == 1 and on_sale[0] <= start + timedelta(seconds=16)
+
+
+# ==== final review I1: burst after a sell-out =======================================
+
+@pytest.mark.parametrize("before", ["upcoming", "on_sale"])
+def test_plan_mode_bursts_for_30_min_after_a_sell_out(before):
+    st = _state_with_opening(OPENS, status="sold_out")
+    rec = st["plays"]["p"]["sessions"]["s1"]
+    sold = OPENS + timedelta(minutes=2)
+    rec.update(status_since=sold.isoformat(), prev_status=before)
+    cfg = config_from_dict(WATCH_CFG)
+    assert plan_mode(st, cfg, sold + timedelta(minutes=29)) == (
+        "burst", sold + timedelta(minutes=30))
+    assert plan_mode(st, cfg, sold + timedelta(minutes=31)) == ("normal", None)
+
+
+def test_first_seen_sold_out_does_not_burst():
+    st = _state_with_opening(OPENS, status="sold_out")
+    rec = st["plays"]["p"]["sessions"]["s1"]
+    rec.update(status_since=NOW.isoformat(), prev_status=None)
+    assert plan_mode(st, config_from_dict(WATCH_CFG), NOW + timedelta(minutes=1)) == (
+        "normal", None)

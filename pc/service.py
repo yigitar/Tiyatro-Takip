@@ -237,7 +237,7 @@ class Service:
           GitHub still sends first; claims prevent duplicates).
         - sessions: unknown plays/sessions are copied; for known sessions
           ``on_sale_count`` is the max of both (the next ON_SALE key cannot collide with
-          one GitHub used), and status / status_since / on_sale_pending /
+          one GitHub used), and status / status_since / prev_status / on_sale_pending /
           last_on_sale_notified come from GitHub where GitHub's are newer.
         """
         theirs = clean_emitted(github.get("emitted"))
@@ -272,7 +272,7 @@ class Service:
                 lrec["on_sale_count"] = max(_count(lrec.get("on_sale_count")),
                                             _count(grec.get("on_sale_count")))
                 if _newer(grec.get("status_since"), lrec.get("status_since")):
-                    for key in ("status", "status_since", "on_sale_pending"):
+                    for key in ("status", "status_since", "prev_status", "on_sale_pending"):
                         if key in grec:
                             lrec[key] = grec[key]
                 if _newer(grec.get("last_on_sale_notified"),
