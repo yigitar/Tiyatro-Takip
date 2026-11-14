@@ -41,7 +41,19 @@ der. Pencereyi kapatmak uygulamayı kapatır, küçültmek çalışmaya devam et
   yaşı, bekleyen bildirim, hatalar (üzerine gelince ayrıntı).
 - Ayarlar > Sesli uyarı: bildirim penceresindeki bip'i açar/kapatır.
 
+## Hata durumunda
+
+`start.bat` konsolsuz (pythonw) çalıştığı için uygulama sessizce kapanmaz: başlatma ya da
+çalışma sırasında herhangi bir hata olursa bir hata penceresi açılır ve ayrıntı (jetonlar
+maskelenmiş) şu dosyalara yazılır:
+
+- `pc/local/crash.log` (depo klasörü altında; yazılamazsa `%TEMP%	iyatro-takip-crash.log`)
+- `pc/local/app.log` (normal çalışma günlüğü)
+
+Pencerede dosyanın tam yolu gösterilir. `python -m pc.app` ya da `python -m pc` aynı koruma
+ile başlar.
+
 ## Dosyalar (hepsi `pc/local/` altında, git'e girmez)
 
-`app.log` (dönen günlük, jetonlar maskelenir), `ui.json` (pencere boyutu, ses ayarı),
+`app.log` (dönen günlük, jetonlar maskelenir), `crash.log`, `ui.json` (pencere boyutu, ses ayarı),
 `state.json`, `plays.json`, `notified.json` (yerel durum).

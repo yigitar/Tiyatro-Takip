@@ -9,7 +9,8 @@ import pytest
 
 tk = pytest.importorskip("tkinter")
 
-from pc import app as appmod  # noqa: E402
+from pc import ui as appmod  # noqa: E402
+from pc import app_logic as L  # noqa: E402
 from pc import configedit  # noqa: E402
 from pc.service import RefreshError  # noqa: E402
 from pc.viewmodel import build_rows  # noqa: E402
@@ -257,7 +258,7 @@ def test_notification_popup_beeps_and_stacks(ui):
     assert len(ui.popups) == appmod.MAX_POPUPS and len(ui.popup_wait) == 2
     first = ui.popups[0]
     assert first.url == "https://example.test/p1"
-    assert len(ui.beeps_log) == 3  # one immediate beep per popup, repeats are timed
+    assert len(ui.beeps_log) == 1  # one shared beep series for all popups
     first.open_btn.invoke()
     assert ui.opened[-1] == "https://example.test/p1"
     first.seen_btn.invoke()
@@ -266,9 +267,16 @@ def test_notification_popup_beeps_and_stacks(ui):
     ui._beep_toggled()
     assert ui.beep_enabled is False
     assert json.loads((ui.local_dir / "ui.json").read_text(encoding="utf-8"))["beep"] is False
+    ui.beep_var.set(True)
+    ui._beep_toggled()
+    ui.beeps_log.clear()
+    ui.beep_count = 0  # a new notification restarts the series
+    for _ in range(10):
+        ui._beep_tick()
+    assert len(ui.beeps_log) == L.BEEP_MAX  # max 5 beeps per batch, single timer
     while ui.popups:
         ui.popups[0].seen()
-    assert len(ui.popup_wait) == 0
+    assert len(ui.popup_wait) == 0 and ui._beep_after is None
 
 
 def test_close_saves_ui_state_and_destroys(ui):
@@ -330,3 +338,85 @@ def test_scan_worker_wake_runs_next_tick():
     worker.stop()
     worker.join(timeout=2)
     assert Svc.ticks == 2 and posted[0] == ("tick", "ok")
+
+
+def test_actions_disable_button_until_done_and_ignore_double_clicks(ui):
+    ui.pause_btn.invoke()
+    assert str(ui.pause_btn.cget("state")) == "disabled"
+    assert ui.pause_btn.cget("text") == "bekleniyor…"
+    ui.pause_btn.invoke()  # ignored while pending (even if forced)
+    ui.toggle_pause()
+    assert ui.svc.calls == [("set_paused", (True,))]
+    ui.pump()
+    assert str(ui.pause_btn.cget("state")) == "normal" and ui.pause_btn.cget("text") == "Devam"
+
+    ui.select_slug("p2")
+    btn = ui.add_buttons["c"]
+    btn.invoke()
+    assert btn.cget("text") == "bekleniyor…"
+    btn.invoke()
+    ui.pump()
+    assert [c for c in ui.svc.calls if c[0] == "ensure_target"] == [("ensure_target", ("p2", "c"))]
+    assert str(ui.add_buttons["c"].cget("state")) == "disabled"  # now exists (from config ids)
+    assert str(ui.add_buttons["y"].cget("state")) == "normal"
+
+
+def test_failed_edit_reenables_and_reports(ui):
+    def boom(*a):
+        raise RuntimeError("store down")
+
+    ui.svc.set_active = boom
+    ui.select_slug("p2")
+    ui.active_chk.invoke()
+    ui.pump()
+    assert ui.box.shown[-1][0] == "error" and "store down" in ui.box.shown[-1][1][1]
+    assert ("active", "p2") not in ui._pending
+    assert ui.active_var.get() is False  # checkbox restored to the real state
+
+
+def test_identical_refreshes_do_not_rebuild_the_detail_pane(ui):
+    ui.select_slug("p1")
+    pane = ui.session_tree
+    for _ in range(2):
+        ui.refresh_rows()
+        ui.root.update()
+    assert ui.session_tree is pane
+    ui.svc._apply("set_people", "p1", "y", 4)  # a real change does rebuild it
+    ui.refresh_rows()
+    assert ui.session_tree is not pane
+
+
+def test_editor_cancel_and_failed_save_refresh_the_list(ui):
+    calls = []
+    real = ui.svc.rows
+    ui.svc.rows = lambda *a, **k: calls.append(1) or real(*a, **k)
+    ed = ui.open_editor("p1", "y")
+    ed.destroy()
+    ui.root.update()
+    assert calls, "cancelled editor must refresh"
+
+    calls.clear()
+    ed = ui.open_editor("p1", "y")
+    ed.people.set("4")
+
+    def boom(*a):
+        raise RuntimeError("write failed")
+
+    ui.svc.set_people = boom
+    ed.save()
+    ui.pump()
+    assert ed.winfo_exists() and "write failed" in ed.error.get() and calls
+    assert str(ed.save_btn.cget("state")) == "normal" and ed.save_btn.cget("text") == "Kaydet"
+    ed.destroy()
+
+
+def test_unexpected_error_in_editor_validation_is_shown_inline(ui, monkeypatch):
+    ed = ui.open_editor("p1", "y")
+
+    def boom(*a):
+        raise RuntimeError("surprise")
+
+    monkeypatch.setattr(L, "dry_run", boom)
+    ed.save()
+    assert "surprise" in ed.error.get() and ui.svc.calls == []
+    ed.destroy()
