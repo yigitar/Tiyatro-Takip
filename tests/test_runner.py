@@ -1748,3 +1748,73 @@ def test_main_starting_in_burst_window_bursts_before_the_normal_scan(monkeypatch
     venue = [t for t, u in fetched if u == DEFAULT_SOURCE]
     assert venue and venue[0] > opens  # the normal scan runs after the burst
     assert sum("Bilet alınabilir" in m for m in tgs[0].sent) == 1
+
+
+# ==== final review M1: main() survives a transient config GET and an invalid config ==
+
+def _main_normal(monkeypatch, store, web):
+    _main_env(monkeypatch)
+    tgs = []
+    monkeypatch.setattr(runner, "Store", lambda *a, **k: store)
+    monkeypatch.setattr(runner, "Telegram", lambda *a, **k: tgs.append(FakeTG()) or tgs[-1])
+    monkeypatch.setattr(runner, "fetch", web.fetch)
+    clock = [NOW]
+
+    class FakeDT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock[0]
+
+    def sleep(s):  # simulated time, so a burst tail ends quickly
+        clock[0] += timedelta(seconds=s)
+        store.now = clock[0]
+
+    store.now = NOW
+    monkeypatch.setattr(runner, "datetime", FakeDT)
+    monkeypatch.setattr(runner.time, "sleep", sleep)
+    return tgs
+
+
+class FlakyGetStore(RunsStore):
+    def __init__(self, fail_paths):
+        super().__init__()
+        self.fail_paths = dict(fail_paths)  # path -> remaining failures
+
+    def ensure_branch(self):
+        pass
+
+    def get(self, path):
+        if self.fail_paths.get(path, 0) > 0:
+            self.fail_paths[path] -= 1
+            raise RuntimeError("HTTP 502")
+        return super().get(path)
+
+
+def test_main_retries_a_transient_config_and_state_get_once(monkeypatch):
+    web = Web(monkeypatch, [mkplay()])
+    store = FlakyGetStore({"config.json": 1, "state.json": 1})
+    store.files["config.json"] = (WATCH_CFG, "c")
+    tgs = _main_normal(monkeypatch, store, web)
+    assert runner.main() == 0
+    assert "p" in store.files["state.json"][0]["plays"]
+    assert len(tgs[0].sent) == 1  # the setup message: the run was not lost
+
+
+def test_main_invalid_config_alerts_once_and_scans_with_the_cached_config(monkeypatch):
+    web = Web(monkeypatch, [mkplay()])
+    store = FlakyGetStore({})
+    store.files["config.json"] = (WATCH_CFG, "c")
+    tgs = _main_normal(monkeypatch, store, web)
+    assert runner.main() == 0
+    assert store.files["state.json"][0]["meta"]["config_cache"] == WATCH_CFG
+    bad = {"plays": {"p": {"active": True, "targets": [
+        {"id": "t1", "name": "Aksam", "people": 9, "rule": {}}]}}}
+    store.files["config.json"] = (bad, "bad")
+    web.set(mkplay(sessions=[sess(status=Status.ON_SALE)]))
+    assert runner.main() == 0
+    sent = tgs[1].sent
+    assert sum("config.json" in m and "geçersiz" in m for m in sent) == 1
+    assert sum("Bilet alınabilir" in m for m in sent) == 1  # cached watch still alerts
+    assert runner.main() == 0
+    assert not any("geçersiz" in m for m in tgs[2].sent)  # alerted once
+    assert store.files["state.json"][0]["meta"]["config_cache"] == WATCH_CFG

@@ -43,6 +43,7 @@ KIND_TEXT = {
     "PLAY_FAILING": "\U0001f9e9 Oyun sayfası okunamıyor",
     "NEW_SESSIONS": "\U0001f4c5 Yeni seanslar/dönem",
     "DELIVERY_DROPPED": "⚠️ bildirim iletilemedi",
+    "CONFIG_INVALID": "⚠️ Ayar dosyası geçersiz",
     "OPENED_SOLD_OUT": "⚡ Satış açıldı ve görülmeden tükendi — iade için izleniyor",
 }
 DAY_BEFORE_TEXT = "\U0001f514 Satış açılış hatırlatması: "

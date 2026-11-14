@@ -108,6 +108,8 @@ BURST_JITTER_S = 3
 BURST_MAX_SECONDS = 960  # 16 min > the 5-min schedule + Actions start-up jitter
 BURST_WATCH_EVERY = timedelta(seconds=60)
 BURST_FAIL_ALERT_AT = 5  # consecutive burst ticks in which every page fetch failed
+STORE_RETRY_S = 2
+CONFIG_ERRORS = (ValueError, TypeError, KeyError, AttributeError)  # config_from_dict
 PC_WINDOW = timedelta(minutes=60)
 PC_SECOND_WARNING = timedelta(minutes=10)
 DAILY_AT = dtime(12, 0)
@@ -653,8 +655,12 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
                fetch_fn: Callable = fetch, max_seconds: float = BURST_MAX_SECONDS, *,
                who: str = "github", persist_state: bool = True,
                state: dict | None = None,
-               rand: Callable[[float, float], float] = random.uniform) -> RunResult:
+               rand: Callable[[float, float], float] = random.uniform,
+               config: Config | None = None) -> RunResult:
     """Re-scan only the plays inside a burst window.
+
+    ``config``: the last good config, used while ``config.json`` cannot be read or is
+    invalid (without it the first tick needs a readable config).
 
     Tick interval: ``interval`` (15 s) +-3 s for the whole window (``rand`` gives the
     jitter). A tick fetches only the targeted play pages and reads
@@ -677,7 +683,6 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
     start = now_fn()
     deadline = min(until, start + timedelta(seconds=max_seconds))
     state = _prepare(copy.deepcopy(state)) if state is not None else load_state(store)
-    config: Config | None = None
     base, jitter = interval, BURST_JITTER_S
     errors: list[str] = []
     result: RunResult | None = None
@@ -830,8 +835,55 @@ def _new_drops(state: dict, since: datetime) -> list[str]:
     return keys
 
 
+def _get_retry(store, path: str, sleep: Callable):
+    """``store.get`` retried once after a short pause (a transient 502 must not cost
+    the whole run)."""
+    try:
+        return store.get(path)
+    except Exception:
+        sleep(STORE_RETRY_S)
+        return store.get(path)
+
+
+def _startup_config(store, state: dict, now: datetime,
+                    sleep: Callable) -> tuple[Config, Event | None]:
+    """(config, CONFIG_INVALID event or None). A valid config is cached in
+    ``state["meta"]["config_cache"]``; an invalid one falls back to that cache."""
+    data, _sha = _get_retry(store, CONFIG_PATH, sleep)
+    try:
+        config = config_from_dict(data) if data else default_config()
+    except CONFIG_ERRORS as exc:
+        cache = state["meta"].get("config_cache")
+        try:
+            config = config_from_dict(cache) if isinstance(cache, dict) else default_config()
+        except CONFIG_ERRORS:
+            config = default_config()
+        raw = json.dumps(data, sort_keys=True, default=str)
+        digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+        ev = _emit(state, "CONFIG_INVALID", f"CONFIG_INVALID:{digest}",
+                   {"detail": f"config.json geçersiz ({type(exc).__name__}: "
+                              f"{str(exc)[:200]}); son geçerli ayarlarla devam ediliyor"},
+                   now)
+        return config, ev
+    if isinstance(data, dict) and data:
+        state["meta"]["config_cache"] = data
+    return config, None
+
+
+def _fresh_config(store, fallback: Config) -> Config:
+    try:
+        return load_config(store)
+    except Exception:  # store error or invalid config.json: keep the last good one
+        return fallback
+
+
 def main() -> int:
     """GitHub entry point.
+
+    The initial ``state.json`` / ``config.json`` reads are retried once on a store
+    error. An invalid ``config.json`` does not stop the run: the last good config
+    (``state["meta"]["config_cache"]``, refreshed by every valid read; else the
+    default) is used and one ``CONFIG_INVALID`` alert is sent per distinct bad content.
 
     Exit code 0, except 1 when: an unexpected exception escaped (message without
     secrets), ``state.json`` could not be saved by any step, including a single burst
@@ -857,10 +909,13 @@ def main() -> int:
         started = now_fn()
         claims = ClaimStore(store, "github", now_fn)
         store.ensure_branch()
-        config = load_config(store)
         res: RunResult | None = None
         errors: list[str | None] = []
-        state = load_state(store)
+        state = _prepare(_get_retry(store, STATE_PATH, time.sleep)[0] or empty_state())
+        config, invalid = _startup_config(store, state, started, time.sleep)
+        if invalid is not None:  # Telegram-visible, once per distinct bad config.json
+            _dispatch(state, [invalid], False, store, tg, claims, started, {}, config,
+                      "github")
         if plan_mode(state, config, started)[0] != "burst":
             res = run_once(store, tg, claims, now_fn(), fetch_fn=fetch, sleep=time.sleep,
                            state=state, config=config)
@@ -881,7 +936,7 @@ def main() -> int:
         if mode == "burst":
             try:
                 br = burst_loop(store, tg, claims, now_fn, time.sleep, until,
-                                fetch_fn=fetch, state=state)
+                                fetch_fn=fetch, state=state, config=config)
                 state = br.state
                 errors.append(br.save_error)
                 if br.dirty:  # retry the final burst state once more below
@@ -892,7 +947,7 @@ def main() -> int:
                 problems.append(f"burst failed: {type(exc).__name__}")
         if res is None:  # the normal scan skipped at run start
             res = run_once(store, tg, claims, now_fn(), fetch_fn=fetch, sleep=time.sleep,
-                           state=state)
+                           state=state, config=_fresh_config(store, config))
             state = res.state
             errors.append(res.save_error)
         before = _fingerprint(state)
