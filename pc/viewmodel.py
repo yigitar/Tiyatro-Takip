@@ -11,7 +11,8 @@ from datetime import datetime
 
 from tiyatro.config import default_config
 from tiyatro.models import ISTANBUL, Config, Event, Play, Target
-from tiyatro.notify import DAY_BEFORE_TEXT, DAYS, KIND_TEXT, MONTHS, format_message
+from tiyatro.notify import (DAY_BEFORE_TEXT, DAYS, KIND_TEXT, MONTHS, format_message,
+                            portal_headline, portal_label)
 from tiyatro.tags import apply_overrides
 from tiyatro.timeutil import parse_iso
 
@@ -204,6 +205,56 @@ def build_rows(state: dict, config: Config, seen_slugs, removed_slugs,
     return rows
 
 
+@dataclass
+class PortalView:
+    id: str
+    text: str     # "🏛️ Başiskele rezervasyon portalı: boş · son kontrol 14:35"
+    url: str
+    state: str    # "unknown" | "empty" | "open" | "failing"
+
+
+def _checked_text(value, now: datetime) -> str:
+    d = _dt(value)
+    if d is None:
+        return ""
+    d, today = d.astimezone(ISTANBUL), now.astimezone(ISTANBUL).date()
+    return f"{d:%H:%M}" if d.date() == today else f"{d:%d.%m %H:%M}"
+
+
+def portal_views(config: Config, state: dict | None, now: datetime) -> list[PortalView]:
+    """One strip entry per enabled portal, from ``config.portals`` + ``state["portals"]``."""
+    recs = (state or {}).get("portals")
+    recs = recs if isinstance(recs, dict) else {}
+    out = []
+    for p in config.portals:
+        if not p.get("enabled", True):
+            continue
+        raw = recs.get(p["id"])
+        raw = raw if isinstance(raw, dict) else {}
+        try:
+            streak = int(raw.get("fail_streak") or 0)
+        except (TypeError, ValueError):
+            streak = 0
+        empty = raw.get("empty")
+        checked = _checked_text(raw.get("last_check"), now)
+        if empty is True:
+            state_name, status = "empty", "boş"
+        elif empty is False:
+            n = len(raw["items"]) if isinstance(raw.get("items"), list) else 0
+            state_name, status = "open", f"{n} etkinlik açık" if n else "açık"
+        else:
+            state_name, status = "unknown", "henüz kontrol edilmedi"
+        parts = [status]
+        if empty is not None and checked:
+            parts.append(f"son kontrol {checked}")
+        if streak:
+            parts.append(f"okunamadı ({streak}. kez)")
+            state_name = "failing"
+        out.append(PortalView(p["id"], f"🏛️ {portal_label(p['id'], p['name'])}: "
+                              + " · ".join(parts), p["url"], state_name))
+    return out
+
+
 _TAG = re.compile(r"<[^>]+>")
 
 
@@ -216,6 +267,8 @@ def headline(event: Event) -> str:
         return DAY_BEFORE_TEXT.strip(" :")
     if event.kind == "DELIVERY_DROPPED":
         return "Bildirim iletilemedi"
+    if event.kind.startswith("PORTAL_"):
+        return portal_headline(event)
     return KIND_TEXT.get(event.kind, event.kind)
 
 

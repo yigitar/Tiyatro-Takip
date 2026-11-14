@@ -401,7 +401,12 @@ class App:
             self.save_ui, self.mb, self.reveal)
         self.notebook.add(self.activity_tab, text="Etkinlik günlüğü")
 
+        self.portal_bar = ttk.Frame(games)  # "Portallar" strip, packed only when there is one
+        self.portal_labels: list = []
+        self.portal_buttons: list = []
+        self._portal_sig = None
         pane = ttk.PanedWindow(games, orient="vertical")
+        self.pane = pane
         pane.pack(fill="both", expand=True)
         top = ttk.Frame(pane)
         pane.add(top, weight=3)
@@ -531,6 +536,38 @@ class App:
             return
         self._default_rows = rows
         self._render_rows()
+        self._render_portals()
+
+    def _render_portals(self) -> None:
+        """One line per reservation portal under the toolbar; rebuilt only on a change."""
+        fn = getattr(self.service, "portals", None)
+        try:
+            views = fn() if fn is not None else []
+        except Exception:
+            log.exception("portals() failed")
+            return
+        sig = tuple((v.id, v.text, v.url, v.state) for v in views)
+        if sig == self._portal_sig:
+            return
+        self._portal_sig = sig
+        for child in self.portal_bar.winfo_children():
+            child.destroy()
+        self.portal_labels, self.portal_buttons = [], []
+        if not views:
+            self.portal_bar.pack_forget()
+            return
+        colors = {"empty": L.GRAY, "open": L.GREEN, "failing": L.RED, "unknown": L.GRAY}
+        for v in views:
+            line = ttk.Frame(self.portal_bar)
+            line.pack(fill="x", pady=1)
+            label = ttk.Label(line, text=v.text, foreground=colors.get(v.state, L.GRAY))
+            label.pack(side="left")
+            button = ttk.Button(line, text="Aç", width=5,
+                                command=lambda u=v.url: self.open_url(u))
+            button.pack(side="left", padx=8)
+            self.portal_labels.append(label)
+            self.portal_buttons.append(button)
+        self.portal_bar.pack(fill="x", pady=(0, 4), before=self.pane)
 
     def sort_by(self, column: str) -> None:
         """Header click: ascending -> descending -> default order (see ``L.next_sort``)."""
@@ -980,6 +1017,7 @@ def main() -> int:
         secrets.extend([settings.gh_token, settings.tg_token, settings.chat_id])
 
         from tiyatro.claims import ClaimStore
+        from tiyatro.fetcher import fetch
         from tiyatro.notify import Telegram
         from tiyatro.store import Store
         from pc.service import Service
@@ -990,7 +1028,7 @@ def main() -> int:
         store = Store(settings.repo, settings.gh_token)
         service = Service(store, Telegram(settings.tg_token, settings.chat_id),
                           ClaimStore(store, "pc", clock), clock=clock,
-                          local_dir=settings.local_dir,
+                          local_dir=settings.local_dir, portal_fetch_fn=fetch,
                           activity=A.ActivityLog(Path(settings.local_dir) / "activity.jsonl",
                                                  secrets=secrets))
         app = App(root, service, settings.local_dir)

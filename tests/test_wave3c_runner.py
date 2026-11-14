@@ -389,3 +389,35 @@ def test_notify_limits_items_and_stays_under_4096():
     parts = format_message([ev], {}, cfg)
     assert parts and all(len(p) <= MAX_LEN for p in parts)
     assert "+25" in "".join(parts) and "T" * 500 + "5" not in "".join(parts)
+
+
+def test_main_wires_the_portal_fetch(monkeypatch):
+    from tests.test_runner import RunsStore, FakeTG as TG, Web
+    for k, v in {"TELEGRAM_BOT_TOKEN": "1:T", "TELEGRAM_CHAT_ID": "42",
+                 "GITHUB_TOKEN": "ghp_S", "GITHUB_REPOSITORY": "o/r"}.items():
+        monkeypatch.setenv(k, v)
+    made, tgs = [], []
+
+    class MainStore(RunsStore):
+        def __init__(self, repo, token, branch="data", transport=None):
+            super().__init__()
+            made.append(self)
+
+        def ensure_branch(self):
+            pass
+
+    web = Web(monkeypatch, [mkplay("a")])
+    portal = PortalWeb(opened_html("Kuğu Gölü Balesi"))
+
+    def fetch(url):
+        return portal.fetch(url) if url == PORTAL_URL else web.fetch(url)
+
+    monkeypatch.setattr(runner, "Store", MainStore)
+    monkeypatch.setattr(runner, "Telegram",
+                        lambda token, chat_id, transport=None, sleep=None: (tgs.append(TG()), tgs[-1])[1])
+    monkeypatch.setattr(runner, "fetch", fetch)
+    monkeypatch.setattr(runner.time, "sleep", lambda s: None)
+    assert runner.main() == 0
+    state = made[0].files["state.json"][0]
+    assert state["portals"]["basiskele"]["empty"] is False
+    assert any("etkinlik açıldı" in m for m in tgs[0].sent)

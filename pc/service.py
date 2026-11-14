@@ -53,11 +53,13 @@ from pc import activity as act
 from pc import configedit
 from pc.app_logic import ago_text
 from pc.settings import DEFAULT_LOCAL_DIR
-from pc.viewmodel import Row, build_rows, format_events_for_desktop, headline, when_text
+from pc.viewmodel import (PortalView, Row, build_rows, format_events_for_desktop, headline,
+                          portal_views, when_text)
 from tiyatro.config import config_from_dict, config_to_dict, default_config
 from tiyatro.fetcher import fetch
 from tiyatro.heartbeat import github_run_status, write_heartbeat
 from tiyatro.models import ISTANBUL, Config, Event, Play
+from tiyatro.notify import portal_label
 from tiyatro.runner import (BURST_INTERVAL_S, BURST_JITTER_S, BURST_LEAD, CONFIG_PATH,
                             PC_WINDOW, _burst_targets, _entry_events, _prepare,
                             _scan, load_config, load_state, pc_delay, plan_mode, run_once,
@@ -176,7 +178,9 @@ class Service:
                  fetch_fn: Callable = fetch, sleep: Callable = time.sleep,
                  local_dir: Path | str = DEFAULT_LOCAL_DIR,
                  rand: Callable[[float, float], float] = random.uniform,
-                 activity: act.ActivityLog | None = None):
+                 activity: act.ActivityLog | None = None,
+                 portal_fetch_fn: Callable | None = None):
+        self._portal_fetch = portal_fetch_fn  # None: reservation portals are not checked
         self._store = store
         self._tg = _CountingTG(tg)
         self._claims = claims
@@ -304,6 +308,39 @@ class Service:
         self._flush_rollup()
         self._log(act.CAT_SCAN, act.counts_text(after),
                   f"Elle güncelleme: {result}\nPC (elle)")
+
+    @_quiet()
+    def _log_portals(self, before: dict, new_state: dict, config: Config) -> None:
+        """One line per portal check of the run ("Liste kontrolü"); failures go to
+        "Hata/Uyarı". Burst/delivery-only runs never check portals, so nothing changes."""
+        for p in config.portals:
+            if not p.get("enabled", True):
+                continue
+            old = before.get(p["id"]) if isinstance(before.get(p["id"]), dict) else {}
+            rec = (new_state.get("portals") or {}).get(p["id"])
+            if not isinstance(rec, dict):
+                continue
+            label = portal_label(p["id"], p["name"])
+            streak = _count(rec.get("fail_streak"))
+            if streak and streak > _count(old.get("fail_streak")):
+                self._log(act.CAT_ERROR, f"{label} okunamadı ({streak}. kez üst üste)",
+                          "Biletinial taramasını etkilemez", "warn")
+                continue
+            if rec.get("last_check") == old.get("last_check") or rec.get("empty") is None:
+                continue
+            n = len(rec.get("items") or [])
+            now_text = "boş" if rec["empty"] else (f"{n} etkinlik açık" if n else "açık")
+            same = (old.get("signature") == rec.get("signature")
+                    and old.get("empty") == rec.get("empty"))
+            if same:
+                result = "değişiklik yok"
+            elif old.get("empty") is False and rec["empty"]:
+                result = "değişiklik var: etkinlik listesi boşaldı"
+            elif old.get("empty") is None:
+                result = "ilk kontrol"
+            else:
+                result = f"değişiklik var: {'boş' if old.get('empty') else 'açık'} → {now_text}"
+            self._log(act.CAT_SCAN, f"{label}: {now_text}", result + "\nPC (otomatik)")
 
     @_quiet(lambda: ({}, {}, {}))
     def _log_prepare(self, state: dict) -> tuple[dict, dict, dict]:
@@ -667,10 +704,11 @@ class Service:
         before = [ev for entry in state["outbox"] for ev in _entry_events(entry)]
         discarded = int(state["meta"].get("paused_discarded", 0) or 0)
         snap_before, attempts, by_key = self._log_prepare(state)
+        portals_before = copy.deepcopy(state.get("portals") or {})
         sent_before = self._tg.sent
         res = run_once(self._store, self._tg, self._claims, now, who="pc",
                        fetch_fn=fetch_fn, sleep=sleep, persist_state=False, state=state,
-                       only_slugs=only, config=config)
+                       only_slugs=only, config=config, portal_fetch_fn=self._portal_fetch)
         new = res.state
         if delivery_only:  # not a scan: keep the last real scan time
             new["meta"]["last_scan"] = state["meta"].get("last_scan")
@@ -684,6 +722,7 @@ class Service:
             errors.append(_err("yerel durum yazılamadı", exc))
         if not delivery_only and not manual:  # "Listeyi güncelle" logs itself
             self._log_scan(now, snap_before, new, res, only, mode)
+        self._log_portals(portals_before, new, config)
         self._log_delivery(attempts, new, res, self._tg.sent - sent_before, by_key)
         if int(new["meta"].get("paused_discarded", 0) or 0) == discarded:
             after = [ev for entry in new["outbox"] for ev in _entry_events(entry)]
@@ -869,6 +908,11 @@ class Service:
         return Play(slug, str(entry.get("title") or slug), str(entry.get("url") or ""),
                     entry.get("genre"), entry.get("duration_min"), entry.get("age_limit"),
                     entry.get("price_from"), [], set(entry.get("tags") or []))
+
+    def portals(self, now: datetime | None = None) -> list[PortalView]:
+        """The "Portallar" strip: one view per enabled reservation portal."""
+        return portal_views(self._config or default_config(), self.state,
+                            now or self._clock())
 
     def rows(self, now: datetime | None = None) -> list[Row]:
         state = self.state or {"plays": {}}

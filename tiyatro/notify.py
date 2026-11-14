@@ -116,11 +116,17 @@ def portal_label(portal_id, name) -> str:
     return PORTAL_LABELS.get(portal_id) or str(name or portal_id or "Portal")
 
 
+def portal_headline(ev: Event) -> str:
+    """First line of a portal notification (also the desktop notification title)."""
+    p = ev.payload if isinstance(ev.payload, dict) else {}
+    label = portal_label(p.get("portal_id"), p.get("title"))
+    sep = ": " if ev.kind != "PORTAL_FAILING" else " "
+    return f"🏛️ {label}{sep}{PORTAL_TEXT.get(ev.kind, ev.kind)}"
+
+
 def _portal_entry(ev: Event) -> str:
     p = ev.payload if isinstance(ev.payload, dict) else {}
-    label = _esc(portal_label(p.get("portal_id"), p.get("title")), TITLE_MAX)
-    sep = ": " if ev.kind != "PORTAL_FAILING" else " "
-    lines = [f"🏛️ {label}{sep}{PORTAL_TEXT.get(ev.kind, html.escape(ev.kind))}"]
+    lines = [html.escape(portal_headline(ev))]
     items = [i for i in (p.get("items") or []) if isinstance(i, dict)]
     for i in items[:PORTAL_NOTE_ITEMS]:
         line = f"• {_esc(i.get('title') or 'Etkinlik', TITLE_MAX)}"
