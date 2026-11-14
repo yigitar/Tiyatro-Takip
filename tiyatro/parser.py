@@ -290,10 +290,9 @@ def parse_play(html: str, url: str) -> Play:
 
 SUMMARY_MAX = 1500
 CREDITS_MAX = 12
-_ABOUT_RE = re.compile(r'<div\b[^>]*\bevent-card-v2__about\b[^>]*>(.*?)</div>', re.S | re.I)
+_ABOUT_OPEN_RE = re.compile(r'<div\b[^>]*\bevent-card-v2__about\b[^>]*>', re.I)
 _P_RE = re.compile(r"<p\b[^>]*>(.*?)</p>", re.S | re.I)
 _BR_RE = re.compile(r"<br\s*/?>", re.I)
-_TITLE_ONLY_RE = re.compile(r"\s*<strong>[^<]*</strong>\s*", re.I)
 _LEAD_STRONGS_RE = re.compile(r"\s*((?:<strong>[^<]*</strong>[ \t\xa0]*)+)(.*)", re.S | re.I)
 _CAST_HEADS = {"oyuncular", "oyuncu kadrosu", "oynayanlar"}
 _GROUP_RE = re.compile(r'<section\b[^>]*\bdata-cast-group="(\w+)"[^>]*>(.*?)</section>', re.S | re.I)
@@ -308,35 +307,52 @@ def _flat(fragment: str) -> str:
     return re.sub(r"\s+", " ", htmlmod.unescape(_TAG_STRIP_RE.sub("", fragment))).strip()
 
 
+_SEP_RE = re.compile(r"([\s\-'’(),/&;]+)")
+_HIATUS_RE = re.compile(r"I[AEIOUÖÜ]|[AEIOUÖÜ]I")
+
+
+def _dotted_i(word: str) -> bool:
+    """Does a capital ``I`` in this ALL-CAPS word read as ``i`` (True) or Turkish ``ı``?
+    Heuristic only: an explicit ``İ`` means Turkish spelling (``I`` -> ``ı``); W/Q/X or an
+    ``I`` touching another vowel means a foreign word (``I`` -> ``i``); otherwise vowel
+    harmony: a front vowel (E/Ö/Ü) -> ``i``, else ``ı``. Known miss: "MARIA" -> "Marıa"."""
+    if "İ" in word:
+        return False
+    if any(c in _FOREIGN_LETTERS for c in word) or _HIATUS_RE.search(word):
+        return True
+    return any(c in "EÖÜ" for c in word)
+
+
 def _tr_word(word: str, first_cap: bool) -> str:
-    foreign = any(c in _FOREIGN_LETTERS for c in word)
+    dotted = _dotted_i(word)
     out = []
     for i, ch in enumerate(word):
-        if foreign:
-            low = ch.lower().replace("i\u0307", "i")
-            up = low.upper()
+        if i == 0 and first_cap:
+            out.append(ch)
+        elif ch == "I":
+            out.append("i" if dotted else "ı")
         else:
-            low = {"I": "ı", "İ": "i"}.get(ch) or ch.lower()
-            up = {"i": "İ", "ı": "I"}.get(low) or low.upper()
-        out.append(up if i == 0 and first_cap else low)
+            out.append({"İ": "i"}.get(ch) or ch.lower())
     return "".join(out)
 
 
 def tr_title(text: str) -> str:
     """ALL-CAPS text to Turkish Title Case ("İBRAHİM AYDIN" -> "İbrahim Aydın"); text
-    that already has lowercase letters is returned unchanged. Words with W/Q/X are
-    treated as foreign (I -> i), e.g. "WILLIAM"."""
+    that already has lowercase letters is returned unchanged. Every space, comma, hyphen,
+    slash, "&" and "(" starts a new word; after an apostrophe only a name-like prefix
+    ("O'Neil", "D'Artagnan") capitalises, a suffix ("Ankara'da") stays lowercase."""
     if any(c.isalpha() and c != c.upper() for c in text):
         return text
-    parts = re.split(r"([\s\-'’(),]+)", text)
-    out, start = [], True
-    for part in parts:
-        if re.fullmatch(r"[\s\-'’(),]*", part):
+    out, start, prev = [], True, ""
+    for part in _SEP_RE.split(text):
+        if not part:
+            continue
+        if _SEP_RE.fullmatch(part):
             out.append(part)
-            start = start or part.strip() == "" or part.strip() in ("(",)
+            start = len(prev) <= 2 if part in ("'", "’") else True
             continue
         out.append(_tr_word(part, start))
-        start = False
+        prev, start = part, False
     return "".join(out)
 
 
@@ -358,49 +374,56 @@ def _cap_summary(text: str) -> str:
     return cut.rstrip() + "…"
 
 
-def _para_text(inner: str) -> str:
-    text = _BR_RE.sub("\x00", inner)
-    text = re.sub(r"\s+", " ", htmlmod.unescape(_TAG_STRIP_RE.sub("", text)))
-    return re.sub(r" ?\x00 ?", "\n", text).strip()
-
-
-def _credit_line(line: str) -> tuple[str, str] | None:
-    m = _LEAD_STRONGS_RE.fullmatch(line)
+def _about_block(html: str) -> str | None:
+    """Inner HTML of the ``event-card-v2__about`` div (nested divs are balanced)."""
+    m = _ABOUT_OPEN_RE.search(html)
     if not m:
         return None
-    label, rest = _flat(m.group(1)), m.group(2).strip()
-    if not label.endswith(":") and not rest.startswith(":"):
-        return None
-    label = label.rstrip(":").strip()
-    value = _flat(rest.lstrip().lstrip(":"))
-    return (label, tr_title(value)) if label and value else None
+    sec = _SECTION_END_RE.search(html, m.end())
+    limit = sec.start() if sec else len(html)
+    return html[m.end():_row_div_end(html, m.end(), limit)]
+
+
+def _names(text: str) -> list[str]:
+    return [_cast_name(n) for n in re.split(r"[,;]", text) if n.strip()]
 
 
 def _about_details(html: str) -> tuple[str | None, list[str], dict[str, str]]:
-    m = _ABOUT_RE.search(html)
-    if not m:
+    block = _about_block(html)
+    if block is None:
         return None, [], {}
     summary: list[str] = []
     cast: list[str] = []
     credits: dict[str, str] = {}
-    for inner in _P_RE.findall(m.group(1)):
-        lines = [ln for ln in _BR_RE.split(inner) if _flat(ln)]
-        parsed = [_credit_line(ln) for ln in lines]
-        if lines and all(parsed):
-            for label, value in parsed:
-                credits.setdefault(label, value)
-            continue
-        head = _LEAD_STRONGS_RE.fullmatch(lines[0]) if len(lines) > 1 else None
-        if head and not head.group(2).strip():
-            if _flat(head.group(1)).lower().replace("ı", "i") in _CAST_HEADS:
-                names = re.split(r"[,;]", ",".join(_flat(ln) for ln in lines[1:]))
-                cast.extend(_cast_name(n) for n in names if n.strip())
-            continue  # other headed groups (e.g. chorus) are not summary text
-        if _TITLE_ONLY_RE.fullmatch(inner):
-            continue
-        text = _para_text(inner)
-        if text:
-            summary.append(text)
+    for inner in _P_RE.findall(block):
+        prose: list[str] = []
+        mode = None  # "cast": plain lines are names; "skip": a headed group we do not use
+        for line in _BR_RE.split(inner):
+            text = _flat(line)
+            if not text:
+                continue
+            lead = _LEAD_STRONGS_RE.fullmatch(line)
+            if lead:
+                label = _flat(lead.group(1)).rstrip(":").strip()
+                rest = _flat(lead.group(2)).lstrip(":").strip()
+                labelled = _flat(lead.group(1)).endswith(":") or _flat(lead.group(2)).startswith(":")
+                if label.lower().replace("ı", "i") in _CAST_HEADS:
+                    mode = "cast" if not rest else None
+                    cast.extend(_names(rest))
+                    continue
+                if not _flat(lead.group(2)):
+                    mode = "skip"  # a heading line: the title or e.g. "KORO VE DİĞER KİŞİLER"
+                    continue
+                if labelled and label and rest:
+                    credits.setdefault(label, tr_title(rest))
+                    mode = None
+                    continue
+            if mode == "cast":
+                cast.extend(_names(text))
+            elif mode != "skip":
+                prose.append(text)
+        if prose:
+            summary.append("\n".join(prose))
     return ("\n\n".join(summary) or None), cast, credits
 
 

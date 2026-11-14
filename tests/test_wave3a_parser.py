@@ -104,3 +104,51 @@ def test_mixed_case_names_are_kept_as_is():
     assert tr_title("İBRAHİM AYDIN") == "İbrahim Aydın"
     assert tr_title("IŞIK") == "Işık"
     assert tr_title("WILLIAM SHAKESPEARE") == "William Shakespeare"
+
+
+# ---- fix round 1 ----------------------------------------------------------------------------
+
+def test_real_fixture_details_are_unchanged():
+    import json
+    expected = json.loads((FIX / "expected_details_wave3a.json").read_text(encoding="utf-8"))
+    for name, want in expected.items():
+        p = play(name + ".html")
+        assert {"cast": p.cast, "credits": p.credits, "summary": p.summary} == want, name
+
+
+def test_tr_title_word_starts_after_separators():
+    assert tr_title("CEM KAHRAMAN, EFKAN DEVELİ") == "Cem Kahraman, Efkan Develi"
+    assert tr_title("JEAN-LUC GODARD") == "Jean-Luc Godard"
+    assert tr_title("AYŞE/MEHMET ÖZ") == "Ayşe/Mehmet Öz"
+    assert tr_title("TOM & JERRY") == "Tom & Jerry"
+    assert tr_title("ALİ (ZEYBEK)") == "Ali (Zeybek)"
+    assert tr_title("ALİ (ZEYBEK), VELİ") == "Ali (Zeybek), Veli"
+    assert tr_title("O'NEIL") == "O'Neil"
+    assert tr_title("D'ARTAGNAN") == "D'Artagnan"
+    assert tr_title("ANKARA'DA OYNAR") == "Ankara'da Oynar"
+
+
+def test_tr_title_capital_i_by_vowel_harmony():
+    assert tr_title("DILEK KAPLAN") == "Dilek Kaplan"
+    assert tr_title("ZEYNEP AVCI") == "Zeynep Avcı"
+    assert tr_title("DICKENS") == "Dickens"
+    assert tr_title("MOLIERE") == "Moliere"
+    assert tr_title("NIKOLAI GOGOL") == "Nikolai Gogol"
+    assert tr_title("AZİZ TEMİZARABACI") == "Aziz Temizarabacı"  # explicit İ: Turkish
+
+
+def test_prose_with_trailing_credit_line_does_not_leak_into_summary():
+    p = parse_play(_page("<p>Metin<br/><strong>Yazan</strong>: X Y</p>"), BASE + "x")
+    assert p.summary == "Metin" and p.credits == {"Yazan": "X Y"}
+
+
+def test_nested_div_in_about_block_does_not_cut_the_summary():
+    p = parse_play(_page("<div><p>nested</p></div><p>after</p>"), BASE + "x")
+    assert "after" in p.summary and "nested" in p.summary
+
+
+def test_cast_label_and_names_on_one_line():
+    p = parse_play(_page("<p><strong>Oyuncular:</strong> ALİ, VELİ</p>"), BASE + "x")
+    assert p.cast == ["Ali", "Veli"] and p.credits == {}
+    p = parse_play(_page("<p><strong>OYUNCULAR</strong>: ALİ; VELİ</p>"), BASE + "x")
+    assert p.cast == ["Ali", "Veli"] and p.credits == {}
