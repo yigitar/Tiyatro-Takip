@@ -31,26 +31,36 @@
   "fetch_fail_streak": 0,
   "last_daily": "2026-11-14",
   "last_daily_at": "2026-11-14T14:00:53.432212+03:00",
-  "last_scan": "2026-11-14T20:30:52.752459+03:00"
+  "last_scan": "2026-11-14T20:36:02.429993+03:00"
  },
  "outbox": [],
  "plays": {
   "evvel-zaman-icinde-kocaeli-sehir-tiyatrolari": {
    "age_limit": 7,
    "archived": false,
+   "cast": [
+    "Levent Muratoğlu"
+   ],
+   "credits": {
+    "Dekor Tasarım": "Hakan Dündar",
+    "Işık Tasarımı": "Yaşar Demirkıran",
+    "Yazar": "Işıl Kasapoğlu",
+    "Yönetmen": "Sezai Yılmaz",
+    "Yönetmen Yardımcısı": "Senem Akman"
+   },
    "duration_min": 45,
    "ever_opened": true,
    "fail_since": null,
    "fail_streak": 0,
    "first_seen": "2026-11-13T10:31:26.691999+03:00",
    "genre": "Çocuk Oyunu",
-   "last_seen": "2026-11-14T20:30:52.752459+03:00",
+   "last_seen": "2026-11-14T20:36:02.429993+03:00",
    "missing_count": 0,
    "price_from": 20.0,
    "removed": false,
    "sessions": {
     "18699570": {
-     "closed_seen_at": "2026-11-14T20:30:52.752459+03:00",
+     "closed_seen_at": "2026-11-14T20:36:02.429993+03:00",
      "end": "2026-11-15T14:45:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -77,7 +87,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/evvel-zaman-icinde-kocaeli-sehir-tiyatrolari/18699572"
     },
     "18699573": {
-     "closed_seen_at": "2026-11-14T20:30:52.752459+03:00",
+     "closed_seen_at": "2026-11-14T20:36:02.429993+03:00",
      "end": "2026-11-18T14:45:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -104,6 +114,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/evvel-zaman-icinde-kocaeli-sehir-tiyatrolari/18699577"
     }
    },
+   "summary": "Evvel Zaman İçinde adlı oyun; Çocuk Oyunu kategorisinde yer almakla birlikte yediden yetmişe tüm seyircimizin keyifle izleyeceği bir özelliğe sahiptir.\n\nBir annenin oğluna ‘’ Bana hiç al da gel’’ isteğiyle başlayan, çocuğun bu hiçlik arayışında karşılaştığı komik, bir o kadar da düşündürücü bir yol, bir yola çıkış hikayesi… Pertev Naili Boratav’ dan Türk Halk Edebiyatı’ nın güzel örneklerinden olan tekerlemelerle bizden olanı anlatıyoruz sizlere. Anne ve babalar yani bir zamanlar çocuk olan bizler de çocuklarımızla birlikte Keloğlan’dan, Nasrettin Hoca’ya, Ozan geleneğimizden, kuklalara, Meddah geleneğimizden, gölge oyunumuz Hacivat ve Karagöz'e samimi, içten, yediden yetmişe hepimizin keyif alabileceği, bazen hüzünlü, bazen de eğlenceli bir yolculuğa çıkacağız, eskimeyen zamanlara doğru...\n\nOYUN KÜNYESİ:\nYAZAN: IŞIL KASAPOĞLU",
    "tags": [
     "gündüz",
     "çocuk"
@@ -114,19 +125,21 @@
   "hic-kimsenin-oykusu-kocaeli-buyuksehir-sehir-tiyatrolari": {
    "age_limit": 13,
    "archived": false,
+   "cast": [],
+   "credits": {},
    "duration_min": 70,
    "ever_opened": true,
    "fail_since": null,
    "fail_streak": 0,
    "first_seen": "2026-11-13T10:31:26.691999+03:00",
    "genre": "Yetişkin Oyunu",
-   "last_seen": "2026-11-14T20:30:52.752459+03:00",
+   "last_seen": "2026-11-14T20:36:02.429993+03:00",
    "missing_count": 0,
    "price_from": 35.0,
    "removed": false,
    "sessions": {
     "18699593": {
-     "closed_seen_at": "2026-11-14T20:30:52.752459+03:00",
+     "closed_seen_at": "2026-11-14T20:36:02.429993+03:00",
      "end": "2026-11-18T21:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -140,7 +153,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/hic-kimsenin-oykusu-kocaeli-buyuksehir-sehir-tiyatrolari/18699593"
     },
     "18699594": {
-     "closed_seen_at": "2026-11-14T20:30:52.752459+03:00",
+     "closed_seen_at": "2026-11-14T20:36:02.429993+03:00",
      "end": "2026-11-25T21:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -154,6 +167,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/hic-kimsenin-oykusu-kocaeli-buyuksehir-sehir-tiyatrolari/18699594"
     }
    },
+   "summary": "Bir tren kompartımanında yolları kesişen iki hayat... Aynı dili konuşan, birbiriyle anlaşan, birbirini anlayan... Onlar yıllar önce farklı ülkelerden gelip aynı ülkeye, aynı şehre, aynı mahalleye yerleşmiş iki göçmen... Ülkede savaş çıkmış, karşıt cephelerde savaşmış, barış süreciyle birlikte evlerine döneceklerdir. Yüzümüzde tebessümle tanık olduğumuz heyecan, gerilim dolu hesaplaşmalarında onur, adalet, vicdan sorgulanırken derin bir yüzleşmeye bizler de ortak olmaya hazır mıyız? İyi seyirler…",
    "tags": [],
    "title": "Hiç Kimsenin Öyküsü",
    "url": "https://biletinial.com/tr-tr/tiyatro/hic-kimsenin-oykusu-kocaeli-buyuksehir-sehir-tiyatrolari"
@@ -161,13 +175,37 @@
   "kusursuz-dunyaya-yolculuk-kocaeli-bb": {
    "age_limit": 4,
    "archived": false,
+   "cast": [
+    "Ezgi Özbalı",
+    "Güliz Gençoğlu",
+    "Utku Oğuz",
+    "Ahmet Buğra Karakoyun",
+    "Duygu Mine Özcan",
+    "İbrahim Aydın",
+    "Sevcan Kuş Efe",
+    "Su Özdemir",
+    "Aytek Mete Elgün",
+    "Çağla Akarsu",
+    "Tunç Efe"
+   ],
+   "credits": {
+    "Dekor Tasarım": "Efter Tunç",
+    "Işık Tasarımı": "Yakup Çartık",
+    "Koreograf": "Taner Güngör",
+    "Kostüm Realizasyon": "Emine Kaynak Yıldırım",
+    "Kostüm Tasarım": "Nalan Alaylı",
+    "Müzik": "Cem Kahraman, Efkan Develi",
+    "Repetitör": "Zeynep Sevi Yılmaz",
+    "Yazar": "Özlem Saraç Özcan",
+    "Yönetmen": "Gaye Çetinkaya"
+   },
    "duration_min": 60,
    "ever_opened": true,
    "fail_since": null,
    "fail_streak": 0,
    "first_seen": "2026-11-13T10:31:26.691999+03:00",
    "genre": "Fantastik",
-   "last_seen": "2026-11-14T20:30:52.752459+03:00",
+   "last_seen": "2026-11-14T20:36:02.429993+03:00",
    "missing_count": 0,
    "price_from": 20.0,
    "removed": false,
@@ -186,6 +224,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/kusursuz-dunyaya-yolculuk-kocaeli-bb/18699591"
     }
    },
+   "summary": "Kiraz, “Kusursuz Dünya” adlı bilgisayar oyununa bayılıyor! Tek hayali, tüm bölümleri geçip Yenilmez Komutan Torumar’ın en cesur askeri olmak. Ama annesi Nejla ve babası Cemal, bu duruma bir çözüm buluyor: Bilgisayar, tablet ve telefon artık yasak!\n\nFakat “Kusursuz Dünya” Kiraz’ı bırakır mı hiç? Yenilmez Komutan Torumar, Kiraz’a çok gizemli bir teklif sunuyor: Onu sanal dünyanın sonsuz macerasına davet ediyor! Pinokyo’nun rehberlik ettiği bu serüvende Kiraz; Hansel ve Gretel’den, Uyuyan Güzel’e kadar birçok masalın içine atlıyor. Acaba Kiraz, bu rengârenk yolculuğun sonunda Torumar’ın baş askeri olabilecek mi?\n\n“Kusursuz Dünya” Müzikali, siz çocukları gerçek, sanal ve masal dünyalarının iç içe geçtiği heyecan dolu bir yolculuğa çağırıyor!",
    "tags": [
     "gündüz",
     "çocuk"
@@ -196,19 +235,46 @@
   "on-ikinci-gece-kocaeli-bb": {
    "age_limit": null,
    "archived": false,
+   "cast": [
+    "İbrahim Aydın",
+    "İlker Bağlam",
+    "Sarper Saydam",
+    "Senem Akman Muratoğlu",
+    "Sevcan Kuş Efe",
+    "Su Özdemir",
+    "Tuğra Can Bıçak",
+    "Ufuk Tuncer",
+    "Volkan Dinç",
+    "Yusuf Ferhat Kanat",
+    "Çağla Akars"
+   ],
+   "credits": {
+    "Dekor Tasarım": "Nur Sinem Mete",
+    "Dekor-Kostüm Asistanı": "Esma Çelik",
+    "Dramaturg": "Mine Yıldız",
+    "Işık Tasarım": "Ayşe Sedef Ayter",
+    "Koreograf": "İzmir Selen Tenim",
+    "Kostüm Tasarım": "Dilek Kaplan",
+    "Projeksiyon Tasarım": "Aziz Okan Temizarabacı",
+    "Ses Tasarım": "Berkay Aras Özideş",
+    "Yardımcı Yönetmen": "Nursel Çeliktürk",
+    "Yazan": "William Shakespeare",
+    "Yönetmen": "Burç Güray Dinçol",
+    "Çeviren": "Zeynep Avcı"
+   },
    "duration_min": 130,
    "ever_opened": true,
    "fail_since": null,
    "fail_streak": 0,
    "first_seen": "2026-11-13T10:31:26.691999+03:00",
    "genre": "Komedi",
-   "last_seen": "2026-11-14T20:30:52.752459+03:00",
+   "last_seen": "2026-11-14T20:36:02.429993+03:00",
    "missing_count": 0,
    "price_from": 35.0,
    "removed": false,
    "sessions": {
     "18699567": {
-     "closed_seen_at": "2026-11-14T20:30:52.752459+03:00",
+     "closed_seen_at": "2026-11-14T20:36:02.429993+03:00",
      "end": "2026-11-13T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": true,
@@ -222,7 +288,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699567"
     },
     "18699568": {
-     "closed_seen_at": "2026-11-14T20:30:52.752459+03:00",
+     "closed_seen_at": "2026-11-14T20:36:02.429993+03:00",
      "end": "2026-11-14T17:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": true,
@@ -236,7 +302,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699568"
     },
     "18699569": {
-     "closed_seen_at": "2026-11-14T20:30:52.752459+03:00",
+     "closed_seen_at": "2026-11-14T20:36:02.429993+03:00",
      "end": "2026-11-14T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": true,
@@ -250,7 +316,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699569"
     },
     "18699574": {
-     "closed_seen_at": "2026-11-14T20:30:52.752459+03:00",
+     "closed_seen_at": "2026-11-14T20:36:02.429993+03:00",
      "end": "2026-11-19T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -264,7 +330,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699574"
     },
     "18699575": {
-     "closed_seen_at": "2026-11-14T20:30:52.752459+03:00",
+     "closed_seen_at": "2026-11-14T20:36:02.429993+03:00",
      "end": "2026-11-20T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -278,7 +344,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699575"
     },
     "18699576": {
-     "closed_seen_at": "2026-11-14T20:30:52.752459+03:00",
+     "closed_seen_at": "2026-11-14T20:36:02.429993+03:00",
      "end": "2026-11-21T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -292,6 +358,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699576"
     }
    },
+   "summary": "Rüzgâr uğuldar, deniz yırtılır\nGece ikiye bölünür durmaksızın\nDirekler eğilir, ipler kopar\nKader savrulur ansızın…\n\nKorkunç bir deniz kazası ikiz kardeşler Viola ve Sebastian'ı birbirinden koparıp onları tuhaf İllyria'nın tekinsiz kıyılarına fırlatır. Sebastian öldüğünü sandığı kardeşinin yasını tutarken, Viola yabancı bir bedenin ve ödünç bir kimliğin ardına sığınarak hayatta kalmaya çalışır; ikisi de İllyria'ya bambaşka kapılardan adım atar.\n\nVe William Shakespeare'den On İkinci Gece başlar.",
    "tags": [],
    "title": "On İkinci Gece",
    "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb"
@@ -299,19 +366,31 @@
   "unutmak-kocaeli-bb": {
    "age_limit": null,
    "archived": false,
+   "cast": [
+    "Senem Akman Muratoğlu – Levent Muratoğlu"
+   ],
+   "credits": {
+    "Dekor-Kostüm Tasarım": "Nilsu Baldan",
+    "Dramaturg": "Kemal Keşmer",
+    "Işık Tasarım": "Ayşe Sedef Ayter",
+    "Oyunlaştıran": "Taner Tunçay",
+    "Yardımcı Yönetmen": "Çağla Buldak Akarsu – Işık Öztorun",
+    "Yazan": "Tristan Bernays",
+    "Yönetmen": "İbrahim Şahin"
+   },
    "duration_min": null,
    "ever_opened": true,
    "fail_since": null,
    "fail_streak": 0,
    "first_seen": "2026-11-13T10:31:26.691999+03:00",
    "genre": "Dram",
-   "last_seen": "2026-11-14T20:30:52.752459+03:00",
+   "last_seen": "2026-11-14T20:36:02.429993+03:00",
    "missing_count": 0,
    "price_from": 35.0,
    "removed": false,
    "sessions": {
     "18699597": {
-     "closed_seen_at": "2026-11-14T20:30:52.752459+03:00",
+     "closed_seen_at": "2026-11-14T20:36:02.429993+03:00",
      "end": "2026-11-17T20:00:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -325,6 +404,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/unutmak-kocaeli-bb/18699597"
     }
    },
+   "summary": null,
    "tags": [],
    "title": "Unutmak",
    "url": "https://biletinial.com/tr-tr/tiyatro/unutmak-kocaeli-bb"
@@ -332,19 +412,55 @@
   "ve-ates-bizi-tuketiyor-kocaeli-bb": {
    "age_limit": 14,
    "archived": false,
+   "cast": [
+    "Hüdai Fatih Sevdi",
+    "Emre Işık",
+    "Umut İsfen",
+    "Cüneyt Gürbüz",
+    "Feyzan Soykan",
+    "Zafer Kırdudu",
+    "Ahmet Buğra Karakoyun",
+    "Mete Atalay",
+    "Alican Altun",
+    "Özgür Özyılmaz",
+    "Cansu Mengüç",
+    "Ezgi Özbalı",
+    "Sevcan Kuş Efe",
+    "Emine Kaynak Yıldırım",
+    "Melis Erdal",
+    "Su Özdemir",
+    "Emrah Tosun",
+    "İrem Yünsel",
+    "Zeynep Şengöz",
+    "Ufuk İnce"
+   ],
+   "credits": {
+    "Dekor ve Kostüm Tasarım": "Efter Tunç",
+    "Görsel Tasarım": "Aktürk Aksoy",
+    "Işık Tasarımı": "Cem Yılmazer",
+    "Koreograf": "Tuğçe Ulugün Tuna",
+    "Kukla Tasarımı": "Ayten Öğütçü",
+    "Müzik": "Fırat Akarcalı",
+    "Repetitör": "Asel Aklın",
+    "Ses Tasarım": "Ahmet Tanık",
+    "Uyarlayan": "Müge Oskay",
+    "Yazar": "Murat Gülsoy",
+    "Yönetmen": "Mehmet Birkiye",
+    "Yönetmen Yardımcısı": "Ozan Şahin"
+   },
    "duration_min": 90,
    "ever_opened": false,
    "fail_since": null,
    "fail_streak": 0,
    "first_seen": "2026-11-13T10:31:26.691999+03:00",
    "genre": "Dram",
-   "last_seen": "2026-11-14T20:30:52.752459+03:00",
+   "last_seen": "2026-11-14T20:36:02.429993+03:00",
    "missing_count": 0,
    "price_from": 35.0,
    "removed": false,
    "sessions": {
     "18699586": {
-     "closed_seen_at": "2026-11-14T20:30:52.752459+03:00",
+     "closed_seen_at": "2026-11-14T20:36:02.429993+03:00",
      "end": "2026-11-27T21:30:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -358,7 +474,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/ve-ates-bizi-tuketiyor-kocaeli-bb/18699586"
     },
     "18699587": {
-     "closed_seen_at": "2026-11-14T20:30:52.752459+03:00",
+     "closed_seen_at": "2026-11-14T20:36:02.429993+03:00",
      "end": "2026-11-28T16:30:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -372,7 +488,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/ve-ates-bizi-tuketiyor-kocaeli-bb/18699587"
     },
     "18699588": {
-     "closed_seen_at": "2026-11-14T20:30:52.752459+03:00",
+     "closed_seen_at": "2026-11-14T20:36:02.429993+03:00",
      "end": "2026-11-28T21:30:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -386,6 +502,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/ve-ates-bizi-tuketiyor-kocaeli-bb/18699588"
     }
    },
+   "summary": "Gecenin içinde dolanıyoruz ve İstanbul sokaklarında kaybolan ihtiyar bir adamı arıyoruz.\n\nBir radyo cızırdıyor, yüzler bulanıklaşıyor, evler yer değiştiriyor, zaman kırılıyor.\n\nEdebiyatımızın en çok okunan yazarlarından Murat Gülsoy’un aynı adlı romanından hareketle, Cevat Fehmi Başkut Özel Ödüllü oyun yazarı Müge Oskay tarafından serbest bir uyarlama olarak yazılan oyun; eski şarkıların, gece yarısı çarpan kapıların, tekrar tekrar görülen rüyaların, arayış ve kayboluşların bir döngüsü.\n\nYarım yüzyılı aşan tiyatro birikimiyle Mehmet Birkiye’nin rejisi; kimlikleri bulanıklaştıran maskeler, ayağın altından kayıp giden sahne, geçmişten yankılanan sesler ve Kocaeli Şehir Tiyatroları’nın kalabalık oyuncu kadrosunun oyunbaz ensemble enerjisiyle karanlık, düşsel ve coşkulu bir sahne dünyası kuruyor.\n\nGeçmiş ve şimdi, unutmak ve hatırlamak, “Ben” ve “O”.\n\nVe Ateş Bizi Tüketiyor; kişisel hafıza, toplumsal hafıza ve şehir hafızasının karanlık dehlizlerinde dolaşan tekinsiz bir gece yürüyüşü.\n\nGecenin içinde dolanıyoruz ve ateş bizi tüketiyor.",
    "tags": [
     "gündüz"
    ],
