@@ -322,6 +322,95 @@ def scrub_secrets(text: str, secrets=()) -> str:
     return _BEARER.sub(r"\1***", text)
 
 
+# ---- list sorting ------------------------------------------------------------------------
+
+_TR_ALPHABET = "abcçdefgğhıijklmnoöpqrsştuüvwxyz"
+_TR_RANK = {ch: i for i, ch in enumerate(_TR_ALPHABET)}
+_TR_LOWER = {"I": "ı", "İ": "i"}
+SORT_COLUMNS = ("title", "tags", "genre", "duration", "age", "price", "sessions", "summary",
+                "follow")
+# First click sorts "most first" (descending key) on these; every other column ascending.
+_FIRST_DESC = {"sessions", "summary", "follow"}
+
+
+def tr_sort_key(text) -> tuple:
+    """Collation key in Turkish alphabet order (a b c ç d … g ğ h ı i j … o ö p … s ş t u ü …).
+    ``I`` is dotless (``ı``) and ``İ`` dotted (``i``); digits and punctuation sort before
+    letters; case is ignored."""
+    key = []
+    for ch in str(text or ""):
+        low = _TR_LOWER.get(ch) or ch.lower()
+        for c in low.replace("i̇", "i"):
+            rank = _TR_RANK.get(c)
+            key.append((1, rank) if rank is not None else (0, ord(c)))
+    return tuple(key)
+
+
+_NUMBER = re.compile(r"(\d+(?:[.,]\d+)?)")
+
+
+def _number(text) -> float | None:
+    m = _NUMBER.search(str(text or ""))
+    return float(m.group(1).replace(",", ".")) if m else None
+
+
+def _count(text: str, word: str) -> int:
+    m = re.search(rf"(\d+) {word}", text or "")
+    return int(m.group(1)) if m else 0
+
+
+def _sort_value(row, column: str):
+    """Comparable value of ``row`` for ``column`` or None when the row has no value."""
+    if column == "title":
+        return tr_sort_key(row.title) if row.title.strip() else None
+    if column == "tags":
+        return tr_sort_key(", ".join(row.tags)) if row.tags else None
+    if column == "genre":
+        return tr_sort_key(row.genre) if row.genre.strip() else None
+    if column in ("duration", "age", "price"):
+        return _number(getattr(row, column))
+    if column == "sessions":
+        return row.session_count
+    if column == "summary":
+        if not row.session_count:
+            return None
+        return (_count(row.status_summary, "satışta"), -_count(row.status_summary, "tükendi"))
+    if column == "follow":
+        return 2 if row.watched else 1 if row.target_lines else 0
+    return None
+
+
+def sort_rows(rows, sort) -> list:
+    """Rows ordered by ``sort`` = ``(column, "asc"|"desc")``; None/unknown keeps the given
+    (default) order. Stable; rows without a value always come last, in the given order."""
+    rows = list(rows)
+    if not sort or sort[0] not in SORT_COLUMNS or sort[1] not in ("asc", "desc"):
+        return rows
+    column, direction = sort
+    valued, missing = [], []
+    for row in rows:
+        value = _sort_value(row, column)
+        (missing if value is None else valued).append((value, row))
+    valued.sort(key=lambda pair: pair[0], reverse=direction == "desc")
+    return [r for _v, r in valued] + [r for _v, r in missing]
+
+
+def next_sort(current, column: str):
+    """Header click: first click (ascending, or "most first" for Seans/Durum/Takip), second
+    reverses, third returns to the default order (None)."""
+    first = "desc" if column in _FIRST_DESC else "asc"
+    reverse = "asc" if first == "desc" else "desc"
+    if not current or current[0] != column:
+        return (column, first)
+    return (column, reverse) if current[1] == first else None
+
+
+def heading_text(label: str, column: str, sort) -> str:
+    if sort and sort[0] == column:
+        return f"{label} {'▲' if sort[1] == 'asc' else '▼'}"
+    return label
+
+
 # ---- ui.json ---------------------------------------------------------------------------------
 
 _GEOM = re.compile(r"^(\d{1,5})x(\d{1,5})(?:([+-]-?\d{1,5})([+-]-?\d{1,5}))?$")
@@ -358,6 +447,20 @@ def load_ui(path) -> dict:
         if isinstance(data.get("beep"), bool):
             ui["beep"] = data["beep"]
     return ui
+
+
+def load_sort(path):
+    """Saved ``(column, direction)`` of the list sort; None (default order) when the file
+    is missing/corrupt or holds anything unknown."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    saved = data.get("sort") if isinstance(data, dict) else None
+    if (isinstance(saved, list) and len(saved) == 2 and saved[0] in SORT_COLUMNS
+            and saved[1] in ("asc", "desc")):
+        return (saved[0], saved[1])
+    return None
 
 
 def save_ui(path, ui: dict) -> None:
