@@ -20,6 +20,7 @@ TAG_ORDER = ["çocuk", "gündüz"]
 STATUS_WORDS = (("on_sale", "satışta"), ("upcoming", "yakında"), ("sold_out", "tükendi"),
                 ("unknown", "belirsiz"))
 APP_TITLE = "Tiyatro Takip"
+NO_TARGET_TEXT = "⚠️ hedef yok → bildirim gelmez"  # as worker/src/menu.js
 
 
 @dataclass
@@ -138,8 +139,8 @@ def _row(slug: str, entry: dict, config: Config, seen: set[str], removed: set[st
             opening = opens if opening is None or opens < opening else opening
     summary = " · ".join(f"{counts[k]} {word}" for k, word in STATUS_WORDS if counts[k])
     lines = [target_summary(t) for t in (watch.targets if watch is not None else [])]
-    if watched and not lines:
-        lines = ["hedef yok"]
+    if active and not lines:
+        lines = [NO_TARGET_TEXT]
     duration = entry.get("duration_min")
     age = entry.get("age_limit")
     return Row(

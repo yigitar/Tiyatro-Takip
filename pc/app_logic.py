@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 
 from pc import configedit
-from pc.viewmodel import DAY_SHORT, target_summary, when_text
+from pc.viewmodel import DAY_SHORT, NO_TARGET_TEXT, target_summary, when_text  # noqa: F401
 from tiyatro.notify import DAYS, MONTHS
 from tiyatro.config import MAX_PEOPLE, MIN_PEOPLE, config_from_dict
 from tiyatro.models import ISTANBUL, Target

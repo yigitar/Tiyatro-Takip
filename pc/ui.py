@@ -601,7 +601,8 @@ class App:
         self.target_buttons = {}
         watch = self.service.config.plays.get(row.slug) if self.service.config else None
         if watch is None or not watch.targets:
-            ttk.Label(targets, text="Hedef yok.").pack(anchor="w", padx=6, pady=4)
+            text = L.NO_TARGET_TEXT if watch is not None and watch.active else "Hedef yok."
+            ttk.Label(targets, text=text).pack(anchor="w", padx=6, pady=4)
         for t in (watch.targets if watch else []):
             line = ttk.Frame(targets)
             line.pack(fill="x", padx=6, pady=2)

@@ -317,3 +317,32 @@ test("final review C2: to_time is inclusive and the summary says \"'e kadar\"", 
   const c2 = apply(`ht:${KB}:y:18`, cfg, st);
   assert.ok(render(`ts:${KB}:y`, c2, st).text.includes("18:00'e kadar"));
 });
+
+// final review I8: an active play always has a target (same semantics as pc/configedit.py)
+const EMPTY_RULE = { days: null, from_time: null, to_time: null, overrides: {}, exclude_dates: [] };
+
+test("ta:<h>:1 on a play without targets adds the default target (child if tagged)", () => {
+  const st2 = structuredClone(st);
+  st2.plays["kucuk-prens"].tags = ["çocuk"];
+  const c = apply(`ta:${KP}:1`, cfg, st2);
+  assert.deepEqual(play(c, "kucuk-prens"), {
+    active: true, tag_overrides: {},
+    targets: [{ id: "c", name: "Çocuk", people: 2, rule: EMPTY_RULE }],
+  });
+  assert.deepEqual(apply(`ta:${KP}:1`, c, st2), c); // idempotent
+  const y = apply(`ta:${YN}:1`, cfg, st2);
+  assert.deepEqual(y.plays["yeni-oyun"].targets, [{ id: "y", name: "Yetişkin", people: 2, rule: EMPTY_RULE }]);
+  // deactivating never adds; a play with targets keeps exactly its targets
+  assert.deepEqual(play(apply(`ta:${KP}:0`, cfg, st2), "kucuk-prens").targets, []);
+  assert.deepEqual(play(apply(`ta:${KB}:1`, cfg, st2)).targets, play(cfg).targets);
+});
+
+test("active play without targets shows the no-alert warning (play screen + watchlist)", () => {
+  const c = structuredClone(cfg);
+  c.plays["kucuk-prens"].active = true;
+  const warn = "⚠️ hedef yok → bildirim gelmez";
+  assert.ok(render(`p:${KP}`, c, st).text.includes(warn));
+  assert.ok(render("tl", c, st).text.includes(warn));
+  assert.ok(!render(`p:${KB}`, c, st).text.includes(warn));
+  assert.ok(!render(`p:${KP}`, cfg, st).text.includes(warn)); // inactive: no warning
+});

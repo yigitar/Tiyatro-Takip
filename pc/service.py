@@ -672,7 +672,10 @@ class Service:
         return new
 
     def set_active(self, slug: str, active: bool) -> dict:
-        return self._edit(configedit.set_active, slug, active)
+        entry = ((self.state or {}).get("plays") or {}).get(slug)
+        tags = entry.get("tags") if isinstance(entry, dict) else None
+        tags = [t for t in tags if isinstance(t, str)] if isinstance(tags, list) else []
+        return self._edit(configedit.set_active, slug, active, tags)
 
     def ensure_target(self, slug: str, kind: str) -> dict:
         return self._edit(configedit.ensure_target, slug, kind)

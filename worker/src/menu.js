@@ -16,6 +16,8 @@ const DAY_NAMES = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
 const FROM_HOURS = [12, 14, 16, 18, 19, 20];
 const TO_HOURS = [16, 18, 20, 22];
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+const NO_TARGET_TEXT = "⚠️ hedef yok → bildirim gelmez"; // as pc/viewmodel.py
+const KINDS = { y: ["y", "Yetişkin"], c: ["c", "Çocuk"] };
 
 const encoder = new TextEncoder();
 
@@ -200,6 +202,15 @@ function ensurePlay(out, slug) {
   return w;
 }
 
+function addTarget(out, slug, code) {
+  const kind = KINDS[code];
+  if (!kind || findTarget(out, slug, kind[0])) return;
+  ensurePlay(out, slug).targets.push({
+    id: kind[0], name: kind[1], people: 2,
+    rule: { days: null, from_time: null, to_time: null, overrides: {}, exclude_dates: [] },
+  });
+}
+
 function ruleOf(t) {
   if (!isObj(t.rule)) t.rule = { days: null, from_time: null, to_time: null, overrides: {}, exclude_dates: [] };
   return t.rule;
@@ -228,16 +239,20 @@ export function apply(route, config, state) {
     if (slug === undefined) return out;
 
     if (op === "ta") {
-      if (parts[2] === "0" || parts[2] === "1") ensurePlay(out, slug).active = parts[2] === "1";
+      if (parts[2] === "0" || parts[2] === "1") {
+        const w = ensurePlay(out, slug);
+        w.active = parts[2] === "1";
+        // An active play without a target never alerts: add the default target
+        // (child if the play's state tags say "çocuk"). Same as pc/configedit.set_active.
+        if (w.active && w.targets.length === 0) {
+          const tags = statePlays(state)[slug]?.tags;
+          addTarget(out, slug, Array.isArray(tags) && tags.includes("çocuk") ? "c" : "y");
+        }
+      }
       return out;
     }
     if (op === "tg") {
-      const kind = { y: ["y", "Yetişkin"], c: ["c", "Çocuk"] }[parts[2]];
-      if (!kind || findTarget(out, slug, kind[0])) return out;
-      ensurePlay(out, slug).targets.push({
-        id: kind[0], name: kind[1], people: 2,
-        rule: { days: null, from_time: null, to_time: null, overrides: {}, exclude_dates: [] },
-      });
+      addTarget(out, slug, parts[2]);
       return out;
     }
 
@@ -372,7 +387,7 @@ function playScreen(config, state, slug, idx) {
 
   const targets = Array.isArray(watch?.targets) ? watch.targets.filter(isObj) : [];
   lines.push("", "<b>Hedefler</b>");
-  if (targets.length === 0) lines.push("Hedef yok.");
+  if (targets.length === 0) lines.push(active ? NO_TARGET_TEXT : "Hedef yok.");
   for (const t of targets) lines.push(`• ${targetSummary(t)}`);
   if (entry.url) lines.push("", `<a href="${escAttr(entry.url)}">Biletinial sayfası</a>`);
 
@@ -461,7 +476,7 @@ function watchlistScreen(config, state, idx, pageArg) {
   for (const s of shown) {
     const targets = (cfgPlays(config)[s].targets ?? []).filter(isObj);
     lines.push("", `🎭 <b>${esc(playTitle(state, s))}</b>`);
-    if (targets.length === 0) lines.push("• hedef yok");
+    if (targets.length === 0) lines.push(`• ${NO_TARGET_TEXT}`);
     for (const t of targets.slice(0, 4)) lines.push(`• ${targetSummary(t)}`);
     if (targets.length > 4) lines.push(`… +${targets.length - 4} hedef daha`);
   }

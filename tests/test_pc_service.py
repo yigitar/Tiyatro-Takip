@@ -1042,3 +1042,39 @@ def test_readme_has_no_tab_characters_and_names_crash_log():
     from pathlib import Path
     text = (Path(__file__).resolve().parents[1] / "pc" / "README.md").read_text(encoding="utf-8")
     assert "\t" not in text and "crash.log" in text
+
+
+# ==== final review I8: activating a play without targets adds the default target ====
+
+EMPTY_RULE = {"days": None, "from_time": None, "to_time": None, "overrides": {},
+              "exclude_dates": []}
+
+
+def test_set_active_adds_default_target_same_as_worker(tmp_path):
+    from pc import configedit
+    raw = js_fixture_config()
+    configedit.set_active(raw, "kucuk-prens", True, ["çocuk"])
+    assert raw["plays"]["kucuk-prens"] == {
+        "active": True, "tag_overrides": {},
+        "targets": [{"id": "c", "name": "Çocuk", "people": 2, "rule": EMPTY_RULE}]}
+    once = copy.deepcopy(raw)
+    configedit.set_active(raw, "kucuk-prens", True, ["çocuk"])
+    assert raw == once  # idempotent
+    configedit.set_active(raw, "yeni-oyun", True, [])
+    assert raw["plays"]["yeni-oyun"]["targets"] == [
+        {"id": "y", "name": "Yetişkin", "people": 2, "rule": EMPTY_RULE}]
+    fresh = js_fixture_config()
+    configedit.set_active(fresh, "kucuk-prens", False, ["çocuk"])
+    assert fresh["plays"]["kucuk-prens"]["targets"] == []
+    configedit.set_active(fresh, KB, True, [])
+    assert fresh["plays"][KB] == js_fixture_config()["plays"][KB]
+
+
+def test_service_set_active_uses_state_tags(monkeypatch, tmp_path):
+    (tmp_path / "state.json").write_text(json.dumps({
+        "plays": {"kucuk-prens": {"title": "Küçük Prens", "tags": ["çocuk"],
+                                  "sessions": {}}},
+        "meta": {"last_scan": NOW.isoformat()}, "emitted": {}}), encoding="utf-8")
+    store, svc = editor(tmp_path)
+    svc.set_active("kucuk-prens", True)
+    assert [t["id"] for t in cfg(store)["plays"]["kucuk-prens"]["targets"]] == ["c"]

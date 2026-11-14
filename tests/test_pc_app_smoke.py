@@ -176,7 +176,8 @@ def test_active_toggle_and_add_target_use_service(ui):
     ui.add_buttons["c"].invoke()
     ui.pump()
     assert ("ensure_target", ("p2", "c")) in ui.svc.calls
-    assert "Çocuk" in ui.svc.config.plays["p2"].targets[0].name
+    # activating already added the default (adult) target (final review I8)
+    assert any("Çocuk" in t.name for t in ui.svc.config.plays["p2"].targets)
 
 
 def test_editor_saves_everything_in_one_batch(ui):
