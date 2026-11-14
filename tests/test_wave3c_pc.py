@@ -158,8 +158,8 @@ def test_service_logs_close_and_failures(monkeypatch, tmp_path):
     assert [x["level"] for x in errs[:3]] == ["warn"] * 3
     assert "okunamadı (1. kez" in errs[0]["title"] and "3. kez" in errs[2]["title"]
     assert "Biletinial" in errs[0]["detail"]
-    assert any("okunamıyor" in x["title"] for x in entries(e, "Hata/Uyarı")
-               if "portal" in x["title"].lower() and x not in errs[:3]) or len(errs) >= 4
+    # the 3rd failed check also fires PORTAL_FAILING, which is logged as a warning too
+    assert any("okunamıyor" in x["title"] and x["level"] == "warn" for x in errs)
     assert e.svc.portals()[0].state == "failing"
 
 

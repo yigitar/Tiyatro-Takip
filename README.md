@@ -21,6 +21,30 @@ değişikliklerinde Telegram ve bilgisayar uygulaması üzerinden bildirim gönd
     yaklaşık 15 sn'de bir okunur.
   - Saat sınırları iki uçta da dahildir: "≤20:00" 20:00 seanslarını kapsar.
 
+## Başiskele rezervasyon portalı
+
+Uygulama, Başiskele Belediyesi'nin ücretsiz rezervasyon sayfasını
+(`https://rezervasyon.basiskele.bel.tr/etkinlikler`) de izler. Bu sayfa yalnızca
+rezervasyonu **şu anda açık** olan etkinlikleri listeler; çoğu zaman liste boştur.
+
+- **Ne yapar:** Her normal taramada (5 dk) sayfayı okur. Liste boştan doluya geçerse
+  "etkinlik açıldı", doluyken içeriği değişirse "güncellendi" bildirimi gelir (etkinlik
+  adları ve bağlantıları ile). Sayfa üst üste 3 kez okunamazsa "okunamıyor" uyarısı gelir.
+  İlk bakışta liste boşsa sessizce başlangıç olarak kaydedilir. PC uygulamasının
+  "Oyunlar" sekmesinde tek satırlık bir "Portallar" şeridi (boş / N etkinlik açık, son
+  kontrol saati, [Aç] düğmesi) ve Telegram ana menüsünde ile "Yaklaşan açılışlar"
+  ekranında bir durum satırı vardır. Duraklat bu bildirimleri de atar.
+- **Ne yapmaz:** Yalnızca ücretsiz rezervasyon etkinliklerini kapsar. Başiskele
+  salonlarında oynayan, Biletinial'dan biletle satılan Şehir Tiyatroları oyunları zaten
+  Biletinial taramasıyla izlenir. Belediyenin Instagram duyuruları izlenmez.
+- **Sınırlama:** Etkinlik listesi dolu olduğunda sayfanın nasıl göründüğü henüz
+  gözlemlenmedi; bu yüzden algılama, sayfanın tasarımına bağlı kalmayan genel bir
+  yöntemle yapılır (bağlantı/düğmeler ve boş olmayan metin satırları). Tasarım değişirse
+  yanlış "açıldı" ya da kaçan açılış olabilir; ilk gerçek açılışta sonuç kontrol edilmelidir.
+- **Ayar:** `config.json` içindeki `portals` listesi (en çok 5 portal; `id`, `name`,
+  `url` (https), `enabled`). Anahtar yoksa Başiskele portalı varsayılan olarak açıktır.
+  Telegram menüsü ve PC uygulaması bu listeye dokunmaz.
+
 ## Testleri çalıştırma
 
 ```

@@ -251,8 +251,8 @@ def test_not_checked_in_burst_or_when_not_injected_or_disabled(monkeypatch):
     off["portals"][0]["enabled"] = False
     env2 = make(monkeypatch, config=off)
     go(env2, 0)
-    assert env2.portal.calls == [] and "portals" not in env2.saved_state() or \
-        env2.saved_state().get("portals") == {}
+    assert env2.portal.calls == []
+    assert env2.saved_state().get("portals", {}) == {}
 
 
 def test_old_config_gets_default_portal_and_old_state_works(monkeypatch):
@@ -279,9 +279,7 @@ def test_fingerprint_ignores_last_check_only(monkeypatch):
     go(env, 1)
     b = env.saved_state()
     assert a["portals"]["basiskele"]["last_check"] != b["portals"]["basiskele"]["last_check"]
-    assert _fingerprint(a) == _fingerprint(b) or (
-        # last_scan/last_seen are ignored already; nothing else may differ
-        _fingerprint(a) == _fingerprint(b))
+    assert _fingerprint(a) == _fingerprint(b)  # only last_check (and last_scan) differ
     c = copy.deepcopy(b)
     c["portals"]["basiskele"]["signature"] = "x" * 40
     assert _fingerprint(c) != _fingerprint(b)
