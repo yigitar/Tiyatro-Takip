@@ -9,11 +9,17 @@ Delivery guarantees (a missed alert is worse than a duplicate):
   ``DELIVERY_DROPPED`` notice (key ``DROPPED:<first dropped key>``) that goes through
   the same outbox. After a failed attempt the entry waits 10 s, 20 s, 40 s ...
   (max 10 min) before the next try.
-- One claim per event: claim key = event key. Exception: the first scan (old state had
-  no plays) folds all NEW_PLAY events into a single ``SETUP:<sha1(sorted slugs)[:12]>``
-  entry; the key is stable, so a retry after a failed state save is not re-sent.
+- One claim per event: claim key = event key (``claims.claim_key``). Exceptions: ON_SALE
+  events share one claim per session (``ON_SALE:<sid>``; the per-runner episode counter
+  in the event key drifts between runners). A ``sent`` ON_SALE claim covers an ON_SALE
+  entry created at most ``ON_SALE_GAP`` (3 min) after its ``sent_at``; an older one is
+  re-claimed (a new re-open). The first scan (old state had no plays) folds all
+  NEW_PLAY events into a single ``SETUP:<sha1(sorted slugs)[:12]>`` entry; the key is
+  stable, so a retry after a failed state save is not re-sent.
 - If the Telegram send succeeded but saving ``state.json`` failed, the next run derives
-  the same events again; their claims already read ``sent`` so they are not re-sent.
+  the same events again; their claims already read ``sent`` so they are not re-sent
+  (ON_SALE: only within the 3-min gap; a re-derive later than that may duplicate, which
+  is accepted: a duplicate is better than a suppressed re-open).
 - The PC runner (``who="pc"``) queues with ``not_before = now + 60 s`` so GitHub gets
   the first chance; afterwards the PC only sends if the claim is not ``sent``/held.
 
@@ -59,7 +65,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, time as dtime, timedelta
 from typing import Callable, Iterable
 
-from tiyatro.claims import ClaimStore, claim_path, send_with_claim
+from tiyatro.claims import ClaimStore, claim_key, claim_path, send_with_claim
 from tiyatro.config import config_from_dict, default_config
 from tiyatro.fetcher import fetch
 from tiyatro.heartbeat import github_run_status, pc_status, read_heartbeat
@@ -67,8 +73,8 @@ from tiyatro.models import ISTANBUL, Config, Event, Play, Session, Status
 from tiyatro.notify import MONTHS, Telegram, default_transport, format_message
 from tiyatro.parser import ParseError, parse_play, parse_venue
 from tiyatro.rules import matching_targets
-from tiyatro.state import (clean_emitted, cleanup, diff, empty_state, next_opening,
-                           valid_session_record)
+from tiyatro.state import (ON_SALE_GAP, clean_emitted, cleanup, diff, empty_state,
+                           next_opening, valid_session_record)
 from tiyatro.store import Store
 from tiyatro.timeutil import parse_iso
 
@@ -235,12 +241,25 @@ def _entry_events(entry: dict) -> list[Event]:
     return [event_from_dict(d) for d in raw if isinstance(d, dict)]
 
 
-def _claim_sent(store, key: str) -> bool:
+def _reclaim_after(key: str) -> timedelta | None:
+    return ON_SALE_GAP if claim_key(key) != key else None
+
+
+def _claim_sent(store, key: str, created: datetime) -> bool:
+    """True if the claim for outbox key ``key`` (entry created at ``created``) reads
+    ``sent``; for ON_SALE only if it was sent at most ``ON_SALE_GAP`` before the entry
+    was created (an older send was an earlier episode)."""
     try:
-        data, _sha = store.get(claim_path(key))
+        data, _sha = store.get(claim_path(claim_key(key)))
+        if not isinstance(data, dict) or data.get("status") != "sent":
+            return False
+        gap = _reclaim_after(key)
+        if gap is None:
+            return True
+        sent_at = parse_iso(data.get("sent_at"))
+        return sent_at is not None and sent_at >= created - gap
     except Exception:
         return False  # fail open: rather try to send
-    return isinstance(data, dict) and data.get("status") == "sent"
 
 
 class _AllParts:
@@ -299,21 +318,22 @@ def _deliver(state: dict, store, tg, claims: ClaimStore, now: datetime,
         expired = ("age" if now - created > OUTBOX_MAX_AGE
                    else "attempts" if attempts >= OUTBOX_MAX_ATTEMPTS else None)
         if expired:
-            if not _claim_sent(store, key):
+            if not _claim_sent(store, key, created):
                 _log_drop(state, entry, expired, now)
                 dropped.append(entry)
             continue
         if not_before > now:
             keep.append(entry)
             continue
-        if _claim_sent(store, key):
+        if _claim_sent(store, key, created):
             continue  # delivered by us earlier or by the other runner
         parts = [p for p in format_message(_entry_events(entry), plays, config) if p]
         if not parts:
             continue
         entry["attempts"] = attempts + 1
         # False = held by the other runner or the send failed: retry next run.
-        if not send_with_claim(claims, _AllParts(tg, parts), key, parts[0]):
+        if not send_with_claim(claims, _AllParts(tg, parts), claim_key(key), parts[0],
+                               _reclaim_after(key)):
             # Back off so a short outage during a 15 s burst cannot burn all attempts.
             delay = min(RETRY_BASE_S * 2 ** attempts, RETRY_MAX_S)
             entry["not_before"] = (now + timedelta(seconds=delay)).isoformat()

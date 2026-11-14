@@ -186,3 +186,58 @@ def test_purge_deletes_old_only(store):
     assert cs.purge(48) == 1
     assert store.get(claim_path("old"))[0] is None
     assert store.get(claim_path("new"))[0] is not None
+
+
+# ==== final review C1: ON_SALE claims per session, re-claimable after the gap =======
+
+from tiyatro.claims import claim_key  # noqa: E402
+from tiyatro.models import Event  # noqa: E402
+
+
+def test_claim_key_is_per_session_for_on_sale_only():
+    assert claim_key("ON_SALE:s1:1") == claim_key("ON_SALE:s1:7") == "ON_SALE:s1"
+    assert claim_key(Event("ON_SALE", "ON_SALE:s1:2", "p", "s1", [], {})) == "ON_SALE:s1"
+    for key in ("OPENING_SOON:s1", "NEW_PLAY:p", "SETUP:abc", "DROPPED:ON_SALE:s1:1"):
+        assert claim_key(key) == key
+
+
+def test_sent_claim_reclaimable_after_reclaim_after(store):
+    a, b = make(store, "gh"), make(store, "pc")
+    gap = timedelta(minutes=3)
+    assert a.claim("ON_SALE:s1", reclaim_after=gap)
+    a.mark_sent("ON_SALE:s1", 1)
+    store.advance(60)
+    assert b.claim("ON_SALE:s1", reclaim_after=gap) is False  # same episode
+    assert b.claim("ON_SALE:s1") is False  # no reclaim rule: sent blocks forever
+    store.advance(150)
+    assert b.claim("ON_SALE:s1", reclaim_after=gap) is True
+    data, _ = store.get(claim_path("ON_SALE:s1"))
+    assert data["status"] == "claimed" and data["claimed_by"] == "pc"
+    assert data["attempts"] == 2 and data["sent_at"] is None
+
+
+def test_reclaim_of_stale_sent_claim_is_cas_protected(store):
+    a, b = make(store, "gh"), make(store, "pc")
+    gap = timedelta(minutes=3)
+    a.claim("k")
+    a.mark_sent("k", 1)
+    store.advance(600)
+    real_put = store.put
+
+    def racing_put(path, data, sha):
+        real_put(path, {**data, "claimed_by": "third"}, sha)
+        return real_put(path, data, sha)
+
+    store.put = racing_put
+    assert b.claim("k", reclaim_after=gap) is False
+
+
+def test_send_with_claim_passes_reclaim_after(store):
+    tg = FakeTG()
+    gap = timedelta(minutes=3)
+    assert send_with_claim(make(store, "gh"), tg, "k", "one", reclaim_after=gap)
+    store.advance(30)
+    assert send_with_claim(make(store, "pc"), tg, "k", "dup", reclaim_after=gap) is False
+    store.advance(600)
+    assert send_with_claim(make(store, "pc"), tg, "k", "two", reclaim_after=gap) is True
+    assert tg.sent == ["one", "two"]

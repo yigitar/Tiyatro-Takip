@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import pathlib
 from datetime import datetime, timedelta
@@ -171,7 +172,7 @@ def test_upcoming_to_on_sale_sends_exactly_once(monkeypatch):
     env.run(NOW + timedelta(minutes=10))
     assert len(env.tg.sent) == 1
     assert env.saved_state()["outbox"] == []
-    claim = env.store.files[claim_path("ON_SALE:s1:1")][0]
+    claim = env.store.files[claim_path("ON_SALE:s1")][0]  # one claim per session
     assert claim["status"] == "sent" and claim["message_id"] == 1
 
 
@@ -273,7 +274,7 @@ def test_burst_loop_scans_only_relevant_play_until_end(monkeypatch):
     assert DEFAULT_SOURCE not in env.web.calls
     # stops when the session leaves the burst window (opens_at cleared by ON_SALE)
     # or at `until`, never after max_seconds
-    assert clock[0] <= NOW + timedelta(seconds=780 + 15)
+    assert clock[0] <= NOW + timedelta(seconds=runner.BURST_MAX_SECONDS + 18)
     # the in-burst pc_watch adds one PC_INACTIVE (no heartbeat in this fake store)
     assert sum("Bilet alınabilir" in m for m in env.tg.sent) == 1
     assert sum("PC uygulaması aktif değil" in m for m in env.tg.sent) == 1
@@ -467,9 +468,10 @@ def test_outbox_dropped_when_other_side_already_sent(monkeypatch):
     env = on_sale_ready(monkeypatch)
     env.tg.fail = True
     env.run(NOW + timedelta(minutes=5))
-    path = claim_path("ON_SALE:s1:1")
+    path = claim_path("ON_SALE:s1")
     rec, sha = env.store.get(path)
-    env.store.put(path, {**rec, "status": "sent", "claimed_by": "pc"}, sha)
+    env.store.put(path, {**rec, "status": "sent", "claimed_by": "pc",
+                         "sent_at": (NOW + timedelta(minutes=6)).isoformat()}, sha)
     env.tg.fail = False
     env.run(NOW + timedelta(minutes=10))
     assert env.tg.sent == []
@@ -516,7 +518,7 @@ def test_multipart_message_all_parts_then_sent(monkeypatch):
                      "attempts": 0, "not_before": NOW.isoformat()}]
     env.run(NOW + timedelta(minutes=1), state=st)
     assert env.tg.sent[-2:] == ["part1", "part2"]
-    claim = env.store.files[claim_path("ON_SALE:big:1")][0]
+    claim = env.store.files[claim_path("ON_SALE:big")][0]
     assert claim["status"] == "sent" and claim["message_id"] == len(env.tg.sent)
 
 
@@ -600,6 +602,7 @@ def test_pc_runner_no_state_write_and_delayed_send(monkeypatch):
     assert box[0]["not_before"] == (t + timedelta(seconds=60)).isoformat()
 
     t2 = t + timedelta(seconds=61)
+    gh.store.now = t2  # server clock (claim sent_at)
     res2 = run_once(gh.store, pc_tg, pc_claims, t2, who="pc", persist_state=False,
                     state=res.state, fetch_fn=gh.web.fetch, sleep=lambda s: None)
     assert len(pc_tg.sent) == 1 and res2.state["outbox"] == []
@@ -650,7 +653,8 @@ def test_save_failure_after_send_does_not_resend(monkeypatch):
     res = env.run(NOW + timedelta(minutes=5))
     assert len(env.tg.sent) == 1 and res.save_error
     store.fail_state = False
-    res = env.run(NOW + timedelta(minutes=10))
+    # next (burst) run within the 3-min ON_SALE gap; a later re-derive may duplicate
+    res = env.run(NOW + timedelta(minutes=7))
     assert [e.kind for e in res.events] == ["ON_SALE"]  # re-derived from the old state
     assert len(env.tg.sent) == 1  # but the claim says sent: no duplicate
     assert env.saved_state()["outbox"] == [] and res.save_error is None
@@ -1533,3 +1537,88 @@ def test_first_seen_sold_out_does_not_burst():
     rec.update(status_since=NOW.isoformat(), prev_status=None)
     assert plan_mode(st, config_from_dict(WATCH_CFG), NOW + timedelta(minutes=1)) == (
         "normal", None)
+
+
+# ==== final review C1: ON_SALE dedupe per session and time, not per counter =========
+
+class _PC:
+    """Second runner (who="pc") on the same store with its own in-memory state."""
+
+    def __init__(self, env, state):
+        self.env, self.state = env, state
+        self.tg = FakeTG()
+        self.claims = ClaimStore(env.store, "pc", lambda: env.store.now)
+
+    def run(self, now):
+        self.env.store.now = now
+        res = run_once(self.env.store, self.tg, self.claims, now, who="pc",
+                       persist_state=False, state=self.state, fetch_fn=self.env.web.fetch,
+                       sleep=lambda s: None)
+        self.state = res.state
+        return res
+
+
+def _two_runners(monkeypatch):
+    env = Env(monkeypatch, [mkplay()], WATCH_CFG)
+    env.claims = ClaimStore(env.store, "github", lambda: env.store.now)
+    env.run(NOW)
+    env.tg.sent.clear()
+    return env, _PC(env, copy.deepcopy(env.saved_state()))
+
+
+def _status(env, status):
+    env.web.set(mkplay(sessions=[sess(status=status)]))
+
+
+def test_counter_drift_never_suppresses_a_later_reopen(monkeypatch):
+    env, pc = _two_runners(monkeypatch)
+    day = NOW.replace(hour=10)
+    # 10:00 flip: GitHub sends #1; the PC sees the same flip and stays silent
+    _status(env, Status.ON_SALE)
+    env.run(day)
+    pc.run(day + timedelta(seconds=5))
+    pc.run(day + timedelta(seconds=25))
+    assert len(env.tg.sent) == 1 and pc.tg.sent == []
+    _status(env, Status.SOLD_OUT)
+    env.run(day + timedelta(minutes=1))
+    pc.run(day + timedelta(minutes=1, seconds=5))
+    # 12:53 iade only the PC catches -> #2 (PC counter 2, GitHub counter stays 1)
+    _status(env, Status.ON_SALE)
+    t = day.replace(hour=12, minute=53)
+    pc.run(t)
+    pc.run(t + timedelta(seconds=70))
+    assert len(pc.tg.sent) == 1
+    _status(env, Status.SOLD_OUT)
+    pc.run(t + timedelta(minutes=3))
+    env.run(t + timedelta(minutes=4))
+    # 15:00 iade GitHub sees: its counter derives ON_SALE:s1:2 -> must still be sent (#3)
+    _status(env, Status.ON_SALE)
+    res = env.run(day.replace(hour=15))
+    assert [e.key for e in res.events] == ["ON_SALE:s1:2"]
+    assert len(env.tg.sent) == 2
+    assert sum("Bilet alınabilir" in m for m in env.tg.sent + pc.tg.sent) == 3
+
+
+def test_same_flip_seen_by_both_runners_sends_exactly_one(monkeypatch):
+    env, pc = _two_runners(monkeypatch)
+    day = NOW.replace(hour=10)
+    _status(env, Status.ON_SALE)
+    pc.run(day)  # the PC sees it first and queues it with its grace delay
+    env.run(day + timedelta(seconds=10))  # GitHub sees the same flip inside the grace
+    for s in (20, 40, 70, 130, 400):
+        pc.run(day + timedelta(seconds=s))
+    env.run(day + timedelta(minutes=10))
+    assert len(env.tg.sent) + len(pc.tg.sent) == 1
+    assert pc.state["outbox"] == []
+
+
+def test_outbox_skip_check_honours_the_reclaim_window(monkeypatch):
+    """A sent ON_SALE claim covers events created within the 3-min gap after it, even if
+    the entry is delivered later (e.g. a PC that was busy)."""
+    env, pc = _two_runners(monkeypatch)
+    day = NOW.replace(hour=10)
+    _status(env, Status.ON_SALE)
+    env.run(day)
+    pc.run(day + timedelta(seconds=30))  # queued, not_before + grace
+    pc.run(day + timedelta(minutes=8))  # delivered late: still the same episode
+    assert len(env.tg.sent) == 1 and pc.tg.sent == [] and pc.state["outbox"] == []

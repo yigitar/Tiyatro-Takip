@@ -11,7 +11,7 @@ import pytest
 from pc.service import RefreshError, Service, TickResult
 from tests.conftest import FakeStore
 from tests.test_runner import NOW, OPENS, SAT_20, WATCH_CFG, FakeTG, Web, mkplay, sess
-from tiyatro.claims import ClaimStore, claim_path
+from tiyatro.claims import ClaimStore, claim_key, claim_path
 from tiyatro.config import DEFAULT_SOURCE
 from tiyatro.fetcher import FetchError
 from tiyatro.models import Status
@@ -216,7 +216,7 @@ def test_pc_sends_after_60_s_when_github_is_silent(monkeypatch, tmp_path):
     assert e.tg.sent == []
     tick_at(e, t + timedelta(seconds=61))
     assert len(e.tg.sent) == 1 and "Bilet alınabilir" in e.tg.sent[0]
-    assert e.store.files[claim_path(key)][0]["status"] == "sent"
+    assert e.store.files[claim_path(claim_key(key))][0]["status"] == "sent"
     tick_at(e, t + timedelta(seconds=120))
     assert len(e.tg.sent) == 1
     assert note_keys(e) == [key]  # desktop: once, de-duplicated

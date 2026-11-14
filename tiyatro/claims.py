@@ -1,6 +1,12 @@
 """Cross-runner notification claim locks stored as small JSON files.
 
 Delivery is fail-open: a duplicate alert is preferred over a missed one.
+
+Claim key = event key, except ON_SALE: one claim per session (``ON_SALE:<sid>``), because
+each runner numbers its own ON_SALE episodes (``ON_SALE:<sid>:<n>``) and the counters
+drift apart when only one runner sees an iade re-open. A ``sent`` ON_SALE claim is
+re-claimable once its ``sent_at`` is older than the ON_SALE gap (``reclaim_after``), so
+a later re-open is never suppressed by the other runner's earlier alert.
 """
 from __future__ import annotations
 
@@ -12,6 +18,15 @@ from tiyatro.timeutil import parse_iso
 
 LEASE = timedelta(seconds=45)
 _SAFE = re.compile(r"[A-Za-z0-9.\-]")
+
+
+def claim_key(event) -> str:
+    """Claim key for an ``Event`` or an event key: ``ON_SALE:<sid>`` for ON_SALE
+    events (key ``ON_SALE:<sid>:<n>``), the event key itself for everything else."""
+    key = event if isinstance(event, str) else event.key
+    if key.startswith("ON_SALE:") and key.count(":") >= 2:
+        return key.rsplit(":", 1)[0]
+    return key
 
 
 def claim_path(key: str) -> str:
@@ -45,7 +60,9 @@ class ClaimStore:
                 "lease_until": (now + LEASE).isoformat(), "status": "claimed",
                 "sent_at": None, "message_id": None, "attempts": attempts, "note": None}
 
-    def claim(self, key: str) -> bool:
+    def claim(self, key: str, reclaim_after: timedelta | None = None) -> bool:
+        """True if we may send ``key`` now. ``reclaim_after``: a ``sent`` claim whose
+        ``sent_at`` is at least this old may be claimed again (CAS on the sha)."""
         try:
             now = self._now()
             path = claim_path(key)
@@ -56,7 +73,9 @@ class ClaimStore:
                 return bool(self.store.create_file(path, self._new(key, now)))
             status = cur.get("status")
             if status == "sent":
-                return False
+                sent_at = parse_iso(cur.get("sent_at")) if reclaim_after else None
+                if sent_at is None or now - sent_at < reclaim_after:
+                    return False
             if status == "claimed":
                 lease = parse_iso(cur.get("lease_until"))
                 if lease is not None and lease > now:
@@ -114,8 +133,9 @@ class ClaimStore:
         return count
 
 
-def send_with_claim(claims: ClaimStore, tg, key: str, text: str) -> bool:
-    if not claims.claim(key):
+def send_with_claim(claims: ClaimStore, tg, key: str, text: str,
+                    reclaim_after: timedelta | None = None) -> bool:
+    if not claims.claim(key, reclaim_after):
         return False
     try:
         message_id = tg.send(text)
