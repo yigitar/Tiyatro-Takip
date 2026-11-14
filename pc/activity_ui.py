@@ -19,6 +19,7 @@ from tiyatro.models import ISTANBUL
 LEVEL_CHOICES = {"Hepsi": "all", "Uyarı ve hata": "warn"}
 COLUMNS = (("when", "Zaman", 105), ("cat", "Kategori", 120), ("title", "Özet", 520),
            ("result", "Sonuç", 300))
+SAVE_DELAY_MS = 500
 WARN_BG, ERROR_BG, ERROR_FG = "#fff4cc", "#fde2e2", "#7f1d1d"
 
 
@@ -38,8 +39,7 @@ class DetailDialog(tk.Toplevel):
         super().__init__(parent)
         self.title("Kayıt ayrıntısı")
         self.transient(parent.winfo_toplevel())
-        when = A._when(entry["ts"])
-        stamp = when.strftime("%d.%m.%Y %H:%M:%S") if when else entry["ts"]
+        stamp = A.format_ts(entry["ts"])
         lines = [A.sentence(entry), "", f"Zaman: {stamp}", f"Kategori: {entry['cat']}",
                  f"Düzey: {A.level_label(entry['level'])}"]
         if entry["detail"].strip():
@@ -92,7 +92,8 @@ class ActivityTab(ttk.Frame):
         self.level_box.bind("<<ComboboxSelected>>", lambda _e: self.filters_changed())
         ttk.Label(row, text="Ara:").pack(side="left")
         self.search_var = tk.StringVar(value=filters["text"])
-        self.search_var.trace_add("write", lambda *_a: self.filters_changed())
+        self._save_after = None
+        self.search_var.trace_add("write", lambda *_a: self._search_changed())
         ttk.Entry(row, textvariable=self.search_var, width=28).pack(side="left", padx=4)
         self.count_var = tk.StringVar()
         ttk.Label(row, textvariable=self.count_var, foreground="#6b7280").pack(
@@ -129,6 +130,17 @@ class ActivityTab(ttk.Frame):
         self.refresh()
         self._on_change()
 
+    def _search_changed(self) -> None:
+        """Filter live, but save ui.json only after typing paused (not per keystroke)."""
+        self.refresh()
+        if self._save_after is not None:
+            self.after_cancel(self._save_after)
+        self._save_after = self.after(SAVE_DELAY_MS, self._save_search)
+
+    def _save_search(self) -> None:
+        self._save_after = None
+        self._on_change()
+
     # ---- list ----------------------------------------------------------------------------
     @staticmethod
     def _iid(entry: dict, counter: dict) -> str:
@@ -138,9 +150,12 @@ class ActivityTab(ttk.Frame):
 
     def refresh(self) -> None:
         """Rebuild the list when the log or the filter changed; keeps selection/scroll."""
-        self._seen_version = self.log.version
+        version = self.log.version
         flt = self.filters()
         loaded = self.log.load()
+        if self.log.read_error:  # unreadable right now: keep what is shown, retry next poll
+            return
+        self._seen_version = version
         entries = A.filter_entries(loaded, set(flt["cats"]), flt["level"] if flt["level"]
                                    == "warn" else "info", flt["text"])
         counter: dict = {}

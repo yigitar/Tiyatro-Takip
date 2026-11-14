@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -56,6 +57,34 @@ def level_label(level: str) -> str:
     return _LEVEL_LABEL.get(level, "Bilgi")
 
 
+def cut(text: str, limit: int) -> str:
+    """``text`` limited to ``limit`` characters, ending in an ellipsis when shortened."""
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def is_quiet(entry: dict) -> bool:
+    """A routine "nothing changed" scan line (the first to go when the log is full)."""
+    return (entry["cat"] == CAT_SCAN and entry["level"] == "info"
+            and (entry["title"].startswith("Hızlı mod:")
+                 or entry["detail"].startswith("değişiklik yok")))
+
+
+def retain(entries: list[dict], limit: int) -> list[dict]:
+    """The ``limit`` entries to keep (oldest first in, oldest first out): quiet scan lines
+    are dropped first (oldest of them first), then, if still too many, the oldest."""
+    excess = len(entries) - limit
+    if excess <= 0:
+        return entries
+    drop = set()
+    for i, e in enumerate(entries):
+        if len(drop) >= excess:
+            break
+        if is_quiet(e):
+            drop.add(i)
+    kept = [e for i, e in enumerate(entries) if i not in drop]
+    return kept[len(kept) - limit:] if len(kept) > limit else kept
+
+
 def _text(value) -> str:
     return "" if value is None else str(value)
 
@@ -86,6 +115,7 @@ class ActivityLog:
         self._lock = threading.RLock()
         self._count: int | None = None  # lines in the file (lazy)
         self._version = 0
+        self.read_error = False  # the last read failed (the file exists but is unreadable)
 
     @property
     def version(self) -> int:
@@ -93,16 +123,22 @@ class ActivityLog:
         return self._version
 
     # ---- file helpers ----------------------------------------------------------
-    def _read_text(self) -> str:
+    def _read_text(self) -> str | None:
+        """File text; "" when there is no file yet; None when it exists but cannot be read."""
         try:
             return self.path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        except FileNotFoundError:
             return ""
+        except OSError:
+            return None
 
-    def _entries(self) -> list[dict]:
-        """All valid entries, oldest first."""
+    def _entries(self) -> list[dict] | None:
+        """All valid entries, oldest first; None if the file is unreadable."""
+        text = self._read_text()
+        if text is None:
+            return None
         out = []
-        for line in self._read_text().splitlines():
+        for line in text.splitlines():
             try:
                 entry = _clean(json.loads(line))
             except ValueError:
@@ -137,15 +173,17 @@ class ActivityLog:
                 text = self._read_text() if self._count is None else None
                 if text is not None:
                     self._count = sum(1 for ln in text.splitlines() if ln.strip())
-                needs_newline = text is not None and bool(text) and not text.endswith("\n")
+                needs_newline = bool(text) and not text.endswith("\n")
                 with open(self.path, "a", encoding="utf-8") as fh:
                     fh.write(("\n" if needs_newline else "")
                              + json.dumps(entry, ensure_ascii=False) + "\n")
                 self._count += 1
                 if self._count > self.max_entries + self._slack:
-                    kept = self._entries()[-self.max_entries:]
-                    self._rewrite(kept)
-                    self._count = len(kept)
+                    current = self._entries()
+                    if current is not None:  # unreadable: never rewrite (would wipe the log)
+                        kept = retain(current, self.max_entries)
+                        self._rewrite(kept)
+                        self._count = len(kept)
             except OSError as exc:
                 log.warning("activity log not written: %s", type(exc).__name__)
                 self._count = None
@@ -157,8 +195,10 @@ class ActivityLog:
     def load(self, limit: int | None = None) -> list[dict]:
         """Newest first, at most ``limit`` (and never more than ``max_entries``)."""
         with self._lock:
-            entries = self._entries()[-self.max_entries:]
-        entries.reverse()
+            loaded = self._entries()
+            self.read_error = loaded is None
+            entries = retain(loaded or [], self.max_entries)
+        entries = list(reversed(entries))
         return entries[:limit] if limit is not None else entries
 
     def clear(self) -> None:
@@ -204,7 +244,7 @@ def filter_entries(entries: list[dict], cats=None, min_level: str = "info",
 
 # ---- wording ----------------------------------------------------------------------
 
-def _when(ts: str) -> datetime | None:
+def parse_ts(ts: str) -> datetime | None:
     try:
         when = parse_iso(ts)
     except (ValueError, TypeError):
@@ -216,12 +256,18 @@ def _when(ts: str) -> datetime | None:
 
 def when_text(ts: str, now: datetime | None = None) -> str:
     """"14:35" for today, "13.11 09:05" for another day, "?" when unreadable."""
-    when = _when(ts)
+    when = parse_ts(ts)
     if when is None:
         return "?"
     if now is not None and when.date() != now.astimezone(ISTANBUL).date():
         return when.strftime("%d.%m %H:%M")
     return when.strftime("%H:%M")
+
+
+def format_ts(ts: str) -> str:
+    """"14.11.2026 14:35:10" (the raw text when it cannot be read)."""
+    when = parse_ts(ts)
+    return when.strftime("%d.%m.%Y %H:%M:%S") if when else ts
 
 
 def result_text(entry: dict) -> str:
@@ -357,6 +403,46 @@ def _describe(old: dict, new: dict, titles: dict) -> list[str]:
     if old.get("sources") != new.get("sources") and ("sources" in old or "sources" in new):
         out.append("Kaynak (liste sayfası) ayarı değişti")
     return out
+
+
+# ---- plain-Turkish error wording ----------------------------------------------------
+
+_ERR = re.compile(r"^(?P<what>.+?): (?P<cls>[A-Za-z_]*(?:Error|Exception|Timeout)[A-Za-z_]*)"
+                  r"(?:: (?P<msg>.*))?$", re.S)
+_PATH = re.compile(r"[A-Za-z]:[\\/](?:[^\\/\s'\"<>|]+[\\/])*([^\\/\s'\"<>|]+)")
+_NETWORK = ("URLError", "TimeoutError", "ConnectionError", "ConnectionResetError",
+            "ConnectionRefusedError", "ConnectionAbortedError", "gaierror", "timeout",
+            "SSLError", "RemoteDisconnected", "IncompleteRead")
+
+
+def short_paths(text: str) -> str:
+    """Windows paths reduced to the file name (no user/folder names in the log)."""
+    return _PATH.sub(r"\1", text)
+
+
+def friendly_error(text: str) -> tuple[str, str]:
+    """``("what: plain explanation", technical text)`` for an error line like
+    ``"what: ClassName: message"``; unknown shapes come back unchanged with no detail."""
+    m = _ERR.match(text)
+    if not m:
+        return text, ""
+    what, cls, msg = m["what"], m["cls"], m["msg"] or ""
+    low = msg.lower()
+    if cls == "PermissionError":
+        friendly = "dosya yazılamadı (erişim reddedildi)"
+    elif re.search(r"HTTP (401|403)\b", msg):
+        friendly = "GitHub erişimi reddedildi (anahtarı kontrol edin)"
+    elif re.search(r"HTTP 404\b", msg):
+        friendly = "adres bulunamadı (HTTP 404)"
+    elif re.search(r"HTTP 5\d\d\b", msg):
+        friendly = "sunucu geçici olarak yanıt vermiyor"
+    elif cls in _NETWORK or "timed out" in low:
+        friendly = "internet bağlantısı kurulamadı"
+    elif cls == "ParseError":
+        friendly = "Biletinial sayfası okunamadı (sayfa yapısı değişmiş olabilir)"
+    else:
+        return text, ""
+    return f"{what}: {friendly}", short_paths(f"{cls}: {msg}".rstrip(": "))
 
 
 # ---- scan wording (from the state) --------------------------------------------------

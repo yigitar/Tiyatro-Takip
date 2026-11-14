@@ -311,6 +311,7 @@ _SECRET_SHAPES = (
     re.compile(r"\d{5,}:[A-Za-z0-9_-]{8,}"),
 )
 _BEARER = re.compile(r"(Bearer\s+)\S+", re.I)
+_BASIC = re.compile(r"(Basic\s+)[A-Za-z0-9+/=_-]{8,}")
 
 
 def scrub_secrets(text: str, secrets=()) -> str:
@@ -319,7 +320,7 @@ def scrub_secrets(text: str, secrets=()) -> str:
         text = text.replace(secret, "***")
     for pattern in _SECRET_SHAPES:
         text = pattern.sub("***", text)
-    return _BEARER.sub(r"\1***", text)
+    return _BASIC.sub(r"\1***", _BEARER.sub(r"\1***", text))
 
 
 # ---- list sorting ------------------------------------------------------------------------
