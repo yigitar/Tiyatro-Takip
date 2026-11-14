@@ -132,13 +132,48 @@ export async function handle(request, env, fetchImpl = globalThis.fetch) {
   return OK();
 }
 
-/** Cron trigger: kick the scan workflow. Never throws; logs only the error type. */
-export async function runScheduled(env, fetchImpl = globalThis.fetch) {
+const STALE_SCAN_MS = 20 * 60 * 1000;
+
+/**
+ * Dead-man warnings fire at most once per 3 hours without any storage: only in the
+ * cron run whose UTC time has hour % 3 === 0 and minute < 5 (the cron runs every 5 min).
+ */
+function inWarnBucket(now) {
+  return now.getUTCHours() % 3 === 0 && now.getUTCMinutes() < 5;
+}
+
+/**
+ * Cron trigger: kick the scan workflow, then (dead-man's switch) warn on Telegram if the
+ * dispatch failed or state.json's meta.last_scan is older than 20 minutes, rate-limited
+ * by inWarnBucket. Never throws; logs only error type names.
+ */
+export async function runScheduled(env, fetchImpl = globalThis.fetch, now = new Date()) {
+  let gh;
+  let dispatchFailed = false;
   try {
-    const gh = createGithub({ token: env.TIYATRO_GH_TOKEN, repo: env.GITHUB_REPO, fetch: fetchImpl });
+    gh = createGithub({ token: env.TIYATRO_GH_TOKEN, repo: env.GITHUB_REPO, fetch: fetchImpl });
     await gh.dispatchWorkflow("scan.yml", "main");
   } catch (e) {
+    dispatchFailed = true;
     console.error(`scheduled error: ${e?.name ?? "Error"}`);
+  }
+  if (!inWarnBucket(now)) return;
+  try {
+    let detail = "GitHub taraması başlatılamadı.";
+    let warn = dispatchFailed;
+    if (!warn) {
+      const st = await gh.getJson("state.json");
+      const last = Date.parse(st?.data?.meta?.last_scan ?? "");
+      warn = !Number.isFinite(last) || now.getTime() - last > STALE_SCAN_MS;
+      detail = Number.isFinite(last)
+        ? `Son tarama ${Math.round((now.getTime() - last) / 60000)} dk önce.`
+        : "Son tarama zamanı bilinmiyor.";
+    }
+    if (!warn) return;
+    const tg = createTelegram(env.TELEGRAM_BOT_TOKEN, fetchImpl);
+    await tg("sendMessage", { chat_id: env.TELEGRAM_CHAT_ID, text: `⚠️ Tarama gecikiyor/başlatılamadı\n${detail}` });
+  } catch (e) {
+    console.error(`scheduled watchdog error: ${e?.name ?? "Error"}`);
   }
 }
 
@@ -146,7 +181,8 @@ export default {
   async fetch(request, env) {
     return handle(request, env, globalThis.fetch);
   },
-  async scheduled(event, env, ctx) {
-    await runScheduled(env, globalThis.fetch);
+  async scheduled(event, env, ctx, fetchImpl = globalThis.fetch) {
+    const when = Number.isFinite(event?.scheduledTime) ? new Date(event.scheduledTime) : new Date();
+    await runScheduled(env, fetchImpl, when);
   },
 };

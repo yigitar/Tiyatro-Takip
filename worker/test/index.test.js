@@ -342,17 +342,68 @@ test("scheduled: exactly one workflow dispatch; failure never throws and logs on
   console.error = (...a) => logs.push(a.map(String).join(" "));
   try {
     globalThis.fetch = fake;
-    await worker.scheduled({}, ENV, {});
+    // outside the dead-man warning bucket (UTC hour % 3 === 0, minute < 5): dispatch only
+    await worker.scheduled({ scheduledTime: Date.parse("2030-03-01T01:30:00Z") }, ENV, {});
     assert.equal(calls.filter((c) => c.url.endsWith("/actions/workflows/scan.yml/dispatches")).length, 1);
     assert.equal(calls.length, 1);
     assert.deepEqual(calls[0].body, { ref: "main" });
     const failing = makeFake({ ghFail: true });
     globalThis.fetch = failing.fake;
-    await assert.doesNotReject(worker.scheduled({}, ENV, {}));
+    await assert.doesNotReject(worker.scheduled({ scheduledTime: Date.parse("2030-03-01T01:30:00Z") }, ENV, {}));
     assert.ok(logs.length >= 1);
     assert.ok(!logs.join("\n").includes(GH_TOKEN));
   } finally {
     globalThis.fetch = orig;
     console.error = o.error;
   }
+});
+
+// ---- final review I7: dead-man's switch for the scheduler -----------------------------
+
+const IN_BUCKET = Date.parse("2030-03-01T03:02:00Z"); // hour % 3 === 0, minute < 5
+const OUT_BUCKET = Date.parse("2030-03-01T04:02:00Z");
+
+function stateWithLastScan(msAgo, now) {
+  const st = makeState();
+  st.meta.last_scan = new Date(now - msAgo).toISOString();
+  return st;
+}
+
+async function scheduledAt(when, opts) {
+  const f = makeFake(opts);
+  const logs = [];
+  const o = console.error;
+  console.error = (...a) => logs.push(a.map(String).join(" "));
+  try {
+    await worker.scheduled({ scheduledTime: when }, { ...ENV }, {}, f.fake);
+  } finally {
+    console.error = o;
+  }
+  return { ...f, logs, warnings: tgCalls(f.calls, "sendMessage") };
+}
+
+test("scheduled: stale last_scan -> one warning inside the 3-hour bucket only", async () => {
+  const r = await scheduledAt(IN_BUCKET, { state: stateWithLastScan(25 * 60000, IN_BUCKET) });
+  assert.equal(r.warnings.length, 1);
+  assert.match(r.warnings[0].body.text, /Tarama gecikiyor\/başlatılamadı/);
+  assert.equal(String(r.warnings[0].body.chat_id), ENV.TELEGRAM_CHAT_ID);
+  const out = await scheduledAt(OUT_BUCKET, { state: stateWithLastScan(25 * 60000, OUT_BUCKET) });
+  assert.equal(out.warnings.length, 0);
+});
+
+test("scheduled: fresh last_scan -> no warning", async () => {
+  const r = await scheduledAt(IN_BUCKET, { state: stateWithLastScan(6 * 60000, IN_BUCKET) });
+  assert.equal(r.warnings.length, 0);
+  assert.equal(r.calls.filter((c) => c.url.includes("/dispatches")).length, 1);
+});
+
+test("scheduled: dispatch failure -> warning in the bucket; never throws, no secrets logged", async () => {
+  const r = await scheduledAt(IN_BUCKET, { ghFail: true });
+  assert.equal(r.warnings.length, 1);
+  assert.match(r.warnings[0].body.text, /başlatılamadı/);
+  assert.ok(!r.logs.join("\n").includes(GH_TOKEN) && !r.logs.join("\n").includes(TOKEN));
+  const out = await scheduledAt(OUT_BUCKET, { ghFail: true });
+  assert.equal(out.warnings.length, 0);
+  const tgDown = await scheduledAt(IN_BUCKET, { ghFail: true, tgFail: { method: "sendMessage", description: "x" } });
+  assert.equal(tgDown.warnings.length, 1); // attempted; the failure is only logged
 });
