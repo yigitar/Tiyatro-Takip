@@ -94,7 +94,7 @@ def test_price_decimals_and_missing_metadata():
     assert rs["yeni-oyun"].next_opening == ""  # upcoming without announced opening
     assert rs["yeni-oyun"].status_summary == "1 yakında"
     eo = rs["eski-oyun"]
-    assert (eo.genre, eo.duration, eo.age, eo.price) == ("", "", "", "")
+    assert (eo.genre, eo.duration, eo.age, eo.price) == ("Tiyatro", "", "", "")
     assert eo.status_summary == "seans yok"  # only a past session
 
 

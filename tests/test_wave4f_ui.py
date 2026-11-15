@@ -1,4 +1,4 @@
-"""Wave 4 F: window sizing, proportional panes, auto-hide scrollbars, "Diğer kaynaklar" tab."""
+"""Wave 4 F / wave 5: window sizing, proportional panes, auto-hide scrollbars."""
 from __future__ import annotations
 
 import pytest
@@ -8,30 +8,53 @@ from pc import app_logic as L
 tk = pytest.importorskip("tkinter")
 from tkinter import ttk  # noqa: E402
 
-from pc.events_ui import COLUMNS, FOLLOW_OFF, FOLLOW_ON, row_values  # noqa: E402
 from pc.widgets import AutoScrollbar  # noqa: E402
 from tests.test_pc_app_smoke import tk_root, ui  # noqa: E402,F401  (fixtures)
 
 
 # ---- pure ---------------------------------------------------------------------------------
 
-def test_default_geometry_is_large_but_clamped_to_the_screen():
-    assert L.default_geometry(2560, 1440) == "1280x820"
-    assert L.default_geometry(1920, 1080) == "1280x820"
-    assert L.default_geometry(1366, 768) == "1280x668"
-    assert L.default_geometry(1024, 600) == "984x500"
-    assert L.default_geometry(300, 200) == "400x300"      # never below the minimum
+def test_default_geometry_is_92_percent_of_the_screen_centred():
+    w, h, x, y = (int(v) for v in re_split(L.default_geometry(1920, 1080)))
+    assert (w, h) == (int(1920 * 0.92), int(1080 * 0.92)) and x == (1920 - w) // 2
+    assert 0 <= y <= 1080 - h
+    w, h = (int(v) for v in re_split(L.default_geometry(2560, 1440))[:2])
+    assert (w, h) == (int(2560 * 0.92), int(1440 * 0.92))
+    # small screens: never below the default minimum unless the screen itself is smaller
+    w, h = (int(v) for v in re_split(L.default_geometry(1366, 768))[:2])
+    assert w == int(1366 * 0.92) and h == max(650, int(768 * 0.92))
+    assert re_split(L.default_geometry(800, 500))[:2] == ["800", "500"]
     assert L.sanitize_geometry("1280x820+10+10", 1920, 1080) == "1280x820+10+10"
 
 
-def test_list_pane_fits_its_rows_and_never_takes_the_whole_pane():
+def re_split(geometry):
+    import re
+    return re.split(r"[x+]", geometry)
+
+
+def test_old_saved_geometry_is_discarded_once_then_kept(tmp_path):
+    import json
+    p = tmp_path / "ui.json"
+    p.write_text(json.dumps({"geometry": "700x500+10+10", "beep": True}), encoding="utf-8")
+    assert L.load_ui(p)["geometry"] is None                       # saved before the version
+    p.write_text(json.dumps({"geometry": "700x500+10+10", "beep": True, "geometry_v": 1}),
+                 encoding="utf-8")
+    assert L.load_ui(p)["geometry"] is None                       # an older version
+    p.write_text(json.dumps({"geometry": "700x500+10+10", "beep": True,
+                             "geometry_v": L.GEOMETRY_VERSION}), encoding="utf-8")
+    assert L.load_ui(p)["geometry"] == "700x500+10+10"
+
+
+def test_list_pane_fits_its_rows_and_leaves_the_detail_what_it_needs():
     pane = 1000
-    few = L.list_pane_px(2, pane)
-    mid = L.list_pane_px(20, pane)
-    many = L.list_pane_px(200, pane)
-    assert few == L.list_pane_px(0, pane) == L.list_pane_px(3, pane) == 350   # >= 35 %
+    assert L.list_pane_px(2, pane) == L.list_pane_px(3, pane) == 250   # 3 rows < 25 % floor
+    few, mid, many = (L.list_pane_px(n, pane) for n in (2, 20, 200))
     assert mid == L.HEADING_PX + 20 * L.ROW_PX + 6 and few < mid < many
-    assert many == int(pane * 0.6)                                            # detail keeps >= 40 %
+    assert many == int(pane * 0.6)                                # unknown need: detail keeps 40 %
+    # a known detail need wins over the list's wish, down to the 25 % floor
+    assert L.list_pane_px(200, pane, 700) == 300
+    assert L.list_pane_px(200, pane, 950) == L.HEADING_PX + 3 * L.ROW_PX + 6   # floor: 3 rows
+    assert L.list_pane_px(5, pane, 300) == L.HEADING_PX + 5 * L.ROW_PX + 6   # list needs less
     assert L.list_pane_px(6, 100) <= 60
 
 
@@ -72,7 +95,7 @@ def test_main_list_scrollbar_follows_the_content(ui):
 def test_window_is_not_smaller_than_the_default_unless_the_screen_is(ui):
     ui.root.update()
     sw, sh = ui.root.winfo_screenwidth(), ui.root.winfo_screenheight()
-    w, h = (int(x) for x in L.default_geometry(sw, sh).split("x"))
+    w, h = (int(x) for x in re_split(L.default_geometry(sw, sh))[:2])
     assert ui.root.winfo_width() >= min(w, sw) - 5 or ui.root.winfo_width() >= 1000
 
 
@@ -90,129 +113,3 @@ def test_panes_are_sized_to_the_row_count(ui):
         ui._fit_key = None
         ui._fit_panes()
         assert ui.pane.sashpos(0) == 150
-
-
-# ---- Diğer kaynaklar tab ------------------------------------------------------------------------
-
-def view(eid="vkv:541", followed=True, full=False, source="vkv", title="Ceviz Adam Müzikali"):
-    return {"id": eid, "source": source, "source_name": "VKV Gölcük" if source == "vkv"
-            else "Başiskele Belediyesi", "title": title, "when": "28.11.2026 11:00",
-            "audience": "Çocuk", "genre": "Müzikal", "kind": "Çocuk Tiyatrosu", "venue": "V",
-            "url": "https://example.test/" + eid, "reservation": "Doldu" if full
-            else "19 Kasım 12:00'da açılacak", "full": full, "followed": followed, "start": None}
-
-
-@pytest.fixture
-def tab(ui):
-    ui.views = [view(), view("bk:1", True, False, "basiskele", "Çöp Atlas"),
-                view("vkv:9", False, True, title="Kapalı Oyun")]
-    toggles = []
-    ui.svc.event_views = lambda now=None: list(ui.views)
-
-    def set_follow(eid, on):
-        toggles.append((eid, on))
-        for v in ui.views:
-            if v["id"] == eid:
-                v["followed"] = on
-    ui.svc.set_event_follow = set_follow
-    ui.toggles = toggles
-    ui.refresh_rows()
-    return ui.events_tab
-
-
-def test_tab_exists_between_the_other_tabs(ui):
-    nb = ui.notebook
-    assert [nb.tab(t, "text") for t in nb.tabs()][1] == "Diğer kaynaklar"
-
-
-def test_tab_columns_and_rows(tab):
-    assert [tab.tree.heading(c)["text"] for c in tab.tree["columns"]] == [
-        "Kaynak", "Etkinlik", "Tarih/Saat", "Kitle", "Tür", "Rezervasyon durumu", "Takip"]
-    assert len(COLUMNS) == 7
-    ids = list(tab.tree.get_children())
-    assert ids == ["vkv:541", "bk:1", "vkv:9"]
-    assert tab.tree.item("vkv:541", "values") == (
-        "VKV Gölcük", "Ceviz Adam Müzikali", "28.11.2026 11:00", "Çocuk", "Müzikal",
-        "19 Kasım 12:00'da açılacak", FOLLOW_ON)
-    assert tab.tree.item("vkv:9", "values")[-1] == FOLLOW_OFF
-    assert "off" in tab.tree.item("vkv:9", "tags")      # greyed
-    assert row_values(view(followed=False))[-1] == FOLLOW_OFF
-
-
-def test_tab_toggle_by_button_key_and_cell_click(tab, ui):
-    tab.tree.selection_set("vkv:541")
-    tab.toggle_btn.invoke()
-    ui.pump()
-    assert ui.toggles == [("vkv:541", False)]
-    assert tab.tree.item("vkv:541", "values")[-1] == FOLLOW_OFF
-    assert "off" in tab.tree.item("vkv:541", "tags")
-    assert tab.selected_view()["id"] == "vkv:541"       # selection survived the refresh
-    tab.toggle_selected()          # what Space / Enter on the list call
-    ui.pump()
-    assert ui.toggles[-1] == ("vkv:541", True)
-    # a click on the Takip cell toggles that row (also a not-followed one)
-    tab.toggle("vkv:9")
-    ui.pump()
-    assert ui.toggles[-1] == ("vkv:9", True)
-
-
-def test_tab_open_page_and_empty_state(tab, ui):
-    tab.tree.selection_set("bk:1")
-    tab.open_btn.invoke()
-    assert ui.opened == ["https://example.test/bk:1"]
-    ui.views.clear()
-    ui.refresh_rows()
-    assert tab.tree.get_children() == ()
-    assert tab.empty.winfo_manager() == "place"
-    ui.views.append(view())
-    ui.refresh_rows()
-    assert tab.empty.winfo_manager() == ""
-
-
-def test_tab_is_rebuilt_only_when_something_changed(tab, ui):
-    ui.refresh_rows()
-    before = tab._sig
-    first = tab.tree.get_children()
-    ui.refresh_rows()
-    assert tab._sig is before and tab.tree.get_children() == first
-
-
-def test_tab_survives_service_errors_and_a_service_without_the_method(tab, ui):
-    def boom(now=None):
-        raise RuntimeError("x")
-    ui.svc.event_views = boom
-    tab._sig = None
-    ui.refresh_rows()                                  # must not raise
-    del ui.svc.__dict__["event_views"]
-    tab._sig = None
-    ui.refresh_rows()
-
-
-def test_failed_save_is_reported(tab, ui):
-    def broken(eid, on):
-        raise OSError("disk")
-    ui.svc.set_event_follow = broken
-    tab.toggle("vkv:541")
-    ui.pump()
-    assert ui.box.shown[-1][0] == "error"
-
-
-def test_click_on_the_follow_cell_toggles_other_cells_do_not(tab, ui, monkeypatch):
-    """The window is withdrawn in tests (no geometry), so Tk's hit-testing is stubbed."""
-    import types
-    hit = {"region": "cell", "column": "#7", "row": "bk:1"}
-    monkeypatch.setattr(tab.tree, "identify_region", lambda x, y: hit["region"])
-    monkeypatch.setattr(tab.tree, "identify_column", lambda x: hit["column"])
-    monkeypatch.setattr(tab.tree, "identify_row", lambda y: hit["row"])
-    click = types.SimpleNamespace(x=1, y=1)
-    tab._click(click)
-    ui.pump()
-    assert ui.toggles == [("bk:1", False)] and tab.selected_view()["id"] == "bk:1"
-    hit["column"] = "#2"                                   # title cell
-    tab._click(click)
-    hit.update(column="#7", region="heading")              # header
-    tab._click(click)
-    hit.update(region="cell", row="")                      # empty area below the rows
-    tab._click(click)
-    ui.pump()
-    assert ui.toggles == [("bk:1", False)]

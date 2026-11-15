@@ -207,27 +207,45 @@ def _views(state="empty", text=None):
                        PORTAL_URL, state)]
 
 
-def test_strip_shows_text_and_open_button_opens_the_portal(ui):
+def _basiskele_sources():
+    import tiyatro.sources as S
+    from tiyatro.models import ISTANBUL
+    from datetime import datetime
+    st = {}
+    S.record_check(st, "basiskele", datetime(2026, 11, 15, 12, 0, tzinfo=ISTANBUL), True, items=[1])
+    return lambda now=None: S.describe(st, datetime(2026, 11, 15, 12, 1, tzinfo=ISTANBUL))
+
+
+def test_portal_is_merged_into_the_basiskele_source_row_with_an_open_link(ui):
+    ui.svc.sources = _basiskele_sources()
     ui.svc.portals = lambda now=None: _views()
     ui.refresh_rows()
-    assert ui.portal_labels and ui.portal_labels[0].cget("text") == \
-        f"🏛️ {LABEL}: boş · son kontrol 14:35"
-    ui.portal_buttons[0].invoke()
+    assert len(ui.source_labels) == 1                       # no separate portal strip
+    text = ui.source_labels[0].cget("text")
+    assert "Başiskele" in text and text.endswith("rezervasyon portalı: boş")
+    assert [b.cget("text") for b in ui.source_buttons] == ["Portalı aç"]
+    ui.source_buttons[0].invoke()
     assert ui.opened == [PORTAL_URL]
+    assert not hasattr(ui, "portal_bar")
 
 
-def test_strip_updates_only_when_the_text_changes_and_hides_without_portals(ui):
+def test_portal_row_updates_only_on_change_and_survives_missing_source_row(ui):
+    ui.svc.sources = _basiskele_sources()
     ui.svc.portals = lambda now=None: _views()
     ui.refresh_rows()
-    first = ui.portal_labels[0]
+    first = ui.source_labels[0]
     ui.refresh_rows()
-    assert ui.portal_labels[0] is first           # not rebuilt on every tick
+    assert ui.source_labels[0] is first                     # not rebuilt on every tick
     ui.svc.portals = lambda now=None: _views("open", f"🏛️ {LABEL}: 2 etkinlik açık")
     ui.refresh_rows()
-    assert ui.portal_labels[0].cget("text").endswith("2 etkinlik açık")
+    assert ui.source_labels[0].cget("text").endswith("rezervasyon portalı: 2 etkinlik açık")
+    # a portal with no source record yet still gets its own row (and link)
+    ui.svc.sources = lambda now=None: []
+    ui.refresh_rows()
+    assert len(ui.source_labels) == 1 and ui.source_buttons
     ui.svc.portals = lambda now=None: []
     ui.refresh_rows()
-    assert ui.portal_labels == [] and ui.portal_bar.winfo_manager() == ""
+    assert ui.source_labels == [] and ui.source_bar.winfo_manager() == ""
 
 
 def test_strip_survives_a_failing_service_call(ui):
@@ -239,7 +257,7 @@ def test_strip_survives_a_failing_service_call(ui):
 
 def test_plain_fake_service_without_portals_method_still_works(ui):
     ui.refresh_rows()
-    assert ui.portal_labels == []
+    assert ui.source_buttons == []
 
 
 def test_production_entry_point_enables_portal_checks():

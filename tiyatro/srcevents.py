@@ -25,7 +25,7 @@ from urllib.parse import urljoin
 
 from tiyatro.models import ISTANBUL, Config, Event
 from tiyatro.notify import DAYS, MONTHS, SOURCE_LABELS, SRC_TEXT
-from tiyatro.tags import audience_of, genre_label
+from tiyatro.tags import resolve_audience, resolve_genre
 from tiyatro.timeutil import parse_iso
 
 SRC_KINDS = tuple(SRC_TEXT)
@@ -218,12 +218,16 @@ class Listing:
 
 
 def genre_of(kind: str, title: str) -> str:
-    """Tür: the genre word(s) of the kind ("Animasyon Filmi", "Söyleşi") or "Müzikal";
-    never the audience; "" when only "Tiyatro"/"Çocuk Tiyatrosu" is known."""
-    g = genre_label(kind)
-    if g:
-        return g
-    return "Müzikal" if "müzikal" in _lower(f"{kind} {title}") else ""
+    """Tür: the genre word(s) of the kind ("Animasyon Filmi", "Söyleşi"), else a genre
+    keyword of kind/title ("Müzikal"), else "Tiyatro" for a theatre item (the audience
+    word is never the genre); "" only for a non-theatre item with no hint."""
+    return resolve_genre(kind, title, theatre=is_theatre(kind, title))
+
+
+def audience_for(kind: str, title: str) -> str:
+    """Kitle of a source event: "Çocuk" when the category/title says so ("Çocuk
+    Tiyatrosu"), otherwise "Yetişkin" (stated rule: no child marker -> Yetişkin)."""
+    return resolve_audience(kind, (), None, f"{kind} {title}")
 
 
 def is_theatre(kind: str, title: str) -> bool:
@@ -479,6 +483,21 @@ def _emit(state: dict, kind: str, key: str, rec: dict, now: datetime,
     return Event(kind, key, "", None, [], _payload(rec, extra))
 
 
+def reservation_summary(rec: dict, now: datetime) -> str:
+    """"Durum özeti" of a source event in the unified list (lower-case sentence)."""
+    if rec.get("full"):
+        return "doldu"
+    opens = _dt(rec.get("opens_at"))
+    if opens is None:
+        return "duyuru bekleniyor"
+    if now < opens:
+        d = opens.astimezone(ISTANBUL)
+        return f"rezervasyon {d.day} {MONTHS[d.month - 1][:3]} {d:%H:%M}'da açılacak"
+    if rec.get("opens_pending") is False:
+        return "rezervasyon açık"
+    return "rezervasyon açılmış olabilir"
+
+
 def fold_listings(state: dict, config: Config, source: str, listings: list[Listing],
                   now: datetime, *, complete: bool = True) -> list[Event]:
     """Fold one scan of ``source`` into ``state["source_events"]``; returns SRC_* events.
@@ -500,10 +519,9 @@ def fold_listings(state: dict, config: Config, source: str, listings: list[Listi
                                   "full": None, "opens_at": None, "opens_pending": None}
         rec.update(title=ls.title, kind=ls.kind, venue=ls.venue, url=ls.url,
                    start=_iso(ls.start), last_seen=now.isoformat(),
-                   audience=audience_of(ls.kind), genre=genre_of(ls.kind, ls.title),
+                   audience=audience_for(ls.kind, ls.title),
+                   genre=genre_of(ls.kind, ls.title),
                    follow_default=bool(ls.follow_default))
-        if not rec["audience"]:
-            rec["audience"] = audience_of(ls.title) if "çocuk" in _lower(ls.title) else ""
         prev_opens = rec.get("opens_at")
         if ls.opens_at is not None:
             rec["opens_at"] = _iso(ls.opens_at)
@@ -615,10 +633,12 @@ def event_views(state: dict | None, config: Config | None, now: datetime) -> lis
             "source_name": SOURCE_LABELS.get(rec.get("source"), str(rec.get("source"))),
             "title": str(rec.get("title") or eid), "start": start,
             "when": f"{start.astimezone(ISTANBUL):%d.%m.%Y %H:%M}" if start else "",
-            "audience": str(rec.get("audience") or ""), "genre": str(rec.get("genre") or ""),
+            "audience": audience_for(str(rec.get("kind") or ""), str(rec.get("title") or "")),
+            "genre": genre_of(str(rec.get("kind") or ""), str(rec.get("title") or "")),
             "kind": str(rec.get("kind") or ""), "venue": str(rec.get("venue") or ""),
-            "url": str(rec.get("url") or ""),
-            "reservation": reservation_text(rec, now), "full": bool(rec.get("full")),
+            "url": str(rec.get("url") or ""), "opens_at": _dt(rec.get("opens_at")),
+            "reservation": reservation_text(rec, now),
+            "summary": reservation_summary(rec, now), "full": bool(rec.get("full")),
             "followed": default if choice is None else bool(choice)})
     far = datetime.max.replace(tzinfo=ISTANBUL)
     rows.sort(key=lambda r: (r["start"] or far, r["id"]))

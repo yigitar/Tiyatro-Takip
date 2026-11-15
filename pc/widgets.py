@@ -29,3 +29,24 @@ class AutoScrollbar(ttk.Scrollbar):
                 super().pack(**self._pack_opts)
                 self.shown = True
         super().set(first, last)
+
+
+def autosize_text(text, max_lines, min_lines: int = 1, on_change=None):
+    """Keep a (disabled) ``tk.Text`` exactly as tall as its wrapped content, up to
+    ``max_lines`` (an int or a callable); beyond that it scrolls. Re-fits on every width
+    change. ``on_change`` runs after the height changed. Returns the fit function."""
+    def fit(_event=None):
+        try:
+            counted = text.count("1.0", "end-1c", "displaylines")
+        except Exception:  # widget gone / not counted yet
+            return
+        n = counted[0] if counted else 1
+        cap = max_lines() if callable(max_lines) else max_lines
+        height = max(min_lines, min(int(cap), max(int(n), 1)))
+        if int(text.cget("height")) != height:
+            text.configure(height=height)
+            if on_change is not None:
+                on_change()
+    text.bind("<Configure>", fit, add="+")
+    fit()
+    return fit

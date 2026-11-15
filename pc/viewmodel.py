@@ -13,7 +13,8 @@ from tiyatro.config import default_config
 from tiyatro.models import ISTANBUL, Config, Event, Play, Target
 from tiyatro.notify import (DAY_BEFORE_TEXT, DAYS, KIND_TEXT, MONTHS, SRC_TEXT, format_message,
                             portal_headline, portal_label, source_headline)
-from tiyatro.tags import apply_overrides, audience_of, genre_label
+from tiyatro import srcevents
+from tiyatro.tags import apply_overrides, derived_tags, resolve_audience, resolve_genre
 from tiyatro.timeutil import parse_iso
 
 DAY_SHORT = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"]  # as worker/src/menu.js
@@ -47,6 +48,13 @@ class Row:
     summary: str = ""          # plot description ("" = unknown)
     cast: list[str] = field(default_factory=list)  # actors in the page's own order
     credits: list[tuple[str, str]] = field(default_factory=list)  # ("Yönetmen", "Ad Soyad")
+    source: str = "Biletinial"  # Kaynak: Biletinial / Başiskele / VKV
+    is_event: bool = False     # a Başiskele / VKV event (slug = event id), not a Biletinial play
+    seans: str = ""            # event rows: date/time of the event (the "Seans" column)
+    venue: str = ""
+    reservation_opens: str = ""  # event rows: "19 Kasım Perşembe 12:00" or ""
+    contact: list[str] = field(default_factory=list)  # VKV: phone / e-mail lines
+    event_full: bool = False
 
 
 def when_text(d: datetime) -> str:
@@ -168,12 +176,15 @@ def _row(slug: str, entry: dict, config: Config, seen: set[str], removed: set[st
     duration = entry.get("duration_min")
     age = entry.get("age_limit")
     summary_text, cast, credits = _details(entry)
+    tags = _tags(entry.get("tags"), watch)
+    audience = resolve_audience(entry.get("genre"), entry.get("tags") or (),
+                                age if isinstance(age, int) and not isinstance(age, bool)
+                                else None)
     return Row(
         slug=slug, title=str(entry.get("title") or slug),
-        tags=_tags(entry.get("tags"), watch),
-        audience=audience_of(entry.get("genre"), entry.get("tags") or (),
-                             age if isinstance(age, int) else None),
-        genre=genre_label(entry.get("genre")),
+        tags=derived_tags(tags, audience) if not tags else tags,
+        audience=audience,
+        genre=resolve_genre(entry.get("genre"), entry.get("title"), summary_text),
         duration=f"{duration} dk" if isinstance(duration, int) and duration > 0 else "",
         age=f"{age}+" if isinstance(age, int) and not isinstance(age, bool) else "",
         price=price_text(entry.get("price_from")),
@@ -183,6 +194,33 @@ def _row(slug: str, entry: dict, config: Config, seen: set[str], removed: set[st
         is_new=slug not in seen, is_removed=is_removed,
         url=str(entry.get("url") or ""), nearest=nearest,
         summary=summary_text, cast=cast, credits=credits)
+
+
+def event_row(view: dict) -> Row:
+    """A Başiskele / VKV event as a list row (``srcevents.event_views`` item)."""
+    start = view.get("start")
+    local = start.astimezone(ISTANBUL) if start else None
+    opens = view.get("opens_at")
+    audience = view["audience"] or resolve_audience(view["kind"], (), None, view["title"])
+    tags = derived_tags([], audience, local.hour if local else None)
+    contact = list(srcevents.VKV_CONTACT_LINES) if view["source"] == srcevents.VKV else []
+    return Row(
+        slug=view["id"], title=view["title"], tags=tags, audience=audience,
+        genre=view["genre"] or resolve_genre(view["kind"], view["title"]),
+        session_count=1, status_summary=view["summary"],
+        watched=view["followed"], active=view["followed"],
+        url=view["url"], nearest=start, source=view["source_name"], is_event=True,
+        seans=when_text(start) if start else "", venue=view["venue"],
+        reservation_opens=when_text(opens) if opens else "", contact=contact,
+        event_full=bool(view["full"]))
+
+
+def with_events(rows: list[Row], views: list[dict]) -> list[Row]:
+    """Plays + source events in one list: followed first, then nearest, then title."""
+    merged = list(rows) + [event_row(v) for v in views]
+    far = datetime.max.replace(tzinfo=ISTANBUL)
+    merged.sort(key=lambda r: (not r.watched, r.nearest or far, r.title.casefold()))
+    return merged
 
 
 def build_rows(state: dict, config: Config, seen_slugs, removed_slugs,

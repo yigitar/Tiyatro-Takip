@@ -29,23 +29,59 @@ BEEP_INTERVAL_S = 20
 BEEP_MAX = 5
 DEFAULT_PORT = 47615
 MIN_WINDOW = (400, 300)
-DEFAULT_WINDOW = (1280, 820)
+SCREEN_FRACTION = 0.92        # default window = this share of the screen width and height
+DEFAULT_MIN_WINDOW = (1000, 650)  # the default never goes below this (unless the screen is smaller)
+GEOMETRY_VERSION = 2          # bump to discard every previously saved window size once
 ROW_PX, HEADING_PX = 22, 26   # Treeview row / heading height (default theme)
 
 
 def default_geometry(screen_w: int, screen_h: int) -> str:
-    """"1280x820", clamped so the window fits the screen (taskbar + title bar margin)."""
-    w = min(DEFAULT_WINDOW[0], max(MIN_WINDOW[0], screen_w - 40))
-    h = min(DEFAULT_WINDOW[1], max(MIN_WINDOW[1], screen_h - 100))
-    return f"{w}x{h}"
+    """"WxH+X+Y": ~92 % of the screen (never below ``DEFAULT_MIN_WINDOW``, never above the
+    screen), centred a little above the middle (taskbar)."""
+    w = min(screen_w, max(DEFAULT_MIN_WINDOW[0], int(screen_w * SCREEN_FRACTION)))
+    h = min(screen_h, max(DEFAULT_MIN_WINDOW[1], int(screen_h * SCREEN_FRACTION)))
+    x = max(0, (screen_w - w) // 2)
+    y = max(0, (screen_h - h) // 2 - 20)
+    return f"{w}x{h}+{x}+{y}"
 
 
-def list_pane_px(row_count: int, pane_px: int) -> int:
-    """Height for the play list so it fits its rows (not the whole pane): at most 60 % of
-    the pane (the detail keeps the rest), at least 35 % or the height of 3 rows."""
+def list_pane_px(row_count: int, pane_px: int, detail_need: int | None = None) -> int:
+    """Height for the list so it fits its rows. The detail pane gets what it needs
+    (``detail_need`` px; unknown = 40 % of the pane) as long as the list keeps 3 rows; scrollbars appear only when both do not fit."""
     wanted = HEADING_PX + max(row_count, 3) * ROW_PX + 6
-    low = max(HEADING_PX + 3 * ROW_PX + 6, int(pane_px * 0.35))
-    return int(min(max(wanted, low), pane_px * 0.6))
+    floor = HEADING_PX + 3 * ROW_PX + 6
+    if not detail_need:
+        floor = max(floor, int(pane_px * 0.25))
+    ceiling = pane_px - detail_need if detail_need else int(pane_px * 0.6)
+    result = int(max(floor, min(wanted, ceiling)))
+    return result if detail_need else min(result, int(pane_px * 0.6))
+
+
+def source_views_with_portals(views: list[dict], portals) -> list[dict]:
+    """Merge the reservation-portal info into the Başiskele source row (wave 5): the
+    source dict gets ``portal_text`` ("rezervasyon portalı: boş") and ``portal_url``;
+    a portal without a source row gets a minimal one."""
+    out = [dict(v) for v in views]
+    for pv in portals or ():
+        word = {"empty": "boş", "unknown": "henüz kontrol edilmedi"}.get(pv.state)
+        if word is None:
+            first = pv.text.split(": ", 1)[-1].split(" · ")[0]
+            word = first + (" (okunamadı)" if pv.state == "failing" else "")
+        view = next((v for v in out if v["id"] == pv.id), None)
+        if view is None:
+            view = {"id": pv.id, "name": pv.text.split(": ", 1)[0].lstrip("🏛️ ").strip(),
+                    "status": "unknown", "icon": "⚪", "last_check": "—",
+                    "last_change": "—", "items_count": None, "error": None}
+            out.append(view)
+        view["portal_text"] = f"rezervasyon portalı: {word}"
+        view["portal_url"] = pv.url
+    return out
+
+
+def source_line(view: dict) -> str:
+    from tiyatro import sources as S
+    text = S.line(view)
+    return f"{text} · {view['portal_text']}" if view.get("portal_text") else text
 
 
 QUICK_DAYS = {"Hafta içi": [0, 1, 2, 3, 4], "Hafta sonu": [5, 6],
@@ -208,18 +244,26 @@ def row_values(row) -> tuple[str, ...]:
         title = f"KALKTI · {title}"
     elif row.is_new:
         title = f"YENİ · {title}"
-    if row.watched:
+    if row.is_event:
+        follow = "Takipte" if row.watched else "Pasif"
+    elif row.watched:
         follow = "Takipte"
     elif row.active:
         follow = "—"
     else:
         follow = "Pasif" if row.target_lines else "—"
-    return (title, ", ".join(row.tags), row.audience, row.genre, row.duration, row.age, row.price,
-            str(row.session_count), row.status_summary, follow)
+    seans = (row.seans or "—") if row.is_event else str(row.session_count)
+    return (title, ", ".join(row.tags) or "—", row.source, row.audience or "—",
+            row.genre or "—", row.duration, row.age, row.price, seans, row.status_summary,
+            follow)
 
 
 def meta_line(row) -> str:
-    """Detail header: "Kitle: Çocuk  ·  Tür: Komedi  ·  Süre: 90 dk  ·  Yaş: 7+"."""
+    """Detail header: "Kitle: Çocuk  ·  Tür: Komedi  ·  Süre: 90 dk  ·  Yaş: 7+"
+    (event rows: "Kaynak: VKV  ·  Kitle: …  ·  Tür: …")."""
+    if row.is_event:
+        return "  ·  ".join([f"Kaynak: {row.source}", f"Kitle: {row.audience or 'Bilgi yok'}",
+                             f"Tür: {row.genre or 'Bilgi yok'}"])
     parts = [f"Kitle: {row.audience or 'Bilgi yok'}", f"Tür: {row.genre or 'Bilgi yok'}"]
     if row.duration:
         parts.append(f"Süre: {row.duration}")
@@ -356,7 +400,7 @@ def scrub_secrets(text: str, secrets=()) -> str:
 _TR_ALPHABET = "abcçdefgğhıijklmnoöpqrsştuüvwxyz"
 _TR_RANK = {ch: i for i, ch in enumerate(_TR_ALPHABET)}
 _TR_LOWER = {"I": "ı", "İ": "i"}
-SORT_COLUMNS = ("title", "tags", "audience", "genre", "duration", "age", "price", "sessions", "summary",
+SORT_COLUMNS = ("title", "tags", "source", "audience", "genre", "duration", "age", "price", "sessions", "summary",
                 "follow")
 # First click sorts "most first" (descending key) on these; every other column ascending.
 _FIRST_DESC = {"sessions", "summary", "follow"}
@@ -394,6 +438,8 @@ def _sort_value(row, column: str):
         return tr_sort_key(row.title) if row.title.strip() else None
     if column == "tags":
         return tr_sort_key(", ".join(row.tags)) if row.tags else None
+    if column == "source":
+        return tr_sort_key(row.source)
     if column == "audience":
         return tr_sort_key(row.audience) if row.audience.strip() else None
     if column == "genre":
@@ -473,7 +519,8 @@ def load_ui(path) -> dict:
     except (OSError, ValueError):
         return ui
     if isinstance(data, dict):
-        if isinstance(data.get("geometry"), str) and _GEOM.match(data["geometry"]):
+        if (isinstance(data.get("geometry"), str) and _GEOM.match(data["geometry"])
+                and data.get("geometry_v") == GEOMETRY_VERSION):  # older sizes: dropped once
             ui["geometry"] = data["geometry"]
         if isinstance(data.get("beep"), bool):
             ui["beep"] = data["beep"]

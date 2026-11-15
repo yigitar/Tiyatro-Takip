@@ -54,7 +54,7 @@ from pc import configedit
 from pc.app_logic import ago_text
 from pc.settings import DEFAULT_LOCAL_DIR
 from pc.viewmodel import (PortalView, Row, build_rows, format_events_for_desktop, headline,
-                          portal_views, when_text)
+                          portal_views, when_text, with_events)
 from tiyatro.config import config_from_dict, config_to_dict, default_config
 from tiyatro.fetcher import fetch
 from tiyatro.heartbeat import github_run_status, write_heartbeat
@@ -962,8 +962,9 @@ class Service:
         state = self.state or {"plays": {}}
         config = self._config or default_config()
         everything = set(state.get("plays") or {}) | set(config.plays)
-        return build_rows(state, config, everything - self.new_slugs, self.removed_slugs,
-                          now or self._clock())
+        now = now or self._clock()
+        rows = build_rows(state, config, everything - self.new_slugs, self.removed_slugs, now)
+        return with_events(rows, srcmod_events.event_views(self.state, config, now))
 
     # ---- status ------------------------------------------------------------------------
     def _next_opening_info(self, state: dict, config: Config, now: datetime) -> dict | None:
@@ -1051,7 +1052,7 @@ class Service:
         return self._edit(configedit.set_event_follow, event_id, on)
 
     def event_views(self, now: datetime | None = None) -> list[dict]:
-        """Rows of the "Diğer kaynaklar" tab (Başiskele + VKV events)."""
+        """Başiskele + VKV events (merged into ``rows()``; also used by tests/Worker parity)."""
         return srcmod_events.event_views(self.state, self._config or default_config(),
                                          now or self._clock())
 

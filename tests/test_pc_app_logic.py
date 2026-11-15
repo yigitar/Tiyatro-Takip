@@ -195,12 +195,13 @@ class FakeRow:
         self.session_count, self.status_summary = 3, "1 satışta"
         self.watched, self.active, self.is_new, self.is_removed = True, True, False, False
         self.target_lines = ["x"]
+        self.source, self.is_event, self.seans = "Biletinial", False, ""
         self.__dict__.update(kw)
 
 
 def test_row_values_and_tags():
     r = FakeRow()
-    assert L.row_values(r) == ("Oyun", "çocuk, gündüz", "Çocuk", "Komedi", "90 dk", "7+", "100 TL",
+    assert L.row_values(r) == ("Oyun", "çocuk, gündüz", "Biletinial", "Çocuk", "Komedi", "90 dk", "7+", "100 TL",
                                "3", "1 satışta", "Takipte")
     assert L.row_tags(r) == ("watched",)
     assert L.row_tags(FakeRow(is_new=True)) == ("watched", "new")
@@ -317,7 +318,7 @@ def test_scrub_github_pat_and_bearer():
 def test_ui_prefs_roundtrip_and_bad_file(tmp_path):
     p = tmp_path / "ui.json"
     assert L.load_ui(p) == {"geometry": None, "beep": True}
-    L.save_ui(p, {"geometry": "900x600+10+20", "beep": False})
+    L.save_ui(p, {"geometry": "900x600+10+20", "beep": False, "geometry_v": L.GEOMETRY_VERSION})
     assert L.load_ui(p) == {"geometry": "900x600+10+20", "beep": False}
     p.write_text("{not json", encoding="utf-8")
     assert L.load_ui(p) == {"geometry": None, "beep": True}

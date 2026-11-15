@@ -31,8 +31,7 @@ from pc.activity_ui import ActivityTab, default_reveal
 from pc.service import RefreshError
 from pc.settings import DEFAULT_LOCAL_DIR, SettingsError, load_settings
 from pc.viewmodel import APP_TITLE, DAY_SHORT, credit_lines
-from pc.events_ui import EventsTab
-from pc.widgets import AutoScrollbar
+from pc.widgets import AutoScrollbar, autosize_text
 from tiyatro import sources as S
 from tiyatro.config import config_to_dict
 from tiyatro.models import ISTANBUL
@@ -45,10 +44,11 @@ RELOAD_MS = 60_000
 ACTIVITY_MS = 2000
 MAX_POPUPS = 3
 NO_INFO = "Bilgi yok"
-COLUMNS = (("title", "Oyun", 260), ("tags", "Etiketler", 110), ("audience", "Kitle", 70),
-           ("genre", "Tür", 90),
+DETAIL_CHROME_PX = 30  # title + border of the "Oyun ayrıntısı" frame
+COLUMNS = (("title", "Oyun", 260), ("tags", "Etiketler", 110), ("source", "Kaynak", 80),
+           ("audience", "Kitle", 70), ("genre", "Tür", 90),
            ("duration", "Süre", 60), ("age", "Yaş", 45), ("price", "Fiyat", 70),
-           ("sessions", "Seans", 50), ("summary", "Durum özeti", 230),
+           ("sessions", "Seans", 120), ("summary", "Durum özeti", 230),
            ("follow", "Takip", 70))
 
 
@@ -401,8 +401,6 @@ class App:
         self.notebook.pack(fill="both", expand=True, padx=8)
         games = ttk.Frame(self.notebook)
         self.notebook.add(games, text="Oyunlar")
-        self.events_tab = EventsTab(self.notebook, self.service, self.edit, self.open_url)
-        self.notebook.add(self.events_tab, text="Diğer kaynaklar")
         self.activity_tab = ActivityTab(
             self.notebook, self.activity, A.load_filters(self.local_dir / "ui.json"),
             self.save_ui, self.mb, self.reveal)
@@ -410,11 +408,8 @@ class App:
 
         self.source_bar = ttk.Frame(games)  # "Kaynaklar" strip (wave 4 B)
         self.source_labels: list = []
+        self.source_buttons: list = []   # "Portalı aç" link of the Başiskele row
         self._source_sig = None
-        self.portal_bar = ttk.Frame(games)  # "Portallar" strip, packed only when there is one
-        self.portal_labels: list = []
-        self.portal_buttons: list = []
-        self._portal_sig = None
         pane = ttk.PanedWindow(games, orient="vertical")
         self.pane = pane
         self._sash_user, self._fit_key = False, None
@@ -548,87 +543,80 @@ class App:
             return
         self._default_rows = rows
         self._render_rows()
-        self._render_portals()
         self._render_sources()
-        self.events_tab.refresh()
         self._fit_panes()
 
     def _fit_panes(self) -> None:
-        """Size the list pane to its rows once per row-count/window-height change, unless
-        the user dragged the divider (then it stays where they put it)."""
-        if self._sash_user:
+        """Divider position: the list shows its rows, the detail pane gets the height its
+        content needs (so list, detail, session table, targets and Özet are visible
+        without scrolling when the window is big enough). Once per change of row count,
+        window height or detail content; never after the user dragged the divider."""
+        if self._sash_user or self.closing:
             return
-        pane_px = self.pane.winfo_height()
+        try:
+            pane_px = self.pane.winfo_height()
+        except tk.TclError:  # window already destroyed
+            return
         if pane_px < 100:  # not laid out yet (first call): retry when idle
             self.root.after(150, self._fit_panes)
             return
-        key = (len(self.rows), pane_px)
+        need = None
+        body = getattr(self, "detail_body", None)
+        if body is not None and body.winfo_exists():
+            self.root.update_idletasks()
+            need = body.winfo_reqheight() + DETAIL_CHROME_PX
+        key = (len(self.rows), pane_px, need)
         if key == self._fit_key:
             return
         self._fit_key = key
         try:
-            self.pane.sashpos(0, L.list_pane_px(len(self.rows), pane_px))
+            self.pane.sashpos(0, L.list_pane_px(len(self.rows), pane_px, need))
         except tk.TclError:
             pass
 
+    def _refit(self) -> None:
+        """Detail content changed size: fit the panes again when idle."""
+        if not self.closing:
+            self.root.after_idle(self._fit_panes)
+
     def _render_sources(self) -> None:
-        """"Kaynaklar" strip: ✅/⚠️/❌, last check, last content change, item count per source."""
+        """"Kaynaklar" strip: ✅/⚠️/❌, last check, last content change, item count per source;
+        the Başiskele row also carries the reservation-portal state and a "Portalı aç" link."""
         fn = getattr(self.service, "sources", None)
+        pfn = getattr(self.service, "portals", None)
         try:
             views = fn() if fn is not None else []
+            portals = pfn() if pfn is not None else []
         except Exception:
             log.exception("sources() failed")
             return
-        sig = tuple(S.line(v) for v in views)
+        views = L.source_views_with_portals(views, portals)
+        sig = tuple((L.source_line(v), v.get("portal_url")) for v in views)
         if sig == self._source_sig:
             return
         self._source_sig = sig
         for child in self.source_bar.winfo_children():
             child.destroy()
-        self.source_labels = []
+        self.source_labels, self.source_buttons = [], []
         if not views:
             self.source_bar.pack_forget()
             return
         colors = {"ok": L.GREEN, "stale": L.AMBER, "failed": L.RED, "unknown": L.GRAY}
         for v in views:
-            label = ttk.Label(self.source_bar, text=S.line(v),
+            line = ttk.Frame(self.source_bar)
+            line.pack(fill="x", pady=0)
+            label = ttk.Label(line, text=L.source_line(v),
                               foreground=colors.get(v["status"], L.GRAY))
-            label.pack(anchor="w")
+            label.pack(side="left")
             self.source_labels.append(label)
+            if v.get("portal_url"):
+                button = ttk.Button(line, text="Portalı aç", width=10,
+                                    command=lambda u=v["portal_url"]: self.open_url(u))
+                button.pack(side="left", padx=8)
+                self.source_buttons.append(button)
         ttk.Label(self.source_bar, text=S.LEGEND, foreground=L.GRAY, wraplength=900,
                   justify="left").pack(anchor="w")
         self.source_bar.pack(fill="x", pady=(0, 4), before=self.pane)
-
-    def _render_portals(self) -> None:
-        """One line per reservation portal under the toolbar; rebuilt only on a change."""
-        fn = getattr(self.service, "portals", None)
-        try:
-            views = fn() if fn is not None else []
-        except Exception:
-            log.exception("portals() failed")
-            return
-        sig = tuple((v.id, v.text, v.url, v.state) for v in views)
-        if sig == self._portal_sig:
-            return
-        self._portal_sig = sig
-        for child in self.portal_bar.winfo_children():
-            child.destroy()
-        self.portal_labels, self.portal_buttons = [], []
-        if not views:
-            self.portal_bar.pack_forget()
-            return
-        colors = {"empty": L.GRAY, "open": L.GREEN, "failing": L.RED, "unknown": L.GRAY}
-        for v in views:
-            line = ttk.Frame(self.portal_bar)
-            line.pack(fill="x", pady=1)
-            label = ttk.Label(line, text=v.text, foreground=colors.get(v.state, L.GRAY))
-            label.pack(side="left")
-            button = ttk.Button(line, text="Aç", width=5,
-                                command=lambda u=v.url: self.open_url(u))
-            button.pack(side="left", padx=8)
-            self.portal_labels.append(label)
-            self.portal_buttons.append(button)
-        self.portal_bar.pack(fill="x", pady=(0, 4), before=self.pane)
 
     def sort_by(self, column: str) -> None:
         """Header click: ascending -> descending -> default order (see ``L.next_sort``)."""
@@ -670,6 +658,7 @@ class App:
     def _detail_placeholder(self) -> None:
         for child in self.detail.winfo_children():
             child.destroy()
+        self.detail_body = None
         ttk.Label(self.detail, text="Bir oyun seçin.").pack(padx=10, pady=10, anchor="w")
 
     def show_detail(self, force: bool = False) -> None:
@@ -677,6 +666,9 @@ class App:
         if row is None:
             self._detail_sig = None
             self._detail_placeholder()
+            return
+        if row.is_event:
+            self._show_event_detail(row, force)
             return
         sessions = L.session_lines(self.entry(row.slug), self.now())
         sig = (L.row_values(row), tuple(row.target_lines), row.active,
@@ -719,7 +711,8 @@ class App:
         cols = ttk.Frame(body)
         cols.pack(fill="both", expand=True, padx=8, pady=6)
         self.session_tree = ttk.Treeview(cols, columns=("when", "status", "opens"),
-                                         show="headings", height=6)
+                                         show="headings",
+                                         height=min(max(len(sessions), 2), 8))
         for key, label, width in (("when", "Seans", 170), ("status", "Durum", 100),
                                   ("opens", "Satış açılışı", 170)):
             self.session_tree.heading(key, text=label)
@@ -729,6 +722,9 @@ class App:
         if not sessions:
             self.session_tree.insert("", "end", values=("yaklaşan seans yok", "", ""))
         self.session_tree.pack(side="left", fill="both", expand=True)
+        sess_sb = AutoScrollbar(cols, orient="vertical", command=self.session_tree.yview)
+        self.session_tree.configure(yscrollcommand=sess_sb.set)
+        sess_sb.pack(side="left", fill="y")
 
         targets = ttk.LabelFrame(cols, text="Hedefler")
         targets.pack(side="left", fill="both", expand=True, padx=(8, 0))
@@ -752,6 +748,52 @@ class App:
             self.target_buttons[t.id] = edit
 
         self._build_info(body, row)
+        self._refit()
+
+    def _show_event_detail(self, row, force: bool) -> None:
+        """Detail of a Başiskele / VKV event: source, event date, reservation opening,
+        contact block (VKV), follow switch, page link."""
+        sig = (L.row_values(row), row.seans, row.reservation_opens, row.venue,
+               tuple(row.contact), row.url, row.active)
+        if sig == self._detail_sig and not force:
+            return
+        self._detail_sig = sig
+        body = self._detail_body()
+        head = ttk.Frame(body)
+        head.pack(fill="x", padx=8, pady=4)
+        ttk.Label(head, text=row.title, font=self.bold_font).pack(side="left")
+        self.open_btn = ttk.Button(head, text="Sayfayı aç",
+                                   command=lambda: row.url and self.open_url(row.url),
+                                   state="normal" if row.url else "disabled")
+        self.open_btn.pack(side="right")
+        self.meta_label = ttk.Label(body, text=L.meta_line(row))
+        self.meta_label.pack(fill="x", padx=8, anchor="w")
+        acts = ttk.Frame(body)
+        acts.pack(fill="x", padx=8, pady=(2, 0))
+        self.active_var = tk.BooleanVar(value=row.active)
+        self.active_chk = ttk.Checkbutton(
+            acts, text="Aktif (takip ediliyor)", variable=self.active_var,
+            command=lambda: self.edit(self.service.set_event_follow, row.slug,
+                                      self.active_var.get(), key=("ef", row.slug),
+                                      widget=self.active_chk))
+        self.active_chk.pack(side="left")
+        self.add_buttons, self.target_buttons = {}, {}
+        grid = ttk.Frame(body)
+        grid.pack(fill="x", padx=8, pady=6)
+        facts = [("Kaynak", row.source), ("Etkinlik tarihi", row.seans or "Bilgi yok"),
+                 ("Rezervasyon açılışı", row.reservation_opens or "Bilgi yok"),
+                 ("Durum", row.status_summary or "Bilgi yok"), ("Mekan", row.venue or "Bilgi yok")]
+        facts += [("İletişim" if i == 0 else "", line) for i, line in enumerate(row.contact)]
+        if row.contact and row.url:
+            facts.append(("Etkinlik sayfası", row.url))
+        self.event_fact_labels = []
+        for i, (name, value) in enumerate(facts):
+            ttk.Label(grid, text=name, font=self.bold_font).grid(row=i, column=0, sticky="nw",
+                                                                 padx=(0, 12), pady=1)
+            lbl = ttk.Label(grid, text=value, wraplength=700, justify="left")
+            lbl.grid(row=i, column=1, sticky="w", pady=1)
+            self.event_fact_labels.append(lbl)
+        self._refit()
 
     def _detail_body(self) -> ttk.Frame:
         """Empty, scrollable content frame of the detail pane (small windows stay usable)."""
@@ -766,7 +808,7 @@ class App:
         window = canvas.create_window((0, 0), window=body, anchor="nw")
         body.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda e: canvas.itemconfigure(window, width=e.width))
-        self.detail_canvas, self.detail_vsb = canvas, vsb
+        self.detail_canvas, self.detail_vsb, self.detail_body = canvas, vsb, body
         return body
 
     def _detail_wheel(self, event) -> None:
@@ -791,7 +833,7 @@ class App:
         ttk.Label(info, text="Özet", font=self.bold_font).pack(anchor="w")
         box = ttk.Frame(info)
         box.pack(fill="x")
-        self.summary_text = tk.Text(box, height=6, wrap="word", borderwidth=1, relief="solid",
+        self.summary_text = tk.Text(box, height=1, wrap="word", borderwidth=1, relief="solid",
                                     font="TkDefaultFont")
         sb = AutoScrollbar(box, orient="vertical", command=self.summary_text.yview)
         self.summary_text.configure(yscrollcommand=sb.set)
@@ -799,6 +841,10 @@ class App:
         self.summary_text.configure(state="disabled")
         self.summary_text.pack(side="left", fill="x", expand=True)
         sb.pack(side="right", fill="y")
+        # as tall as the text needs, up to ~40 % of the pane (then it scrolls)
+        autosize_text(self.summary_text,
+                      lambda: max(6, int(self.pane.winfo_height() * 0.4 / 17)),
+                      on_change=self._refit)
         ttk.Label(info, text="Oyuncular", font=self.bold_font).pack(anchor="w", pady=(6, 0))
         self.cast_label = ttk.Label(info, text=", ".join(row.cast) or NO_INFO,
                                     wraplength=600, justify="left")
@@ -1014,6 +1060,7 @@ class App:
             old = L.load_ui(self.local_dir / "ui.json")
             L.save_ui(self.local_dir / "ui.json",
                       {"geometry": geom if geom and "x" in geom else old["geometry"],
+                       "geometry_v": L.GEOMETRY_VERSION,
                        "beep": self.beep_enabled,
                        "sort": list(self.sort) if self.sort else None,
                        "activity": self.activity_tab.filters()})

@@ -71,3 +71,63 @@ def genre_label(genre) -> str:
     kept = [w for w in words
             if _tr_lower(w) not in _AUDIENCE_WORDS and _tr_lower(w) not in _GENERIC_WORDS]
     return " ".join(kept)
+
+
+# ---- filling blanks (wave 5) ------------------------------------------------------------
+# Rule (stated, documented in the README): a Kitle is "Çocuk" when the page/category says
+# so (genre or kind wording, derived "çocuk" tag, age limit <= 12); otherwise "Yetişkin" --
+# either because the page says so, the age limit is 13+, or there is no child marker at
+# all. Tür is the genre proper; when the genre field holds only the audience, the title /
+# description is searched for a genre keyword; a theatre event with no further hint is
+# plain "Tiyatro". Only a non-theatre source item without any hint stays unknown ("").
+
+GENERIC_GENRE = "Tiyatro"
+_GENRE_KEYWORDS = (
+    ("Müzikal", r"m[uü]zikal\w*"), ("Komedi", r"komedi\w*"), ("Dram", r"dram(?:a|atik|ı)?"),
+    ("Trajedi", r"trajedi\w*"), ("Monolog", r"monolog\w*"), ("Stand-up", r"stand[\s-]?up"),
+    ("Operet", r"operet\w*"), ("Gerilim", r"gerilim\w*"), ("Fantastik", r"fantastik\w*"),
+    ("Macera", r"macera\w*"), ("Kabare", r"kabare\w*"), ("Tarihi", r"tarihi"),
+)
+
+
+def _fold_tr(text: str) -> str:
+    return _tr_lower(str(text or "")).translate(str.maketrans("çğşöü", "cgsou"))
+
+
+def genre_from_text(*texts) -> str:
+    """Earliest genre keyword in the given texts (title, description…) or ""."""
+    import re
+    blob = _fold_tr(" ".join(str(t or "") for t in texts))
+    best, best_pos = "", None
+    for label, pattern in _GENRE_KEYWORDS:
+        m = re.search(rf"\b{_fold_tr(pattern)}\b", blob)
+        if m and (best_pos is None or m.start() < best_pos):
+            best, best_pos = label, m.start()
+    return best
+
+
+def resolve_audience(genre="", tags=(), age_limit=None, text="") -> str:
+    """Kitle with the stated fallback: unknown -> "Yetişkin" unless a child marker exists.
+    ``text`` (title/category) counts as a child marker only when it says "çocuk"."""
+    found = audience_of(genre, tags, age_limit)
+    if found:
+        return found
+    return CHILD_LABEL if "çocuk" in _tr_lower(str(text or "")) else ADULT_LABEL
+
+
+def resolve_genre(genre="", *texts, theatre: bool = True) -> str:
+    """Tür: the genre field, else a keyword from ``texts``, else "Tiyatro" (``theatre``)."""
+    found = genre_label(genre) or genre_from_text(*texts)
+    return found or (GENERIC_GENRE if theatre else "")
+
+
+def derived_tags(tags, audience: str, start_hour: int | None = None) -> list[str]:
+    """Etiketler for display: the stored tags plus the audience ("çocuk"/"yetişkin") and
+    "gündüz" (session before 17:00) when missing, so no row is blank."""
+    out = [str(t) for t in tags or ()]
+    for extra in (_tr_lower(audience or ""),
+                  "gündüz" if start_hour is not None and start_hour < _DAYTIME_BEFORE_HOUR
+                  else ""):
+        if extra and extra not in out:
+            out.append(extra)
+    return out

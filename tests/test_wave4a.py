@@ -35,11 +35,11 @@ def test_row_has_separate_kitle_and_tur():
     now = datetime(2026, 11, 15, tzinfo=ISTANBUL)
     cfg = default_config()
     r = _row("p", _entry("Yetişkin Oyunu", age=16), cfg, set(), set(), now)
-    assert (r.audience, r.genre) == ("Yetişkin", "")
+    assert (r.audience, r.genre) == ("Yetişkin", "Tiyatro")  # genre blank -> stated fallback
     r = _row("p", _entry("Komedi", tags=["çocuk"], age=7), cfg, set(), set(), now)
     assert (r.audience, r.genre) == ("Çocuk", "Komedi")
     values = L.row_values(r)
-    assert values[2:4] == ("Çocuk", "Komedi")
+    assert values[3:5] == ("Çocuk", "Komedi")
 
 
 def test_meta_line_shows_both():
