@@ -279,3 +279,16 @@ def test_divider_does_not_jump_while_clicking_through_rows(mixed, monkeypatch):
     ui.select_slug("p1")
     ui._fit_panes()
     assert len(asked) == 1                         # fitted once, then left alone
+
+
+def test_wave10_genre_of_non_theatre_only_when_certain():
+    from tiyatro.tags import OTHER_EVENT_LABEL
+    assert OTHER_EVENT_LABEL == "Diğer etkinlik"
+    for kind, title in (("", "Seramik Atölyesi"), ("", "Yazar Söyleşisi"), ("", "Konser: Bahar"),
+                        ("", "Resim Sergisi"), ("", "Girişimcilik Eğitimi"), ("", "Kısa Film Gösterimi")):
+        assert S.genre_of(kind, title) == OTHER_EVENT_LABEL, (kind, title)
+    assert S.genre_of("Söyleşi", "X") == "Söyleşi"                       # stated kind wins
+    assert S.genre_of("", "Satır Arası Ebeveynlik") == ""                # unknown theatre keeps "—"
+    assert S.genre_of("Tiyatro", "Atölye Gösterisi") == ""               # theatre veto
+    assert S.genre_of("", "Oyunculuk Atölyesi Müzikali") == "Müzikal"    # keyword genre first
+    assert S.genre_of("", "Tiyatro Atölyesi") == ""

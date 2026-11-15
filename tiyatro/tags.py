@@ -104,6 +104,24 @@ def genre_from_text(*texts) -> str:
     return best
 
 
+# Source events (Başiskele, VKV) that are clearly not theatre (wave 10): the category/title
+# carries a plain non-theatre word. Only then is Tür "Diğer etkinlik" (always derived); an
+# item without such a word keeps "—". Words that also name theatre ("tiyatro", "müzikal")
+# veto it in srcevents.genre_of via is_theatre.
+OTHER_EVENT_LABEL = "Diğer etkinlik"
+_NON_THEATRE_WORDS = ("atölye", "söyleşi", "film", "sinema", "konser", "sergi", "eğitim",
+                      "kurs", "seminer", "workshop", "panel")
+
+
+def has_non_theatre_word(*texts) -> bool:
+    """A non-theatre word (atölye, söyleşi, film, konser, sergi, eğitim, ...) starts a word
+    of the given texts (Turkish-folded, prefix match: "Filmi", "Konseri")."""
+    import re
+    blob = _fold_tr(" ".join(str(t or "") for t in texts))
+    words = "|".join(_fold_tr(w) for w in _NON_THEATRE_WORDS)
+    return re.search(rf"(?<!\w)(?:{words})", blob) is not None
+
+
 def resolve_audience(genre="", tags=(), age_limit=None, text="") -> str:
     """Kitle with the stated fallback: unknown -> "Yetişkin" unless a child marker exists.
     ``text`` (title/category) counts as a child marker only when it says "çocuk"."""

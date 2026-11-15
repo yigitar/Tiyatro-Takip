@@ -26,7 +26,8 @@ from urllib.parse import urljoin
 
 from tiyatro.models import ISTANBUL, Config, Event
 from tiyatro.notify import DAYS, MONTHS, SOURCE_LABELS, SRC_TEXT
-from tiyatro.tags import resolve_audience, resolve_genre
+from tiyatro.tags import (OTHER_EVENT_LABEL, has_non_theatre_word, resolve_audience,
+                          resolve_genre)
 from tiyatro.timeutil import parse_iso
 
 SRC_KINDS = tuple(SRC_TEXT)
@@ -221,8 +222,16 @@ class Listing:
 def genre_of(kind: str, title: str) -> str:
     """Tür: the genre word(s) of the kind ("Animasyon Filmi", "Söyleşi"), else a genre
     keyword of kind/title ("Müzikal"), else "" (shown "—"; neither the audience word nor
-    the generic "Tiyatro" is ever the genre)."""
-    return resolve_genre(kind, title)
+    the generic "Tiyatro" is ever the genre). Wave 10: with no genre word, an event that is
+    clearly not theatre (not is_theatre AND a non-theatre word such as atölye / söyleşi /
+    film / konser / sergi / eğitim in kind or title) is "Diğer etkinlik"; anything else
+    stays "" (shown "—")."""
+    found = resolve_genre(kind, title)
+    if found:
+        return found
+    if not is_theatre(kind, title) and has_non_theatre_word(kind, title):
+        return OTHER_EVENT_LABEL
+    return ""
 
 
 def audience_for(kind: str, title: str) -> str:

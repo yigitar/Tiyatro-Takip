@@ -57,6 +57,12 @@ gün, saat ve kişi sayısına göre daraltmak istersen hedef eklersin.
   (kitle sözcükleri atılır); yalnızca kitle yazıyorsa başlık/açıklamadaki açık tür
   sözcüğü (müzikal, komedi, dram, trajedi, monolog, stand-up, operet, kabare); o da
   yoksa Tür **"—"** kalır: "Tiyatro" tür değildir, hiçbir yerde doldurulmaz (dalga 9).
+  **Dalga 10:** Başiskele/VKV etkinliğinde tür sözcüğü yoksa ve kategori/başlıkta açıkça
+  tiyatro olmayan bir sözcük varsa (atölye, söyleşi, film, sinema, konser, sergi, eğitim,
+  kurs, seminer, workshop, panel) ve metinde "tiyatro"/"müzikal" geçmiyorsa Tür **"Diğer
+  etkinlik"** olur (türetilmiş, italik). Belirsiz olanlar (tiyatro olabilecek, tür sözcüğü
+  olmayan) "—" kalır. Biletinial değişmedi: yalnız tiyatro sayfaları taranır, tür alanı
+  zaten sayfadan gelir. Yeni etkinlik bildirimi hâlâ her yeni öğe için gider.
 - **Takip kutusu (varsayılan: KAPALI):** Yeni görünen her oyun ve her etkinlik (Biletinial,
   Başiskele, VKV) **takipsiz** başlar; istediklerini sen açarsın. Listede ilk sütun
   "Takip" bir kutudur (☑ / ☐): hücreye tıklamak oyunlar ve Başiskele/VKV etkinlikleri için

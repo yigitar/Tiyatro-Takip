@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { h, render, apply, listItems, sourceLinks, isMutating, viewOf, HELP, LEGEND } from "../src/menu.js";
 import {
   resolveAudience, resolveGenre, genreFromText, timeOfDay, audienceIsStated, genreIsStated,
-  rezWhen, eventFields, playFields,
+  rezWhen, eventFields, playFields, eventGenre,
 } from "../src/derive.js";
 import { makeConfig, makeState } from "./_fixtures.js";
 
@@ -354,4 +354,15 @@ test("texts no longer mention the old behaviour (default-ON, Diğer kaynaklar)",
   const all = [...Object.values(HELP).flat(), LEGEND].join("\n");
   assert.ok(!/Diğer kaynaklar|varsayılan olarak takipte olur|default.?ON/i.test(all));
   assert.ok(/Yenile: tüm kaynakları/.test(HELP.sources[0]) && /Yenile: tüm kaynakları \(Biletinial, Başiskele, VKV\)/.test(HELP.main[1]));
+});
+
+test("wave 10: non-theatre source events get Diğer etkinlik only when certain", () => {
+  for (const t of ["Seramik Atölyesi", "Yazar Söyleşisi", "Konser: Bahar", "Resim Sergisi", "Girişimcilik Eğitimi", "Kısa Film Gösterimi"]) {
+    assert.equal(eventGenre("", t), "Diğer etkinlik", t);
+  }
+  assert.equal(eventGenre("Söyleşi", "X"), "Söyleşi");
+  assert.equal(eventGenre("", "Satır Arası Ebeveynlik"), "");
+  assert.equal(eventGenre("Tiyatro", "Atölye Gösterisi"), "");
+  assert.equal(eventGenre("", "Oyunculuk Atölyesi Müzikali"), "Müzikal");
+  assert.deepEqual(eventFields({ title: "Seramik Atölyesi", kind: "" }, "bk:1", Date.now()).derived.includes("genre"), true);
 });

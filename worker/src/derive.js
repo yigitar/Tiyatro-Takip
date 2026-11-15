@@ -76,6 +76,15 @@ export function genreFromText(...texts) {
   return best;
 }
 
+// Source events that are clearly not theatre (tags.py OTHER_EVENT_LABEL / has_non_theatre_word).
+export const OTHER_EVENT_LABEL = "Diğer etkinlik";
+const NON_THEATRE_RE = new RegExp(
+  `(?<!${W})(?:${["atölye", "söyleşi", "film", "sinema", "konser", "sergi", "eğitim", "kurs",
+    "seminer", "workshop", "panel"].map(foldTr).join("|")})`, "u");
+
+export const hasNonTheatreWord = (...texts) =>
+  NON_THEATRE_RE.test(foldTr(texts.map((t) => String(t ?? "")).join(" ")));
+
 /** Kitle with the stated fallback: unknown -> "Yetişkin" unless a child marker exists. */
 export function resolveAudience(genre = "", tags = [], age = null, text = "") {
   return audienceOf(genre, tags, age) || (trLower(text).includes("çocuk") ? "Çocuk" : "Yetişkin");
@@ -98,6 +107,12 @@ export function timeOfDay(hours) {
 export function isTheatre(kind, title) {
   const low = trLower(`${kind} ${title}`);
   return low.includes("tiyatro") || low.includes("müzikal");
+}
+
+/** Tür of a Başiskele/VKV event (srcevents.genre_of): genre, else "Diğer etkinlik" when clearly not theatre, else "". */
+export function eventGenre(kind, title) {
+  return resolveGenre(kind, [title])
+    || (!isTheatre(kind, title) && hasNonTheatreWord(kind, title) ? OTHER_EVENT_LABEL : "");
 }
 
 // ---------------------------------------------------------------- time helpers
@@ -204,7 +219,7 @@ export function eventFields(rec, id, now) {
   if (rez.derived) derived.push("rez");
   return {
     kitle: resolveAudience(kind, [], null, `${kind} ${title}`),
-    tur: resolveGenre(kind, [title]),
+    tur: eventGenre(kind, title),
     zaman: Number.isFinite(start) ? timeOfDay([local(start).getUTCHours()]) : "",
     hedef: "—",
     rez: rez.text,
