@@ -196,8 +196,18 @@ def row_values(row) -> tuple[str, ...]:
         follow = "—"
     else:
         follow = "Pasif" if row.target_lines else "—"
-    return (title, ", ".join(row.tags), row.genre, row.duration, row.age, row.price,
+    return (title, ", ".join(row.tags), row.audience, row.genre, row.duration, row.age, row.price,
             str(row.session_count), row.status_summary, follow)
+
+
+def meta_line(row) -> str:
+    """Detail header: "Kitle: Çocuk  ·  Tür: Komedi  ·  Süre: 90 dk  ·  Yaş: 7+"."""
+    parts = [f"Kitle: {row.audience or 'Bilgi yok'}", f"Tür: {row.genre or 'Bilgi yok'}"]
+    if row.duration:
+        parts.append(f"Süre: {row.duration}")
+    if row.age:
+        parts.append(f"Yaş: {row.age}")
+    return "  ·  ".join(parts)
 
 
 def row_tags(row) -> tuple[str, ...]:
@@ -328,7 +338,7 @@ def scrub_secrets(text: str, secrets=()) -> str:
 _TR_ALPHABET = "abcçdefgğhıijklmnoöpqrsştuüvwxyz"
 _TR_RANK = {ch: i for i, ch in enumerate(_TR_ALPHABET)}
 _TR_LOWER = {"I": "ı", "İ": "i"}
-SORT_COLUMNS = ("title", "tags", "genre", "duration", "age", "price", "sessions", "summary",
+SORT_COLUMNS = ("title", "tags", "audience", "genre", "duration", "age", "price", "sessions", "summary",
                 "follow")
 # First click sorts "most first" (descending key) on these; every other column ascending.
 _FIRST_DESC = {"sessions", "summary", "follow"}
@@ -366,6 +376,8 @@ def _sort_value(row, column: str):
         return tr_sort_key(row.title) if row.title.strip() else None
     if column == "tags":
         return tr_sort_key(", ".join(row.tags)) if row.tags else None
+    if column == "audience":
+        return tr_sort_key(row.audience) if row.audience.strip() else None
     if column == "genre":
         return tr_sort_key(row.genre) if row.genre.strip() else None
     if column in ("duration", "age", "price"):

@@ -119,7 +119,7 @@ def test_watched_play_missing_from_state_still_listed():
     cfg = config_from_dict({"plays": {"bilinmeyen": {"active": True, "targets": []}}})
     out = build_rows({"plays": {}}, cfg, set(), set(), NOW)
     assert [(r.slug, r.title, r.watched, r.target_lines) for r in out] == [
-        ("bilinmeyen", "bilinmeyen", True, ["⚠️ hedef yok → bildirim gelmez"])]
+        ("bilinmeyen", "bilinmeyen", True, ["ℹ️ hedef yok → tüm seanslar izleniyor"])]
 
 
 def test_format_event_for_desktop_plain_text():
@@ -150,5 +150,5 @@ def test_active_play_without_targets_warns():  # final review I8
     cfg = config_from_dict({"plays": {"bos": {"active": True, "targets": []},
                                       "pasif": {"active": False, "targets": []}}})
     out = {r.slug: r for r in build_rows({"plays": {}}, cfg, set(), set(), NOW)}
-    assert out["bos"].target_lines == ["⚠️ hedef yok → bildirim gelmez"]
+    assert out["bos"].target_lines == ["ℹ️ hedef yok → tüm seanslar izleniyor"]
     assert out["pasif"].target_lines == []

@@ -37,7 +37,17 @@ def rule_allows(rule: Rule, start: datetime) -> bool:
     return False
 
 
+ALL_SESSIONS_ID = "*"
+
+
+def implicit_target() -> Target:
+    """Followed play without targets = "every session, any time" (people=1 minimum)."""
+    return Target(ALL_SESSIONS_ID, "Tüm seanslar", 1, Rule())
+
+
 def matching_targets(watch: PlayWatch, session: Session) -> list[Target]:
     if not watch.active:
         return []
+    if not watch.targets:
+        return [implicit_target()]
     return [t for t in watch.targets if rule_allows(t.rule, session.start)]

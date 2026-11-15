@@ -565,3 +565,30 @@ def test_cleanup_prunes_sessions_older_than_60_days_and_keeps_archive_flag():
     later = cleanup(out, WATCH, T0 + timedelta(days=5))  # now every session is pruned
     assert later["plays"]["p"]["sessions"] == {}
     assert later["plays"]["p"]["archived"] is True  # still archived, not resurrected
+
+
+# ==== wave 4 A1: followed play with no targets = implicit "all sessions" ====
+
+def test_implicit_all_sessions_target_matches_any_session():
+    from tiyatro.rules import ALL_SESSIONS_ID, matching_targets
+    watch = PlayWatch(active=True, targets=[])
+    for start in (SAT_20, WED_15):
+        got = matching_targets(watch, sess(start=start))
+        assert [t.id for t in got] == [ALL_SESSIONS_ID] and got[0].people == 1
+    assert matching_targets(PlayWatch(active=False, targets=[]), sess()) == []
+    # explicit targets are untouched: a non-matching rule still means no alert
+    only_sat = PlayWatch(active=True, targets=[EVENING])
+    assert matching_targets(only_sat, sess(start=WED_15)) == []
+
+
+def test_followed_play_without_targets_alerts_on_sale_any_session():
+    watch = cfg(p=PlayWatch(active=True, targets=[]))
+    st, _ = diff(empty_state(), [play(sessions=[sess(start=WED_15)])], watch, T0)
+    st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE, start=WED_15)])],
+                  watch, T0 + timedelta(minutes=5))
+    assert kinds(ev) == ["ON_SALE"] and ev[0].target_ids == ["*"]
+    # a play that is not followed stays silent
+    st, ev = diff(empty_state(), [play(sessions=[sess(start=WED_15)])], NOWATCH, T0)
+    st, ev = diff(st, [play(sessions=[sess(status=Status.ON_SALE, start=WED_15)])],
+                  NOWATCH, T0 + timedelta(minutes=5))
+    assert "ON_SALE" not in kinds(ev)

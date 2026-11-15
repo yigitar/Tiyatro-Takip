@@ -16,7 +16,7 @@ const DAY_NAMES = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
 const FROM_HOURS = [12, 14, 16, 18, 19, 20];
 const TO_HOURS = [16, 18, 20, 22];
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
-const NO_TARGET_TEXT = "⚠️ hedef yok → bildirim gelmez"; // as pc/viewmodel.py
+const NO_TARGET_TEXT = "ℹ️ hedef yok → tüm seanslar izleniyor"; // as pc/viewmodel.py
 const KINDS = { y: ["y", "Yetişkin"], c: ["c", "Çocuk"] };
 
 const encoder = new TextEncoder();
@@ -241,13 +241,9 @@ export function apply(route, config, state) {
     if (op === "ta") {
       if (parts[2] === "0" || parts[2] === "1") {
         const w = ensurePlay(out, slug);
+        // A followed play without targets watches every session (tiyatro/rules.py);
+        // no default target is created. Same as pc/configedit.set_active.
         w.active = parts[2] === "1";
-        // An active play without a target never alerts: add the default target
-        // (child if the play's state tags say "çocuk"). Same as pc/configedit.set_active.
-        if (w.active && w.targets.length === 0) {
-          const tags = statePlays(state)[slug]?.tags;
-          addTarget(out, slug, Array.isArray(tags) && tags.includes("çocuk") ? "c" : "y");
-        }
       }
       return out;
     }
@@ -400,6 +396,24 @@ function castLine(raw) {
   return `Oyuncular: ${shown}${more}`;
 }
 
+// Kitle (audience) vs Tür (genre): mirrors tiyatro/tags.py audience_of / genre_label.
+const trLower = (s) => String(s ?? "").replace(/İ/g, "i").replace(/I/g, "ı").toLowerCase();
+const AUDIENCE_WORDS = new Set(["çocuk", "yetişkin", "yetiskin"]);
+const GENERIC_WORDS = new Set(["oyunu", "oyun", "oyunları", "tiyatro", "tiyatrosu", "etkinlik",
+  "etkinliği", "gösteri", "gösterisi", "ve", "-"]);
+export function audienceOf(genre, tags, age) {
+  const low = trLower(genre);
+  const child = low.includes("çocuk");
+  const adult = low.includes("yetişkin") || low.includes("yetiskin");
+  if (child !== adult) return child ? "Çocuk" : "Yetişkin";
+  if (Array.isArray(tags) && tags.includes("çocuk")) return "Çocuk";
+  if (Number.isInteger(age)) return age <= 12 ? "Çocuk" : "Yetişkin";
+  return "";
+}
+export function genreLabel(genre) {
+  return String(genre ?? "").split(/\s+/).filter((w) => w && !AUDIENCE_WORDS.has(trLower(w)) && !GENERIC_WORDS.has(trLower(w))).join(" ");
+}
+
 function playScreen(config, state, slug, idx) {
   const hh = idx.hashOf.get(slug);
   const entry = statePlays(state)[slug] ?? {};
@@ -408,7 +422,10 @@ function playScreen(config, state, slug, idx) {
   const lines = [`🎭 <b>${esc(playTitle(state, slug))}</b>`];
   if (Array.isArray(entry.tags) && entry.tags.length) lines.push(`🏷 Etiketler: ${esc(entry.tags.join(", "))}`);
   const meta = [];
-  if (entry.genre) meta.push(`Tür: ${esc(entry.genre)}`);
+  const kitle = audienceOf(entry.genre, entry.tags, entry.age_limit);
+  if (kitle) meta.push(`Kitle: ${esc(kitle)}`);
+  const tur = genreLabel(entry.genre);
+  if (tur) meta.push(`Tür: ${esc(tur)}`);
   if (entry.duration_min) meta.push(`Süre: ${esc(entry.duration_min)} dk`);
   if (entry.age_limit != null) meta.push(`Yaş: ${esc(entry.age_limit)}+`);
   if (meta.length) lines.push(meta.join(" · "));

@@ -149,7 +149,7 @@ def ui(tmp_path, tk_root):
 def test_window_lists_plays_with_markers_and_columns(ui):
     assert [c for c in ui.tree["columns"]] == [c[0] for c in appmod.COLUMNS]
     assert [ui.tree.heading(c)["text"] for c in ui.tree["columns"]] == [
-        "Oyun", "Etiketler", "Tür", "Süre", "Yaş", "Fiyat", "Seans", "Durum özeti", "Takip"]
+        "Oyun", "Etiketler", "Kitle", "Tür", "Süre", "Yaş", "Fiyat", "Seans", "Durum özeti", "Takip"]
     kids = ui.tree.get_children()
     assert kids[0] == "p1"  # watched first
     assert "YENİ" in ui.tree.item("p2", "values")[0]

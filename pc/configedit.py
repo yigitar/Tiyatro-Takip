@@ -5,9 +5,8 @@ Each function edits a raw config dict (as stored, unknown fields untouched) and 
 validates the result with ``tiyatro.config.config_from_dict``. All are set operations,
 so applying one twice equals applying it once.
 
-Parity with the Telegram menu: ``ta`` -> set_active (activating a play without targets
-adds the default target: ``c``/"Çocuk" if the play's state tags contain "çocuk", else
-``y``/"Yetişkin"; 2 people, any time), ``tg`` -> ensure_target,
+Parity with the Telegram menu: ``ta`` -> set_active (no default target is created: an
+active play without targets watches every session), ``tg`` -> ensure_target,
 ``hp`` -> set_people, ``hd wd/we/all`` -> set_days_group, ``hd d<n>`` -> set_day,
 ``hf``/``ht`` -> set_hours, ``hx`` -> set_excluded_date, ``hs rm`` -> remove_target,
 ``pz`` -> set_paused. ``set_days`` and ``set_day_override`` are PC-only (rule
@@ -109,11 +108,9 @@ def rule_of(t: dict) -> dict:
 # ---- operations ------------------------------------------------------------------
 
 def set_active(cfg: dict, slug: str, active: bool, tags=()) -> None:
-    """``tags``: the play's tags from state.json (picks the default target kind)."""
-    watch = ensure_play(cfg, slug)
-    watch["active"] = bool(active)
-    if active and not watch["targets"]:  # an active play without a target never alerts
-        ensure_target(cfg, slug, "c" if "çocuk" in (tags or ()) else "y")
+    """``tags`` is accepted for call compatibility and ignored: a followed play without
+    targets watches every session (``tiyatro.rules.implicit_target``)."""
+    ensure_play(cfg, slug)["active"] = bool(active)
 
 
 def ensure_target(cfg: dict, slug: str, kind: str) -> None:

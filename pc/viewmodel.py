@@ -13,7 +13,7 @@ from tiyatro.config import default_config
 from tiyatro.models import ISTANBUL, Config, Event, Play, Target
 from tiyatro.notify import (DAY_BEFORE_TEXT, DAYS, KIND_TEXT, MONTHS, format_message,
                             portal_headline, portal_label)
-from tiyatro.tags import apply_overrides
+from tiyatro.tags import apply_overrides, audience_of, genre_label
 from tiyatro.timeutil import parse_iso
 
 DAY_SHORT = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"]  # as worker/src/menu.js
@@ -21,7 +21,7 @@ TAG_ORDER = ["çocuk", "gündüz"]
 STATUS_WORDS = (("on_sale", "satışta"), ("upcoming", "yakında"), ("sold_out", "tükendi"),
                 ("unknown", "belirsiz"))
 APP_TITLE = "Tiyatro Takip"
-NO_TARGET_TEXT = "⚠️ hedef yok → bildirim gelmez"  # as worker/src/menu.js
+NO_TARGET_TEXT = "ℹ️ hedef yok → tüm seanslar izleniyor"  # as worker/src/menu.js
 
 
 @dataclass
@@ -29,7 +29,8 @@ class Row:
     slug: str
     title: str
     tags: list[str] = field(default_factory=list)
-    genre: str = ""
+    audience: str = ""         # Kitle: "Yetişkin" / "Çocuk" / "" (unknown)
+    genre: str = ""            # Tür: "Komedi", "Dram"… (never the audience)
     duration: str = ""         # "130 dk"
     age: str = ""              # "4+"
     price: str = ""            # "250 TL"
@@ -170,7 +171,9 @@ def _row(slug: str, entry: dict, config: Config, seen: set[str], removed: set[st
     return Row(
         slug=slug, title=str(entry.get("title") or slug),
         tags=_tags(entry.get("tags"), watch),
-        genre=str(entry.get("genre") or ""),
+        audience=audience_of(entry.get("genre"), entry.get("tags") or (),
+                             age if isinstance(age, int) else None),
+        genre=genre_label(entry.get("genre")),
         duration=f"{duration} dk" if isinstance(duration, int) and duration > 0 else "",
         age=f"{age}+" if isinstance(age, int) and not isinstance(age, bool) else "",
         price=price_text(entry.get("price_from")),

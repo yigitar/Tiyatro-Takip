@@ -42,7 +42,8 @@ RELOAD_MS = 60_000
 ACTIVITY_MS = 2000
 MAX_POPUPS = 3
 NO_INFO = "Bilgi yok"
-COLUMNS = (("title", "Oyun", 260), ("tags", "Etiketler", 110), ("genre", "Tür", 90),
+COLUMNS = (("title", "Oyun", 260), ("tags", "Etiketler", 110), ("audience", "Kitle", 70),
+           ("genre", "Tür", 90),
            ("duration", "Süre", 60), ("age", "Yaş", 45), ("price", "Fiyat", 70),
            ("sessions", "Seans", 50), ("summary", "Durum özeti", 230),
            ("follow", "Takip", 70))
@@ -633,6 +634,8 @@ class App:
                                    command=lambda: row.url and self.open_url(row.url),
                                    state="normal" if row.url else "disabled")
         self.open_btn.pack(side="right")
+        self.meta_label = ttk.Label(body, text=L.meta_line(row))
+        self.meta_label.pack(fill="x", padx=8, anchor="w")
 
         acts = ttk.Frame(body)
         acts.pack(fill="x", padx=8)

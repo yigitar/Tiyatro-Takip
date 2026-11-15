@@ -190,6 +190,7 @@ def test_session_lines_tolerates_missing_entry():
 class FakeRow:
     def __init__(self, **kw):
         self.slug, self.title, self.tags, self.genre = "s", "Oyun", ["çocuk", "gündüz"], "Komedi"
+        self.audience = "Çocuk"
         self.duration, self.age, self.price = "90 dk", "7+", "100 TL"
         self.session_count, self.status_summary = 3, "1 satışta"
         self.watched, self.active, self.is_new, self.is_removed = True, True, False, False
@@ -199,7 +200,7 @@ class FakeRow:
 
 def test_row_values_and_tags():
     r = FakeRow()
-    assert L.row_values(r) == ("Oyun", "çocuk, gündüz", "Komedi", "90 dk", "7+", "100 TL",
+    assert L.row_values(r) == ("Oyun", "çocuk, gündüz", "Çocuk", "Komedi", "90 dk", "7+", "100 TL",
                                "3", "1 satışta", "Takipte")
     assert L.row_tags(r) == ("watched",)
     assert L.row_tags(FakeRow(is_new=True)) == ("watched", "new")

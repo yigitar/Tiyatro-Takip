@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { h, render, apply, buildIndex, guardLength } from "../src/menu.js";
+import { h, render, apply, buildIndex, guardLength, audienceOf, genreLabel } from "../src/menu.js";
 import { makeConfig, makeState } from "./_fixtures.js";
 
 const cfg = makeConfig();
@@ -318,33 +318,28 @@ test("final review C2: to_time is inclusive and the summary says \"'e kadar\"", 
   assert.ok(render(`ts:${KB}:y`, c2, st).text.includes("18:00'e kadar"));
 });
 
-// final review I8: an active play always has a target (same semantics as pc/configedit.py)
-const EMPTY_RULE = { days: null, from_time: null, to_time: null, overrides: {}, exclude_dates: [] };
-
-test("ta:<h>:1 on a play without targets adds the default target (child if tagged)", () => {
+// wave 4 A1: a followed play without targets watches every session; no default target
+test("ta:<h>:1 on a play without targets creates no default target", () => {
   const st2 = structuredClone(st);
   st2.plays["kucuk-prens"].tags = ["çocuk"];
   const c = apply(`ta:${KP}:1`, cfg, st2);
-  assert.deepEqual(play(c, "kucuk-prens"), {
-    active: true, tag_overrides: {},
-    targets: [{ id: "c", name: "Çocuk", people: 2, rule: EMPTY_RULE }],
-  });
+  assert.deepEqual(play(c, "kucuk-prens"), { active: true, tag_overrides: {}, targets: [] });
   assert.deepEqual(apply(`ta:${KP}:1`, c, st2), c); // idempotent
   const y = apply(`ta:${YN}:1`, cfg, st2);
-  assert.deepEqual(y.plays["yeni-oyun"].targets, [{ id: "y", name: "Yetişkin", people: 2, rule: EMPTY_RULE }]);
-  // deactivating never adds; a play with targets keeps exactly its targets
+  assert.deepEqual(y.plays["yeni-oyun"].targets, []);
   assert.deepEqual(play(apply(`ta:${KP}:0`, cfg, st2), "kucuk-prens").targets, []);
   assert.deepEqual(play(apply(`ta:${KB}:1`, cfg, st2)).targets, play(cfg).targets);
 });
 
-test("active play without targets shows the no-alert warning (play screen + watchlist)", () => {
+test("active play without targets says all sessions are watched (play screen + watchlist)", () => {
   const c = structuredClone(cfg);
   c.plays["kucuk-prens"].active = true;
-  const warn = "⚠️ hedef yok → bildirim gelmez";
-  assert.ok(render(`p:${KP}`, c, st).text.includes(warn));
-  assert.ok(render("tl", c, st).text.includes(warn));
-  assert.ok(!render(`p:${KB}`, c, st).text.includes(warn));
-  assert.ok(!render(`p:${KP}`, cfg, st).text.includes(warn)); // inactive: no warning
+  const info = "ℹ️ hedef yok → tüm seanslar izleniyor";
+  assert.ok(render(`p:${KP}`, c, st).text.includes(info));
+  assert.ok(render("tl", c, st).text.includes(info));
+  assert.ok(!render(`p:${KB}`, c, st).text.includes(info));
+  assert.ok(!render(`p:${KP}`, cfg, st).text.includes(info)); // inactive: no info line
+  assert.ok(!render(`p:${KP}`, c, st).text.includes("bildirim gelmez"));
 });
 
 test("final review M8: the paused screen says alerts raised while paused are discarded", () => {
@@ -457,4 +452,29 @@ test("portal: apply never touches config.portals", () => {
   }
   const noPortals = apply("pz:1", makeConfig(), st);
   assert.ok(!("portals" in noPortals));
+});
+
+// ---- wave 4 A2: Kitle and Tür are separate lines on the play screen ----
+test("audienceOf / genreLabel mirror tiyatro/tags.py", () => {
+  assert.equal(audienceOf("Çocuk Oyunu", [], null), "Çocuk");
+  assert.equal(audienceOf("YETİŞKİN OYUNU", ["çocuk"], 5), "Yetişkin");
+  assert.equal(audienceOf("Komedi", ["çocuk"], null), "Çocuk");
+  assert.equal(audienceOf("Komedi", [], 7), "Çocuk");
+  assert.equal(audienceOf("Komedi", [], 13), "Yetişkin");
+  assert.equal(audienceOf("Komedi", [], null), "");
+  assert.equal(genreLabel("Yetişkin Oyunu"), "");
+  assert.equal(genreLabel("Komedi"), "Komedi");
+  assert.equal(genreLabel("Çocuk Müzikali"), "Müzikali");
+});
+
+test("play screen shows Kitle and Tür, never the audience as the genre", () => {
+  const s = makeState();
+  const e = s.plays["kusursuz-bir-aile"];
+  e.genre = "Komedi"; e.tags = ["çocuk"]; e.age_limit = 7;
+  let text = render(`p:${KB}`, cfg, s).text;
+  assert.ok(text.includes("Kitle: Çocuk · Tür: Komedi"), text);
+  e.genre = "Yetişkin Oyunu"; e.tags = []; e.age_limit = 16;
+  text = render(`p:${KB}`, cfg, s).text;
+  assert.ok(text.includes("Kitle: Yetişkin"), text);
+  assert.ok(!text.includes("Tür:"), text);
 });

@@ -87,14 +87,14 @@ def test_worker_apply_outputs_are_valid_python_configs():
     for route, cfg in zip(ROUTES, res["applied"]):
         config_from_dict(cfg)  # must not raise
     final = config_from_dict(res["applied"][-1])
-    assert final.plays["kucuk-prens"].active and [t.id for t in
-                                                  final.plays["kucuk-prens"].targets] == ["c"]
-    assert final.plays["yeni-oyun"].targets[0].id == "y"
+    # activation adds no default target (wave 4 A1); the y target added then removed is gone
+    assert final.plays["kucuk-prens"].active and final.plays["kucuk-prens"].targets == []
+    assert final.plays["yeni-oyun"].active and final.plays["yeni-oyun"].targets == []
     assert final.plays["kusursuz-bir-aile"].targets[0].people == 4
     assert final.plays["kusursuz-bir-aile"].targets[0].rule.exclude_dates[-1] == "2030-11-28"
 
 
-def test_activation_default_target_parity_with_pc():  # final review I8
+def test_activation_creates_no_target_parity_with_pc():  # wave 4 A1
     res = node({"config": START_CONFIG, "state": START_STATE,
                 "applies": [f"ta:{KP}:1"], "renders": []})
     py = copy.deepcopy(START_CONFIG)
