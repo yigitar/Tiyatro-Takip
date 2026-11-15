@@ -227,7 +227,7 @@ def test_no_alerts_when_the_event_is_switched_off_and_default_on_for_theatre_onl
     off = cfg(event_follow={"vkv:541": False})
     fold(st, [mk("vkv:1", opens=None)], T0, off)
     ev = fold(st, [mk("vkv:1", opens=None), mk()], T0 + timedelta(minutes=5), off)
-    assert ev == []
+    assert kinds(ev) == ["SRC_NEW"]   # wave 9 discovery notice (unfollowed); alerts stay off
     for now in (OPENS541 - timedelta(hours=23), OPENS541 - timedelta(minutes=5),
                 OPENS541 + timedelta(minutes=1)):
         assert fold(st, [mk("vkv:1", opens=None), mk()], now, off) == []

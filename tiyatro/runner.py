@@ -13,9 +13,10 @@ Delivery guarantees (a missed alert is worse than a duplicate):
   events share one claim per session (``ON_SALE:<sid>``; the per-runner episode counter
   in the event key drifts between runners). A ``sent`` ON_SALE claim covers an ON_SALE
   entry created at most ``ON_SALE_GAP`` (3 min) after its ``sent_at``; an older one is
-  re-claimed (a new re-open). The first scan (old state had no plays) folds all
-  NEW_PLAY events into a single ``SETUP:<sha1(sorted slugs)[:12]>`` entry; the key is
-  stable, so a retry after a failed state save is not re-sent.
+  re-claimed (a new re-open). The first scan (old state had no plays) is a silent
+  baseline: its NEW_PLAY events are recorded in ``emitted`` but never sent (wave 9; it used
+  to send one folded ``SETUP:`` summary). Later NEW_PLAY events (a play that appears after
+  the baseline) are the "yeni oyun bulundu" discovery notice, once per slug.
 - If the Telegram send succeeded but saving ``state.json`` failed, the next run derives
   the same events again; their claims already read ``sent`` so they are not re-sent
   (ON_SALE: only within the 3-min gap; a re-derive later than that may duplicate, which
@@ -67,7 +68,7 @@ are never sent, also not after unpausing. The count is kept in
 ``meta["paused_discarded"]``.
 
 Outbox entry: ``{key, event | events, created, attempts, not_before}``; ``event`` is an
-``Event`` as dict, a SETUP entry carries ``events`` (a list) instead.
+``Event`` as dict (an old SETUP entry still in a saved outbox carries ``events``, a list).
 """
 from __future__ import annotations
 
@@ -89,7 +90,8 @@ from tiyatro.config import config_from_dict, default_config
 from tiyatro.fetcher import fetch
 from tiyatro.heartbeat import github_run_status, pc_status, read_heartbeat
 from tiyatro.models import ISTANBUL, Config, Event, Play, Session, Status
-from tiyatro.notify import MONTHS, Telegram, default_transport, format_message
+from tiyatro.notify import (DISCOVERY_KINDS, FOLD_NEW_PLAYS_ABOVE, MONTHS, Telegram,
+                            default_transport, format_message)
 from tiyatro.parser import ParseError, parse_play, parse_venue
 from tiyatro.portals import item_key, parse_portal
 from tiyatro.rules import matching_targets
@@ -114,6 +116,7 @@ PORTAL_CHANGED_COOLDOWN = timedelta(hours=6)  # at most one PORTAL_CHANGED per p
 OUTBOX_MAX_AGE = timedelta(hours=6)
 OUTBOX_MAX_ATTEMPTS = 20
 PC_DELAY = timedelta(seconds=60)
+FOLD_KEY = "NEWFOLD:"  # digest of several discovery notices found in one scan
 PC_ON_SALE_DELAY = timedelta(seconds=15)
 RETRY_BASE_S = 10
 RETRY_MAX_S = 600
@@ -275,25 +278,29 @@ def _enqueue(state: dict, key: str, events: list[Event], now: datetime, who: str
         return
     entry = {"key": key, "created": now.isoformat(), "attempts": 0,
              "not_before": (now + pc_delay(key) if who == "pc" else now).isoformat()}
-    if key.startswith("SETUP:"):
+    if key.startswith(FOLD_KEY):
         entry["events"] = [event_to_dict(e) for e in events]
     else:
         entry["event"] = event_to_dict(events[0])
     state["outbox"].append(entry)
 
 
-def setup_key(events: list[Event]) -> str:
-    slugs = "\n".join(sorted(e.play_slug for e in events))
-    return "SETUP:" + hashlib.sha1(slugs.encode("utf-8")).hexdigest()[:12]
+def fold_key(events: list[Event]) -> str:
+    keys = chr(10).join(sorted(e.key for e in events))
+    return FOLD_KEY + hashlib.sha1(keys.encode("utf-8")).hexdigest()[:12]
 
 
 def _queue_events(state: dict, events: list[Event], first_scan: bool, now: datetime,
                   who: str) -> None:
-    setup = [e for e in events if e.kind == "NEW_PLAY"] if first_scan else []
-    if setup:
-        _enqueue(state, setup_key(setup), setup, now, who)
+    found = [e for e in events if e.kind in DISCOVERY_KINDS
+             and not (first_scan and e.kind == "NEW_PLAY")]
+    folded = found if len(found) > FOLD_NEW_PLAYS_ABOVE else []
+    if folded:  # e.g. a new monthly program: one digest instead of a flood of messages
+        _enqueue(state, fold_key(folded), folded, now, who)
     for ev in events:
-        if ev not in setup:
+        if first_scan and ev.kind == "NEW_PLAY":
+            continue  # first-ever scan is a silent baseline (keys stay in ``emitted``)
+        if ev not in folded:
             _enqueue(state, ev.key, [ev], now, who)
 
 

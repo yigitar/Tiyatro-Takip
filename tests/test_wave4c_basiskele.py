@@ -218,12 +218,14 @@ def test_first_scan_is_a_silent_baseline_then_new_events_are_announced_once():
     assert set(st["source_events"]) == {"bk:a", "bk:b"}
 
 
-def test_non_theatre_events_are_listed_but_not_announced_by_default():
+def test_non_theatre_events_get_only_the_discovery_notice_by_default():
     st = base_state()
     fold(st, [listing("bk:a")], NOV3)
     ev = fold(st, [listing("bk:a"), listing("bk:w", "Atölye", "", default=False)],
               NOV3 + timedelta(minutes=5))
-    assert ev == [] and "bk:w" in st["source_events"]
+    # wave 9: discovery notice only (not followed); no reminders/openings until followed
+    assert [e.kind for e in ev] == ["SRC_NEW"] and ev[0].payload["followed"] is False
+    assert "bk:w" in st["source_events"]
     # the user can switch it on
     ev = fold(st, [listing("bk:a"), listing("bk:w", "Atölye", "", default=False,
                                             opens=NOV3 + timedelta(days=3))],
@@ -237,7 +239,7 @@ def test_follow_off_means_no_alerts_but_the_event_stays_listed():
     off = cfg(event_follow={"bk:b": False})
     ev = fold(st, [listing("bk:a"), listing("bk:b", opens=NOV3 + timedelta(minutes=5))],
               NOV3 + timedelta(minutes=1), off)
-    assert ev == []
+    assert [e.kind for e in ev] == ["SRC_NEW"]      # discovery notice, once; nothing else
     ev = fold(st, [listing("bk:a"), listing("bk:b", opens=NOV3 + timedelta(minutes=5))],
               NOV3 + timedelta(minutes=6), off)
     assert ev == [] and st["source_events"]["bk:b"]["opens_at"]
@@ -335,7 +337,8 @@ def test_new_event_in_the_program_is_delivered_once(monkeypatch):
     env.go(NOV3 + timedelta(minutes=5))
     assert len(env.tg.sent) == 1
     msg = env.tg.sent[0]
-    assert "Başiskele Belediyesi: 🆕 yeni etkinlik duyuruldu" in msg and "Yeni Oyun" in msg
+    assert msg.startswith("🆕 Yeni etkinlik bulundu: <b>Yeni Oyun</b> · Başiskele Belediyesi")
+    assert "🟢 Takipte." in msg
     assert "27 Kasım Perşembe 20:00" in msg
     env.go(NOV3 + timedelta(minutes=10))
     assert len(env.tg.sent) == 1                   # once per event id
@@ -389,8 +392,9 @@ def test_source_notification_text_is_escaped_and_bounded():
                 "start": NOV3.isoformat(), "kind": "Çocuk Tiyatrosu", "venue": "Salon <1>",
                 "url": "https://example.test/a?b=1&c=2", "opens_at": None})
     [text] = format_message([ev], {}, cfg())
-    assert text.startswith("🎭 Başiskele Belediyesi: 🆕 yeni etkinlik duyuruldu")
-    assert "<b>A &lt;b&gt;&amp;&lt;/b&gt;" in text and "Salon &lt;1&gt;" in text
+    assert text.startswith("🆕 Yeni etkinlik bulundu: <b>A &lt;b&gt;")
+    assert "· Başiskele Belediyesi ·" in text and "Takipte DEĞİL" in text
+    assert "<b>A &lt;b&gt;&amp;&lt;/b&gt;" in text
     assert "https://example.test/a?b=1&amp;c=2" in text and len(text) <= MAX_LEN
 
 
@@ -421,4 +425,4 @@ def test_pc_service_logs_source_checks_and_notifies(monkeypatch, tmp_path):
     assert warn and warn[0]["level"] == "warn"
     assert e.svc.sources()[1]["status"] == "failed"
     ev = Event("SRC_NEW", "k", "", None, [], {"source": "basiskele", "title": "X"})
-    assert headline(ev) == "🎭 Başiskele Belediyesi: 🆕 yeni etkinlik duyuruldu"
+    assert headline(ev) == "🎭 Başiskele Belediyesi: 🆕 yeni etkinlik bulundu"

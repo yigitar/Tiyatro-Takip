@@ -504,7 +504,9 @@ def fold_listings(state: dict, config: Config, source: str, listings: list[Listi
 
     The first scan of a source (no record yet) is a silent baseline: nothing is
     announced as new, but reminders and the opening alert of already-known opening
-    times still work.
+    times still work. Afterwards every newly seen upcoming event produces one ``SRC_NEW``
+    discovery notice, whether it is followed or not (reminders/opening alerts stay
+    follow-gated).
     """
     store = state.get("source_events")
     if not isinstance(store, dict):
@@ -541,12 +543,17 @@ def fold_listings(state: dict, config: Config, source: str, listings: list[Listi
         start = _dt(rec.get("start"))
         if start is not None and start < now - timedelta(hours=3):
             continue  # past event: bookkeeping only
-        if not effective_follow(config, ls.id, bool(rec.get("follow_default"))):
+        followed = effective_follow(config, ls.id, bool(rec.get("follow_default")))
+        if is_new and not baseline:
+            # Discovery notice (wave 9): sent for every new event, followed or not, once
+            # per event id (emitted key). A record already in the state is never "new", so
+            # nothing present at deploy time can fire it.
+            events.extend(filter(None, [_emit(state, "SRC_NEW", f"SRC_NEW:{ls.id}", rec, now,
+                                              {"followed": followed})]))
+        if not followed:
             continue
         opens = _dt(rec.get("opens_at"))
-        if is_new and not baseline:
-            events.extend(filter(None, [_emit(state, "SRC_NEW", f"SRC_NEW:{ls.id}", rec, now)]))
-        elif not is_new and opens is not None and _iso(opens) != prev_opens:
+        if not is_new and opens is not None and _iso(opens) != prev_opens:
             events.extend(filter(None, [_emit(
                 state, "SRC_OPENS", f"SRC_OPENS:{ls.id}:{_iso(opens)}", rec, now)]))
         events.extend(_due_events(state, rec, opens, prev_full, now))

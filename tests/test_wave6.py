@@ -79,7 +79,8 @@ def test_new_event_is_not_followed_until_the_user_says_so():
     S.fold_listings(st, cfg, "basiskele", [listing("bk:old")], NOW)           # baseline
     ev = S.fold_listings(st, cfg, "basiskele", [listing("bk:old"), listing("bk:new")],
                          NOW + timedelta(minutes=5))
-    assert ev == []                                      # no alert for an unfollowed event
+    # no reminder/opening alert for an unfollowed event; since wave 9 only the discovery notice
+    assert [e.kind for e in ev] == ["SRC_NEW"] and ev[0].payload["followed"] is False
     assert st["source_events"]["bk:new"]["follow_default"] is False
     assert {v["id"]: v["followed"] for v in S.event_views(st, cfg, NOW)}["bk:new"] is False
     cfg.event_follow = {"bk:new": True}                  # the user opts in

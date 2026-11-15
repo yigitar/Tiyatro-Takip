@@ -529,18 +529,20 @@ def test_event_dict_roundtrip():
 
 # ---- (i) setup batch -----------------------------------------------------------
 
-def test_first_scan_sends_one_folded_setup_message(monkeypatch):
+def test_first_scan_is_a_silent_baseline_then_new_plays_are_announced_once(monkeypatch):
     env = Env(monkeypatch, [mkplay(f"p{i}") for i in range(6)])
     res = env.run(NOW)
     assert len([e for e in res.events if e.kind == "NEW_PLAY"]) == 6
-    assert len(env.tg.sent) == 1 and "(6)" in env.tg.sent[0]
-    key = runner.setup_key([e for e in res.events if e.kind == "NEW_PLAY"])
-    assert env.store.files[claim_path(key)][0]["status"] == "sent"
-    # a later new play is announced on its own
+    assert env.tg.sent == [] and res.state["outbox"] == []   # nothing sent, nothing queued
+    assert all(f"NEW_PLAY:p{i}" in res.state["emitted"] for i in range(6))
+    # a later new play is announced on its own, once, with the not-followed note
     env.web.set(mkplay("p9"))
     env.web.venue.append("p9")
     env.run(NOW + timedelta(minutes=5))
-    assert len(env.tg.sent) == 2 and "Yeni oyun" in env.tg.sent[1]
+    assert len(env.tg.sent) == 1 and "Yeni oyun bulundu" in env.tg.sent[0]
+    assert "Takipte DEĞİL" in env.tg.sent[0]
+    env.run(NOW + timedelta(minutes=10))
+    assert len(env.tg.sent) == 1
 
 
 def test_first_scan_with_real_fixtures(monkeypatch):
@@ -564,7 +566,7 @@ def test_first_scan_with_real_fixtures(monkeypatch):
     # 3 of 6 play pages unavailable: per-play failures + one scan failure (C1)
     assert res.scanned == 3 and res.failures == 4
     assert store.files["state.json"][0]["meta"]["fetch_fail_streak"] == 1
-    assert len(tg.sent) == 1
+    assert tg.sent == []  # first scan: silent baseline
     assert set(store.files["state.json"][0]["plays"]) == set(files)
 
 
@@ -701,7 +703,7 @@ def test_main_end_to_end_and_secret_free_errors(monkeypatch, capsys):
     monkeypatch.setattr(runner.time, "sleep", lambda s: None)
     assert runner.main() == 0
     assert made[0].branch_ensured and "state.json" in made[0].files
-    assert len(tgs[0].sent) == 1
+    assert len(tgs[0].sent) == 0  # first scan is a silent baseline
 
     def explode(self):
         raise RuntimeError("bad token ghp_SECRET 123:TGSECRET")
@@ -845,17 +847,19 @@ def test_scan_runs_filter():
 
 # ---- I2: stable SETUP key ---------------------------------------------------------
 
-def test_setup_key_stable_across_save_failure(monkeypatch):
+def test_new_play_discovery_is_not_resent_after_save_failure(monkeypatch):
     store = FlakyStateStore()
-    env = Env(monkeypatch, [mkplay(f"p{i}") for i in range(6)], store=store)
+    env = Env(monkeypatch, [mkplay("p0")], store=store)
+    env.run(NOW)  # baseline
+    env.web.set(mkplay("p1"))
+    env.web.venue.append("p1")
     store.fail_state = True
-    res = env.run(NOW)
+    res = env.run(NOW + timedelta(minutes=5))
     assert res.save_error and len(env.tg.sent) == 1
     store.fail_state = False
-    env.run(NOW + timedelta(minutes=1))
+    env.run(NOW + timedelta(minutes=6))  # derives the same event again: the claim holds
     assert len(env.tg.sent) == 1
-    digest = hashlib.sha1("\n".join(sorted(f"p{i}" for i in range(6))).encode()).hexdigest()
-    assert claim_path(f"SETUP:{digest[:12]}") in store.files
+    assert claim_path("NEW_PLAY:p1") in store.files
 
 
 # ---- I3: transient store errors in a burst ----------------------------------------
@@ -1797,7 +1801,7 @@ def test_main_retries_a_transient_config_and_state_get_once(monkeypatch):
     tgs = _main_normal(monkeypatch, store, web)
     assert runner.main() == 0
     assert "p" in store.files["state.json"][0]["plays"]
-    assert len(tgs[0].sent) == 1  # the setup message: the run was not lost
+    assert tgs[0].sent == []  # first scan is silent; the run itself was not lost
 
 
 def test_main_invalid_config_alerts_once_and_scans_with_the_cached_config(monkeypatch):

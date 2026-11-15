@@ -235,8 +235,11 @@ def diff(old: dict, plays: list[Play], config: Config, now: datetime, *,
     for play in plays:
         seen.add(play.slug)
         if _merge_play(state, play, config, now_iso):
+            upcoming = [s.start for s in play.sessions if s.start >= now]
             emit("NEW_PLAY", f"NEW_PLAY:{play.slug}", play.slug, None, [],
-                 {"title": play.title, "url": play.url})
+                 {"title": play.title, "url": play.url, "source": "biletinial",
+                  "start": min(upcoming).isoformat() if upcoming else None,
+                  "followed": _watch(config, play.slug) is not None})
 
     for slug, entry in state["plays"].items():
         if slug in seen or same_scan or not complete or slug in skip_missing:

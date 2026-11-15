@@ -33,7 +33,7 @@ MONTHS = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz",
 KIND_TEXT = {
     "ON_SALE": "\U0001f39f️ Bilet alınabilir!",
     "OPENING_SOON": "⏰ 10 dk sonra satış açılıyor",
-    "NEW_PLAY": "\U0001f195 Yeni oyun",
+    "NEW_PLAY": "\U0001f195 Yeni oyun bulundu",
     "REMOVED_PLAY": "❌ Listeden kalktı",
     "UNKNOWN_STATUS": "⚠️ Bilinmeyen durum — sayfayı kontrol et",
     "PC_INACTIVE": "\U0001f5a5️ PC uygulaması aktif değil",
@@ -51,9 +51,10 @@ PORTAL_TEXT = {
     "PORTAL_CHANGED": "güncellendi",
     "PORTAL_FAILING": "okunamıyor",
 }
-SOURCE_LABELS = {"basiskele": "Başiskele Belediyesi", "vkv": "VKV Gölcük"}
+SOURCE_LABELS = {"basiskele": "Başiskele Belediyesi", "vkv": "VKV Gölcük",
+                 "biletinial": "Biletinial"}
 SRC_TEXT = {
-    "SRC_NEW": "🆕 yeni etkinlik duyuruldu",
+    "SRC_NEW": "🆕 yeni etkinlik bulundu",
     "SRC_OPENS": "🗓️ rezervasyon açılış saati duyuruldu",
     "SRC_DAY_BEFORE": "🔔 yarın rezervasyon açılıyor",
     "SRC_SOON": "⏰ 10 dk sonra rezervasyon açılıyor",
@@ -140,8 +141,46 @@ def source_headline(ev: Event) -> str:
     return f"🎭 {label}: {SRC_TEXT.get(ev.kind, ev.kind)}"
 
 
+NOT_FOLLOWED_NOTE = ("⚪ Takipte DEĞİL — takibe almak için menüden "
+                     "(Oyunlar ve etkinlikler) aç.")
+FOLLOWED_NOTE = "🟢 Takipte."
+
+
+def _discovery_line(p: dict, label: str, what: str) -> str:
+    """'🆕 Yeni oyun bulundu: <title> · <source> · <next date> · <link>' (one line)."""
+    parts = [f"<b>{_esc(p.get('title') or '', TITLE_MAX)}</b>", html.escape(label)]
+    start = _dt(p.get("start"))
+    if start:
+        parts.append(_when(start))
+    if p.get("url"):
+        parts.append(_esc(p["url"], URL_MAX))
+    return f"🆕 Yeni {what} bulundu: " + " · ".join(parts)
+
+
+DISCOVERY_KINDS = ("NEW_PLAY", "SRC_NEW")
+
+
+def _source_label(p: dict) -> str:
+    return SOURCE_LABELS.get(p.get("source")) or str(p.get("source") or "Kaynak")
+
+
+def _discovery_note(p: dict) -> str:
+    return FOLLOWED_NOTE if p.get("followed") is True else NOT_FOLLOWED_NOTE
+
+
+def _new_play_entry(ev: Event) -> str:
+    p = ev.payload if isinstance(ev.payload, dict) else {}
+    return chr(10).join([_discovery_line(p, SOURCE_LABELS["biletinial"], "oyun"),
+                         _discovery_note(p)])
+
+
 def _source_entry(ev: Event) -> str:
     p = ev.payload if isinstance(ev.payload, dict) else {}
+    if ev.kind == "SRC_NEW":
+        label = SOURCE_LABELS.get(p.get("source")) or str(p.get("source") or "Kaynak")
+        lines = [_discovery_line(p, label, "etkinlik"), _discovery_note(p)]
+        lines.extend(_esc(x, TITLE_MAX) for x in p.get("contact") or [])
+        return chr(10).join(lines)
     lines = [html.escape(source_headline(ev))]
     if p.get("title"):
         lines.append(f"<b>{_esc(p['title'], TITLE_MAX)}</b>")
@@ -196,6 +235,8 @@ def _entry(ev: Event, plays: dict[str, Play], config: Config, ids: list[str]) ->
         return _portal_entry(ev)
     if ev.kind in SRC_TEXT:
         return _source_entry(ev)
+    if ev.kind == "NEW_PLAY":
+        return _new_play_entry(ev)
     lines = []
     if ev.kind in KIND_FIRST:
         lines.append(_kind_line(ev))
@@ -281,7 +322,7 @@ def format_message(events: list[Event], plays: dict[str, Play], config: Config) 
     new_index: int | None = None
 
     for ev in events:
-        if ev.kind == "NEW_PLAY":
+        if ev.kind in DISCOVERY_KINDS:
             if new_index is None:
                 new_index = len(entries_src)
                 entries_src.append(("new", new_plays))
@@ -300,13 +341,18 @@ def format_message(events: list[Event], plays: dict[str, Play], config: Config) 
         if item[0] == "ev":
             entries.append(_entry(item[1], plays, config, item[2]))
         elif len(item[1]) > FOLD_NEW_PLAYS_ABOVE:
-            lines = [f"{KIND_TEXT['NEW_PLAY']}lar ({len(item[1])})"]
+            lines = [f"🆕 Yeni oyun/etkinlikler bulundu ({len(item[1])})"]
             for e in item[1]:
                 url = e.payload.get("url")
-                line = f"• {_title(e, plays)}"
+                line = f"• {_title(e, plays)} · {_source_label(e.payload)}"
+                start = _dt(e.payload.get("start"))
+                if start:
+                    line += f" · {_when(start)}"
                 if url:
-                    line += f" — {_esc(url, URL_MAX)}"
+                    line += f" · {_esc(url, URL_MAX)}"
                 lines.append(line)
+            lines.append(FOLLOWED_NOTE if all(e.payload.get("followed") is True
+                                              for e in item[1]) else NOT_FOLLOWED_NOTE)
             entries.append("\n".join(lines))
         else:
             entries.extend(_entry(e, plays, config, []) for e in item[1])
