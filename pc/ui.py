@@ -46,6 +46,7 @@ LEGEND_BG, LEGEND_EDGE = "#f8fafc", "#cbd5e1"
 CARD_BG, CARD_MIN_PX = "white", 250
 SIDE_BG, SIDE_W = "#f1f4f8", 280   # sidebar background / width (96 dpi px)
 NARROW_PX = 1000    # window narrower than this: the sidebar becomes a strip on top
+DETAIL_SB_PX = 17   # scrollbar slot always reserved in the detail width (no feedback)
 STACK_PX = 820      # detail pane narrower than this stacks its columns
 POLL_MS = 200
 STATUS_MS = 5000
@@ -449,6 +450,7 @@ class App:
         pane = ttk.PanedWindow(games, orient="vertical")
         self.pane = pane
         self._sash_user, self._fit_key, self._need_seen = False, None, 0
+        self._arranging, self._detail_w = False, None
         pane.bind("<B1-Motion>", lambda _e: setattr(self, "_sash_user", True), add="+")
         pane.pack(fill="both", expand=True)
         top = ttk.Frame(pane)
@@ -1129,49 +1131,87 @@ class App:
             edit.pack(side="right", padx=4)
             self.target_buttons[t.id] = edit
 
-        def rewrap_targets(event, labels=target_labels):
-            for lab in labels:
-                lab.configure(wraplength=max(self.px(100), event.width - self.px(150)))
-        targets.bind("<Configure>", rewrap_targets)
-
+        self._target_labels = target_labels
         self._build_info(row)
+        self.meta_label.configure(width=1)       # request no width: columns come from _arrange_detail
         self._arrange_detail()
         self._refit()
+
+    def _detail_avail_px(self) -> int:
+        """Width the detail content gets: the detail frame minus the (always reserved)
+        scrollbar slot. Independent of the content, so no feedback loop."""
+        width = self.detail.winfo_width()
+        if width <= 1:
+            width = self.pane.winfo_width()
+        if width <= 1:                       # not mapped yet: a plausible width, fixed on map
+            width = self.px(1000)
+        return max(1, width - self.px(DETAIL_SB_PX) - self.px(8))
 
     def _arrange_detail(self) -> None:
         """Detail blocks in two columns when the pane is wide (left: title, meta, Aktif,
         session table, then Özet; right: Hedefler, then Oyuncular + Yapım), one column
-        when it is narrow."""
+        when it is narrow. The column widths and every wrap length are computed here from
+        the available width, once; width changes under 2 px, re-entrant calls and
+        unchanged layouts are ignored (idempotent, no oscillation)."""
         parts = getattr(self, "_detail_parts", None)
         body = getattr(self, "detail_body", None)
-        if not parts or body is None or not body.winfo_exists():
+        if not parts or body is None or not body.winfo_exists() or self._arranging:
             return
-        width = self.detail_canvas.winfo_width()
-        if width <= 1:
-            width = self.pane.winfo_width()
-        stack = 1 < width < self.px(STACK_PX)
-        if stack == self._detail_stack:
+        width = self._detail_avail_px()
+        stack = width < self.px(STACK_PX)
+        if (stack == self._detail_stack and self._detail_w is not None
+                and abs(width - self._detail_w) < 2):
             return
-        self._detail_stack = stack
-        gap = self.px(8)
-        if stack:
-            body.columnconfigure(0, weight=1)
-            body.columnconfigure(1, weight=0)
-            for n, name in enumerate(("left", "targets", "summary", "people")):
-                parts[name].grid(row=n, column=0, columnspan=1, sticky="nsew",
-                                 padx=(0, gap), pady=(0, self.px(6)))
-        else:
-            body.columnconfigure(0, weight=3)
-            body.columnconfigure(1, weight=2)
-            parts["left"].grid(row=0, column=0, columnspan=1, sticky="nsew",
-                               pady=(0, self.px(6)))
-            parts["targets"].grid(row=0, column=1, columnspan=1, sticky="nsew",
-                                  padx=(gap, gap), pady=(self.px(4), self.px(6)))
-            parts["summary"].grid(row=1, column=0, columnspan=1, sticky="nsew",
-                                  pady=(0, self.px(6)))
-            parts["people"].grid(row=1, column=1, columnspan=1, sticky="nsew",
-                                 padx=(gap, gap), pady=(0, self.px(6)))
+        self._arranging = True
+        try:
+            self._apply_detail_layout(parts, body, width, stack)
+        finally:
+            self._arranging = False
         self._refit()
+
+    def _apply_detail_layout(self, parts, body, width: int, stack: bool) -> None:
+        gap = self.px(8)
+        regrid = stack != self._detail_stack
+        self._detail_stack, self._detail_w = stack, width
+        self.detail_canvas.itemconfigure(self._detail_window, width=width)
+        if stack:
+            left_w = right_w = width
+            body.columnconfigure(0, weight=0, minsize=width)
+            body.columnconfigure(1, weight=0, minsize=0)
+        else:
+            avail = width - 3 * gap
+            left_w = max(avail * 3 // 5, min(parts["left"].winfo_reqwidth(), avail - self.px(220)))
+            right_w = avail - left_w
+            body.columnconfigure(0, weight=0, minsize=left_w + gap)
+            body.columnconfigure(1, weight=0, minsize=right_w + 2 * gap)
+        if regrid:
+            if stack:
+                for n, name in enumerate(("left", "targets", "summary", "people")):
+                    parts[name].grid(row=n, column=0, columnspan=1, sticky="nsew",
+                                     padx=(0, gap), pady=(0, self.px(6)))
+            else:
+                parts["left"].grid(row=0, column=0, columnspan=1, sticky="nsew",
+                                   pady=(0, self.px(6)))
+                parts["targets"].grid(row=0, column=1, columnspan=1, sticky="nsew",
+                                      padx=(gap, gap), pady=(self.px(4), self.px(6)))
+                parts["summary"].grid(row=1, column=0, columnspan=1, sticky="nsew",
+                                      pady=(0, self.px(6)))
+                parts["people"].grid(row=1, column=1, columnspan=1, sticky="nsew",
+                                     padx=(gap, gap), pady=(0, self.px(6)))
+        # wrap lengths from the final column width (people / targets sit in the right column)
+        side_w = (width - gap) if stack else right_w
+        people_room = max(self.px(120), side_w - 2 * gap - self.px(12))
+        for lbl in (self.cast_label, self.credits_label):
+            if int(lbl.cget("wraplength")) != people_room:
+                lbl.configure(wraplength=people_room)
+        target_room = max(self.px(100), side_w - 2 * gap - self.px(150))
+        for lab in getattr(self, "_target_labels", ()):
+            if str(lab.cget("wraplength")) != str(target_room):
+                lab.configure(wraplength=target_room)
+        fit = getattr(self, "_summary_fit", None)
+        if fit is not None:        # Özet height for its final width (left column minus margins)
+            fit(width=((width - gap) if stack else left_w) - 2 * self.px(8))
+        self.detail_canvas.configure(scrollregion=self.detail_canvas.bbox("all"))
 
     def _session_click(self, iid: str, key: str) -> None:
         url = self._session_links.get(iid)
@@ -1252,11 +1292,23 @@ class App:
         body = ttk.Frame(canvas)
         window = canvas.create_window((0, 0), window=body, anchor="nw")
         body.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: (canvas.itemconfigure(window, width=e.width),
-                                              self._arrange_detail()))
-        self._detail_parts, self._detail_stack = None, None
+        self._detail_window = window
+        self._detail_parts, self._detail_stack, self._detail_w = None, None, None
+        self._summary_fit, self._target_labels = None, ()
+        canvas.bind("<Configure>", self._detail_canvas_resized)
         self.detail_canvas, self.detail_vsb, self.detail_body = canvas, vsb, body
         return body
+
+    def _detail_canvas_resized(self, _event) -> None:
+        """Canvas size changed: event details just follow the width; play details re-arrange
+        (ignored below 2 px, see ``_arrange_detail``)."""
+        width = self._detail_avail_px()
+        if getattr(self, "_detail_parts", None) is None:
+            if self._detail_w is None or abs(width - self._detail_w) >= 2:
+                self._detail_w = width
+                self.detail_canvas.itemconfigure(self._detail_window, width=width)
+            return
+        self._arrange_detail()
 
     def _detail_wheel(self, event) -> None:
         """Mouse wheel over the detail pane scrolls it (not over its own scrolling widgets)."""
@@ -1293,16 +1345,16 @@ class App:
         box.pack(fill="x", padx=8)
         self.summary_text = tk.Text(box, height=1, wrap="word", borderwidth=1, relief="solid",
                                     font="TkDefaultFont")
-        sb = AutoScrollbar(box, orient="vertical", command=self.summary_text.yview)
+        sb = ttk.Scrollbar(box, orient="vertical", command=self.summary_text.yview)
         self.summary_text.configure(yscrollcommand=sb.set)
         self.summary_text.insert("1.0", clean_summary(row.summary) or NO_INFO)
         self.summary_text.configure(state="disabled")
-        self.summary_text.pack(side="left", fill="x", expand=True)
-        sb.pack(side="right", fill="y")
+        self.summary_text.pack(side="left", fill="both", expand=True)
         # as tall as the text needs, up to ~40 % of the pane (then it scrolls)
-        autosize_text(self.summary_text,
-                      lambda: max(6, int(self.pane.winfo_height() * 0.4 / 17)),
-                      on_change=self._refit)
+        self.summary_text.configure(width=1)     # width comes from the column
+        self._summary_fit = autosize_text(
+            self.summary_text, lambda: max(6, int(self.pane.winfo_height() * 0.4 / 17)),
+            on_change=self._refit, scrollbar=sb)
         ttk.Label(people, text="Oyuncular", font=self.bold_font).pack(anchor="w")
         self.cast_label = ttk.Label(people, text=", ".join(row.cast) or NO_INFO,
                                     wraplength=self.px(300), justify="left")
@@ -1312,11 +1364,6 @@ class App:
             people, text="\n".join(credit_lines(row.credits)) or NO_INFO,
             wraplength=self.px(300), justify="left")
         self.credits_label.pack(anchor="w", fill="x")
-
-        def wrap(event):
-            for lbl in (self.cast_label, self.credits_label):
-                lbl.configure(wraplength=max(self.px(120), event.width - self.px(12)))
-        people.bind("<Configure>", wrap)
 
 
     # ---- config edits -----------------------------------------------------------------------

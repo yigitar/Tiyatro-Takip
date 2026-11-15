@@ -53,23 +53,37 @@ def wrapped_lines(text, font, width_px: int) -> int:
     return total
 
 
-def autosize_text(text, max_lines, min_lines: int = 1, on_change=None):
+def autosize_text(text, max_lines, min_lines: int = 1, on_change=None, scrollbar=None):
     """Keep a (disabled) ``tk.Text`` exactly as tall as its wrapped content, up to
     ``max_lines`` (an int or a callable); beyond that it scrolls. Re-fits on every width
     change. ``on_change`` runs after the height changed. Returns the fit function."""
     font = tkfont.Font(root=text, font=text.cget("font"))
 
-    def fit(_event=None):
+    def fit(_event=None, width=None):
+        """``width``: outer widget width to wrap for (the final layout width), else the
+        widget's current one."""
         try:
-            width = text.winfo_width()
+            if width is None:
+                width = text.winfo_width()
+                if scrollbar is not None and scrollbar.winfo_ismapped():
+                    width += scrollbar.winfo_width()      # the width the text had without it
             if width <= 1:                    # not laid out yet: the requested width
                 width = text.winfo_reqwidth()
             inner = 2 * (int(str(text.cget("borderwidth"))) + int(str(text.cget("padx")))
                          + int(str(text.cget("highlightthickness"))))
             n = wrapped_lines(text.get("1.0", "end-1c"), font, width - inner)
+            cap = max_lines() if callable(max_lines) else max_lines
+            if scrollbar is not None:         # deterministic: decided here, before painting
+                over = n > int(cap)
+                sbw = scrollbar.winfo_reqwidth()
+                if over:
+                    n = wrapped_lines(text.get("1.0", "end-1c"), font, width - inner - sbw)
+                if over and not scrollbar.winfo_ismapped():
+                    scrollbar.pack(side="right", fill="y")
+                elif not over and scrollbar.winfo_manager():
+                    scrollbar.pack_forget()
         except tk.TclError:                   # widget gone
             return
-        cap = max_lines() if callable(max_lines) else max_lines
         height = max(min_lines, min(int(cap), n))
         if int(text.cget("height")) != height:
             text.configure(height=height)
