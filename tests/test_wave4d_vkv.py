@@ -62,13 +62,14 @@ def test_list_fixture_cards():
         ("vkv:541", "Ceviz Adam Müzikali", "Çocuk Tiyatrosu")]
     assert got[0].start == datetime(2026, 11, 13, 20, 0, tzinfo=ISTANBUL)
     assert got[1].start == datetime(2026, 11, 28, 11, 0, tzinfo=ISTANBUL)
-    assert got[1].url == URL541 and all(l.follow_default for l in got)
+    assert got[1].url == URL541 and not any(l.follow_default for l in got)   # wave 6: OFF
 
 
 def test_only_theatre_categories_are_tracked():
     card = LIST.replace('class="kat">Çocuk Tiyatrosu</p>', 'class="kat">Atölye</p>')
     got = S.parse_vkv_list(card)
-    assert [l.follow_default for l in got] == [True, False]
+    assert [S.vkv_tracked(l) for l in got] == [True, False]   # tracked categories; follow default is OFF for all
+    assert [l.follow_default for l in got] == [False, False]
     scan = S.scan_vkv(Web(card).fetch, T0)
     assert scan.listings == []   # 540 is over, the workshop is not tracked: nothing is read
     scan = S.scan_vkv(Web(card).fetch, T0 - timedelta(days=3))
@@ -290,7 +291,8 @@ def test_burst_check_is_throttled_to_about_a_minute():
 
 class VkvEnv(Env):
     def __init__(self, monkeypatch, who="github"):
-        super().__init__(monkeypatch, [mkplay("zz")], {"portals": []}, who=who)
+        super().__init__(monkeypatch, [mkplay("zz")],
+                         {"portals": [], "event_follow": {"vkv:541": True}}, who=who)  # wave 6: explicit
         self.vkv = Web()
 
     def go(self, now, **kw):
@@ -439,7 +441,7 @@ def test_service_follow_toggle_edits_config_logs_and_changes_alerts(monkeypatch,
     from tests.test_pc_service import make, tick_at
     from tiyatro.claims import ClaimStore
     e = make(monkeypatch, tmp_path)
-    e.store.files["config.json"] = ({"portals": []}, "cfg")
+    e.store.files["config.json"] = ({"portals": [], "event_follow": {"vkv:541": True}}, "cfg")
     web = Web()
     e.svc = Service(e.store, e.tg, ClaimStore(e.store, "pc", e.clock), clock=e.clock,
                     fetch_fn=e.web.fetch, sleep=lambda s: None, local_dir=tmp_path,

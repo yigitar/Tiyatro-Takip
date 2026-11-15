@@ -130,3 +130,36 @@ def derived_tags(tags, audience: str, start_hour: int | None = None) -> list[str
         if extra and extra not in out:
             out.append(extra)
     return out
+
+
+# ---- provenance (wave 6) ------------------------------------------------------------------
+# Which displayed values are read from the source page and which are produced by our own
+# rules. "Verified" = the source states it in the field itself; "derived" = a rule, a
+# fallback or a computation of ours (the PC list renders those italic, grey-blue).
+
+def audience_is_stated(genre) -> bool:
+    """True when the page's own genre/category wording names the audience ("Çocuk Oyunu",
+    "Yetişkin Tiyatrosu"). Anything else (tag, age limit, title word, "no child marker ->
+    Yetişkin") is our rule, i.e. derived."""
+    low = _tr_lower(str(genre or ""))
+    child, adult = "çocuk" in low, "yetişkin" in low or "yetiskin" in low
+    return child != adult
+
+
+def genre_is_stated(genre) -> bool:
+    """True when the genre field itself holds a genre word after the audience/generic
+    words are removed. A keyword found in the title/description and the "Tiyatro"
+    fallback are derived."""
+    return bool(genre_label(genre))
+
+
+def time_of_day(hours) -> str:
+    """"gündüz" (session starting before 17:00), "gece" (17:00 or later) or both joined
+    ("gündüz+gece"); "" without sessions. Computed from the session times, never read."""
+    hrs = [h for h in hours or () if isinstance(h, int) and not isinstance(h, bool)]
+    parts = []
+    if any(h < _DAYTIME_BEFORE_HOUR for h in hrs):
+        parts.append("gündüz")
+    if any(h >= _DAYTIME_BEFORE_HOUR for h in hrs):
+        parts.append("gece")
+    return "+".join(parts)

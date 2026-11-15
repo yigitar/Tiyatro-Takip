@@ -10,7 +10,8 @@ Pure parsing + state folding; the runner supplies the fetched pages.
 
 ``state["source_events"][event_id]`` keeps one record per event; notifications are
 ``SRC_*`` events through the normal outbox/claims. Whether an event is followed is
-``config.event_follow[event_id]`` (explicit choice) else a default of ON for theatre.
+``config.event_follow[event_id]`` (explicit choice) else the record's ``follow_default``,
+which is OFF for every newly seen event (wave 6); records stored earlier keep theirs.
 """
 from __future__ import annotations
 
@@ -214,7 +215,7 @@ class Listing:
     opens_pending: bool | None = None   # the page still says "açılacaktır"
     full: bool | None = None
     detail_ok: bool = False             # the detail page was read in this scan
-    follow_default: bool = True
+    follow_default: bool = False        # wave 6: nothing is followed until the user says so
 
 
 def genre_of(kind: str, title: str) -> str:
@@ -300,8 +301,7 @@ def _cap(text: str) -> str:
 
 def _make_bk(start: datetime, title: str, kind: str, venue: str, url: str) -> Listing:
     eid = f"bk:{start:%Y%m%d-%H%M}-{_slug(title)}"
-    return Listing(BASISKELE, eid, title, kind, start, venue, url,
-                   follow_default=is_theatre(kind, title))
+    return Listing(BASISKELE, eid, title, kind, start, venue, url, follow_default=False)
 
 
 def parse_article(html_text: str, url: str, published: datetime | None
@@ -402,7 +402,7 @@ def parse_vkv_list(html_text: str) -> list[Listing]:
         eid = f"vkv:{m.group('id')}"
         out[eid] = Listing(VKV, eid, title, kat, start, "VKV Ford Otosan Gölcük KSYM",
                            urljoin(VKV_BASE + "/", m.group("href")),
-                           follow_default=kat in VKV_TRACKED)
+                           follow_default=False)
     return list(out.values())
 
 
@@ -520,8 +520,11 @@ def fold_listings(state: dict, config: Config, source: str, listings: list[Listi
         rec.update(title=ls.title, kind=ls.kind, venue=ls.venue, url=ls.url,
                    start=_iso(ls.start), last_seen=now.isoformat(),
                    audience=audience_for(ls.kind, ls.title),
-                   genre=genre_of(ls.kind, ls.title),
-                   follow_default=bool(ls.follow_default))
+                   genre=genre_of(ls.kind, ls.title))
+        if is_new:
+            rec["follow_default"] = bool(ls.follow_default)
+        elif "follow_default" not in rec:  # stored before the field existed: it was ON then
+            rec["follow_default"] = True   # (an existing record keeps its default: wave 6)
         prev_opens = rec.get("opens_at")
         if ls.opens_at is not None:
             rec["opens_at"] = _iso(ls.opens_at)
@@ -538,7 +541,7 @@ def fold_listings(state: dict, config: Config, source: str, listings: list[Listi
         start = _dt(rec.get("start"))
         if start is not None and start < now - timedelta(hours=3):
             continue  # past event: bookkeeping only
-        if not effective_follow(config, ls.id, ls.follow_default):
+        if not effective_follow(config, ls.id, bool(rec.get("follow_default"))):
             continue
         opens = _dt(rec.get("opens_at"))
         if is_new and not baseline:
@@ -637,6 +640,7 @@ def event_views(state: dict | None, config: Config | None, now: datetime) -> lis
             "genre": genre_of(str(rec.get("kind") or ""), str(rec.get("title") or "")),
             "kind": str(rec.get("kind") or ""), "venue": str(rec.get("venue") or ""),
             "url": str(rec.get("url") or ""), "opens_at": _dt(rec.get("opens_at")),
+            "opens_pending": rec.get("opens_pending"),
             "reservation": reservation_text(rec, now),
             "summary": reservation_summary(rec, now), "full": bool(rec.get("full")),
             "followed": default if choice is None else bool(choice)})

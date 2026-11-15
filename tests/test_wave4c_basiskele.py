@@ -69,7 +69,7 @@ def test_article_fixture_events():
     assert e.start.year == 2025                       # weekday (Çarşamba) fixes the year
     assert e.follow_default is False
     e = by_title[("Hiç Kimsenin Öyküsü", "25.11 20:00")]
-    assert e.kind == "Yetişkin Tiyatrosu" and e.follow_default is True
+    assert e.kind == "Yetişkin Tiyatrosu" and e.follow_default is False   # wave 6: default OFF
     # two sessions on one day are two events
     assert ("Niloya Sürpriz Yumurta Müzikali", "14.11 15:30") in by_title
     assert ("Niloya Sürpriz Yumurta Müzikali", "14.11 19:00") in by_title
@@ -327,6 +327,11 @@ def test_new_event_in_the_program_is_delivered_once(monkeypatch):
                         "&ndash; Gençlik Merkezi</p>\n\n<p>26 Kasım &Ccedil;arşamba")
     assert extra != ART
     env.src.article = extra
+    # wave 6: nothing is followed by default, so the new event is announced only once the
+    # user follows it (an unfollowed new event stays silent, see test_wave6)
+    env.store.files["config.json"] = ({"plays": {}, "portals": [],
+                                       "event_follow": {"bk:20251127-2000-yeni-oyun": True}},
+                                      "cfg")
     env.go(NOV3 + timedelta(minutes=5))
     assert len(env.tg.sent) == 1
     msg = env.tg.sent[0]
