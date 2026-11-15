@@ -114,7 +114,7 @@ def test_sort_persists_in_ui_json_and_bad_values_fall_back(tmp_path):
     assert L.load_sort(p) is None
     L.save_ui(p, {"geometry": None, "beep": True, "sort": ["price", "desc"]})
     assert L.load_sort(p) == ("price", "desc")
-    assert L.load_ui(p) == {"geometry": None, "beep": True}  # existing shape unchanged
+    assert L.load_ui(p) == {"geometry": None, "beep": True, "keep_awake": False}  # existing shape unchanged
     for bad in (["price"], ["nope", "asc"], ["price", "sideways"], "price", 5, None, {"a": 1},
                 ["price", "asc", "x"], [1, 2]):
         p.write_text(json.dumps({"sort": bad}), encoding="utf-8")

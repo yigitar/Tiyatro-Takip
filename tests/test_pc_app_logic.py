@@ -326,13 +326,13 @@ def test_scrub_github_pat_and_bearer():
 
 def test_ui_prefs_roundtrip_and_bad_file(tmp_path):
     p = tmp_path / "ui.json"
-    assert L.load_ui(p) == {"geometry": None, "beep": True}
+    assert L.load_ui(p) == {"geometry": None, "beep": True, "keep_awake": False}
     L.save_ui(p, {"geometry": "900x600+10+20", "beep": False, "geometry_v": L.GEOMETRY_VERSION})
-    assert L.load_ui(p) == {"geometry": "900x600+10+20", "beep": False}
+    assert L.load_ui(p) == {"geometry": "900x600+10+20", "beep": False, "keep_awake": False}
     p.write_text("{not json", encoding="utf-8")
-    assert L.load_ui(p) == {"geometry": None, "beep": True}
+    assert L.load_ui(p) == {"geometry": None, "beep": True, "keep_awake": False}
     p.write_text(json.dumps({"geometry": "evil", "beep": "yes"}), encoding="utf-8")
-    assert L.load_ui(p) == {"geometry": None, "beep": True}
+    assert L.load_ui(p) == {"geometry": None, "beep": True, "keep_awake": False}
 
 
 def test_save_ui_creates_dir_and_leaves_no_tmp(tmp_path):
@@ -363,7 +363,8 @@ def free_port():
 
 def test_single_instance_second_acquire_fails_until_release():
     port = free_port()
-    a, b = L.SingleInstance(port), L.SingleInstance(port)
+    name = rf"Local\TiyatroTakipTest-{port}"   # never the real app's mutex
+    a, b = L.SingleInstance(name, port), L.SingleInstance(name, port)
     assert a.acquire() is True
     assert b.acquire() is False
     a.release()

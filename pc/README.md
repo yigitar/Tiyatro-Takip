@@ -28,8 +28,9 @@ eksik anahtarın adını söyleyen bir hata penceresi gösterir.
 ## Başlatma
 
 `pc\start.bat` çift tıklanır (varsa `.venv`, yoksa `pythonw`/`pyw` kullanır) ya da depo
-kökünden `python -m pc.app`. Uygulama tek kopya çalışır; ikinci başlatma "zaten çalışıyor"
-der. Pencereyi kapatmak uygulamayı kapatır, küçültmek çalışmaya devam ettirir.
+kökünden `python -m pc.app`. Uygulama tek kopya çalışır (adlandırılmış Windows mutex'i; süreç
+çökse de işletim sistemi bırakır, eski kilit dosyası olmaz): ikinci başlatma açık pencereyi öne
+getirir (bulamazsa "zaten çalışıyor" der). Pencereyi kapatmak uygulamayı kapatır, küçültmek çalışmaya devam ettirir.
 
 ## Kullanım
 
@@ -37,9 +38,18 @@ der. Pencereyi kapatmak uygulamayı kapatır, küçültmek çalışmaya devam et
 - Oyun seçilince: Biletinial bağlantısı, seanslar, hedefler (Düzenle / Sil), Aktif anahtarı,
   Yetişkin/Çocuk hedefi ekleme. Değişiklikler Telegram menüsüyle aynı `config.json`'a yazılır.
 - Hedef düzenleyici: kişi sayısı, günler, saat sınırları, güne özel saat, hariç tarihler.
-- Alt durum çubuğu: son tarama, mod (Normal/Hızlı), sonraki açılış, GitHub sağlığı, PC kaydı
-  yaşı, bekleyen bildirim, hatalar (üzerine gelince ayrıntı).
+- Üst durum çubuğu (menünün altında): son tarama, mod (Normal/Hızlı), sonraki açılış, GitHub
+  sağlığı, PC kaydı yaşı, bekleyen bildirim, hatalar (üzerine gelince ayrıntı).
+- Kaynaklar: Biletinial, Başiskele, VKV için yan yana üç kart (durum simgesi/rengi, son kontrol,
+  son güncelleme, etkinlik sayısı, "Kaynağı aç"; Başiskele'de rezervasyon portalı + "Portalı aç").
+  "Açıklama" kutusu liste yazı stillerini ve durum simgelerini örnekle açıklar.
 - Ayarlar > Sesli uyarı: bildirim penceresindeki bip'i açar/kapatır.
+- Ayarlar > Windows açılışında başlat (varsayılan kapalı): `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+  altına `TiyatroTakip` değerini yazar/siler (yalnız bu kullanıcı, yönetici gerekmez; pythonw
+  ile konsolsuz). Kutu, kayıt defterinin gerçek durumunu gösterir.
+- Ayarlar > Bilgisayarın uyumasını engelle (varsayılan kapalı, `pc/local/ui.json` `keep_awake`):
+  uygulama açıkken `SetThreadExecutionState` ile sistemin uykuya geçmesini engeller (ekran yine
+  kapanabilir); kapatınca ve çıkışta geri alınır.
 
 ## Hata durumunda
 

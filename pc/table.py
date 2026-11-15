@@ -26,8 +26,11 @@ TEXT_COLOR = "#111827"
 SELECT_BG = "#cfe3ff"
 GRID_COLOR = "#e5e7eb"
 HEAD_BG = "#eef1f5"
-BUTTON_BG, BUTTON_EDGE, BUTTON_FG = "#eef2f7", "#9aa7b8", "#1d4ed8"
+LINK_COLOR = "#1d4ed8"      # link-style cells ("Oyun ↗"): plain blue text, underlined on hover
+ZEBRA_BG = "#f7f8fa"        # every second row: barely visible, like Excel banding
+BOX_EDGE, BOX_ON = "#8a94a3", "#2563eb"   # drawn checkbox: outline / checked fill
 PAD = 6
+CHECKED_GLYPH = "☑"   # cell text of a checked box (pc.app_logic.CHECKED)
 
 
 class _Row:
@@ -40,14 +43,19 @@ class _Row:
 class GridTable(ttk.Frame):
     def __init__(self, master, columns, *, stretch=(), on_sort=None, on_cell=None,
                  row_px: int = 22, head_px: int = 26, height_rows: int | None = None,
-                 sortable: bool = True):
+                 sortable: bool = True, zebra: bool = True):
         super().__init__(master)
+        # 1.0 at 96 dpi; the window is DPI aware (pc.winsetup), Tk reports the real DPI
+        self.scale = max(1.0, float(self.winfo_fpixels("1i")) / 96.0)
         self.keys = [c[0] for c in columns]
         self._labels = {c[0]: c[1] for c in columns}
-        self._base = {c[0]: int(c[2]) for c in columns}
+        self._base = {c[0]: int(round(int(c[2]) * self.scale)) for c in columns}
+        self._zebra = zebra
+        self._hover: tuple | None = None
+        self.pad = int(round(PAD * self.scale))
         self._stretch = set(stretch)
         self._on_sort, self._on_cell = on_sort, on_cell
-        self.row_px, self.head_px, self._sortable = row_px, head_px, sortable
+        self._sortable = sortable
         self._rows: list[_Row] = []
         self._index: dict[str, int] = {}
         self._selected: str | None = None
@@ -64,13 +72,21 @@ class GridTable(ttk.Frame):
                 self._fonts[(bold, italic)] = tkfont.Font(
                     root=self, family=spec["family"], size=spec["size"],
                     weight="bold" if bold else "normal", slant="italic" if italic else "roman")
+        for italic in (False, True):   # underlined variants for hovered links
+            self._fonts[("link", italic)] = tkfont.Font(
+                root=self, family=spec["family"], size=spec["size"], underline=True,
+                slant="italic" if italic else "roman")
+        # row/heading heights: the given 96-dpi px scaled, never tighter than the font needs
+        line = self._fonts[(False, False)].metrics("linespace")
+        self.row_px = max(int(round(row_px * self.scale)), line + 6)
+        self.head_px = max(int(round(head_px * self.scale)), line + 8)
         self._fit_cache: dict = {}
 
         bg = ttk.Style().lookup("Treeview", "background") or "white"
-        self.header = tk.Canvas(self, height=head_px, highlightthickness=0, background=HEAD_BG)
+        self.header = tk.Canvas(self, height=self.head_px, highlightthickness=0, background=HEAD_BG)
         self.body = tk.Canvas(self, highlightthickness=0, background=bg, takefocus=1)
         if height_rows is not None:
-            self.body.configure(height=max(1, height_rows) * row_px)
+            self.body.configure(height=max(1, height_rows) * self.row_px)
         self.hbar = AutoScrollbar(self, orient="horizontal", command=self._xview)
         self.header.pack(side="top", fill="x")
         self.body.pack(side="top", fill="both", expand=True)
@@ -80,6 +96,7 @@ class GridTable(ttk.Frame):
         self.body.bind("<Configure>", self._on_configure)
         self.body.bind("<Button-1>", self._click)
         self.body.bind("<Motion>", self._motion)
+        self.body.bind("<Leave>", self._leave)
         self.body.bind("<MouseWheel>", self._wheel)
         self.body.bind("<Up>", lambda e: self._step(-1))
         self.body.bind("<Down>", lambda e: self._step(1))
@@ -233,7 +250,7 @@ class GridTable(ttk.Frame):
         hit = self._fit_cache.get(key)
         if hit is not None:
             return hit
-        room = max(width - 2 * PAD, 4)
+        room = max(width - 2 * self.pad, 4)
         out = text
         if font.measure(text) > room:
             while out and font.measure(out + "…") > room:
@@ -273,7 +290,7 @@ class GridTable(ttk.Frame):
         for i, key in enumerate(self.keys):
             head.create_rectangle(xs[i], 0, xs[i + 1], self.head_px, fill=HEAD_BG,
                                   outline=GRID_COLOR)
-            head.create_text(xs[i] + PAD, self.head_px // 2, anchor="w", font=hfont,
+            head.create_text(xs[i] + self.pad, self.head_px // 2, anchor="w", font=hfont,
                              text=self._fit(self._labels.get(key, ""), hfont, widths[i]))
         for n, row in enumerate(self._rows):
             y0 = n * self.row_px
@@ -285,23 +302,40 @@ class GridTable(ttk.Frame):
                 body.create_rectangle(0, y0, total_w, y1, fill=SELECT_BG, outline="")
             elif base_bg:
                 body.create_rectangle(0, y0, total_w, y1, fill=base_bg, outline="")
+            elif self._zebra and n % 2 == 1:
+                body.create_rectangle(0, y0, total_w, y1, fill=ZEBRA_BG, outline="")
             body.create_line(0, y1, total_w, y1, fill=GRID_COLOR)
             for i, (key, cell) in enumerate(zip(self.keys, row.cells)):
                 font, fg, _bg = self._row_style(row, key, cell)
                 mid = y0 + self.row_px // 2
+                centre = (xs[i] + xs[i + 1]) // 2
                 if cell.kind == "link":
-                    body.create_rectangle(xs[i] + 3, y0 + 2, xs[i + 1] - 3, y1 - 3,
-                                          fill=BUTTON_BG, outline=BUTTON_EDGE)
-                    body.create_text((xs[i] + xs[i + 1]) // 2, mid, text=cell.text, font=font,
-                                     fill=BUTTON_FG)
+                    hot = self._hover == (row.iid, key)
+                    body.create_text(centre, mid, text=cell.text, fill=LINK_COLOR,
+                                     font=self._fonts[("link", False)] if hot
+                                     else self._fonts[(False, False)])
                 elif cell.kind == "check":
-                    body.create_text((xs[i] + xs[i + 1]) // 2, mid, text=cell.text, font=font,
-                                     fill=fg)
+                    self._draw_checkbox(centre, mid, cell.text == CHECKED_GLYPH)
                 else:
-                    body.create_text(xs[i] + PAD, mid, anchor="w", font=font, fill=fg,
+                    body.create_text(xs[i] + self.pad, mid, anchor="w", font=font, fill=fg,
                                      text=self._fit(cell.text, font, widths[i]))
         body.configure(scrollregion=(0, 0, total_w, max(len(self._rows) * self.row_px,
                                                         body.winfo_height())))
+
+    def _draw_checkbox(self, cx: int, cy: int, checked: bool) -> None:
+        """Crisp checkbox sized to the row (about 55 % of its height, even px)."""
+        size = max(12, int(self.row_px * 0.55)) // 2 * 2
+        half, line = size // 2, max(1, int(round(self.scale)))
+        x0, y0, x1, y1 = cx - half, cy - half, cx + half, cy + half
+        body = self.body
+        if checked:
+            body.create_rectangle(x0, y0, x1, y1, fill=BOX_ON, outline=BOX_ON, width=line)
+            body.create_line(x0 + size * 0.22, cy + size * 0.02, x0 + size * 0.42, y1 - size * 0.24,
+                             x1 - size * 0.20, y0 + size * 0.26, fill="white",
+                             width=max(2, int(round(size / 6))), capstyle="round",
+                             joinstyle="round")
+        else:
+            body.create_rectangle(x0, y0, x1, y1, fill="white", outline=BOX_EDGE, width=line)
 
     # ---- scrolling ---------------------------------------------------------------------------
     def _on_yscroll(self, first, last):
@@ -338,6 +372,15 @@ class GridTable(ttk.Frame):
         iid, key = self._hit(event)
         hand = bool(iid and key and self.cell(iid, key).kind in ("link", "check"))
         self.body.configure(cursor="hand2" if hand else "")
+        hot = (iid, key) if hand and self.cell(iid, key).kind == "link" else None
+        if hot != self._hover:   # underline the hovered link only
+            self._hover = hot
+            self._request_draw()
+
+    def _leave(self, _event):
+        if self._hover is not None:
+            self._hover = None
+            self._request_draw()
 
     def _click(self, event):
         self.body.focus_set()

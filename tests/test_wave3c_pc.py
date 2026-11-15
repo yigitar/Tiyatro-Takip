@@ -222,7 +222,8 @@ def test_portal_is_merged_into_the_basiskele_source_row_with_an_open_link(ui):
     ui.refresh_rows()
     assert len(ui.source_labels) == 1                       # no separate portal strip
     text = ui.source_labels[0].cget("text")
-    assert "Başiskele" in text and text.endswith("rezervasyon portalı: boş")
+    assert "Başiskele" in ui.source_titles[0].cget("text")
+    assert text.endswith("Rezervasyon portalı: boş")
     assert [b.cget("text") for b in ui.source_buttons] == ["Portalı aç"]
     ui.source_buttons[0].invoke()
     assert ui.opened == [PORTAL_URL]
@@ -238,7 +239,7 @@ def test_portal_row_updates_only_on_change_and_survives_missing_source_row(ui):
     assert ui.source_labels[0] is first                     # not rebuilt on every tick
     ui.svc.portals = lambda now=None: _views("open", f"🏛️ {LABEL}: 2 etkinlik açık")
     ui.refresh_rows()
-    assert ui.source_labels[0].cget("text").endswith("rezervasyon portalı: 2 etkinlik açık")
+    assert ui.source_labels[0].cget("text").endswith("Rezervasyon portalı: 2 etkinlik açık")
     # a portal with no source record yet still gets its own row (and link)
     ui.svc.sources = lambda now=None: []
     ui.refresh_rows()

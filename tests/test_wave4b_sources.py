@@ -132,14 +132,16 @@ def _fake_sources(status="ok"):
 def test_sources_strip_shows_icons_times_and_legend(ui):
     ui.svc.sources = lambda now=None: _fake_sources()
     ui.refresh_rows()
-    assert "✅ Biletinial" in ui.source_labels[0].cget("text")
+    assert ui.source_titles[0].cget("text") == "Biletinial"
+    assert ui.source_cards["biletinial"]["icon"].cget("text") == "✅"
     assert "Son kontrol" in ui.source_labels[0].cget("text")
     first = ui.source_labels[0]
     ui.refresh_rows()
     assert ui.source_labels[0] is first  # not rebuilt unless the text changes
     ui.svc.sources = lambda now=None: _fake_sources("failed")
     ui.refresh_rows()
-    assert ui.source_labels[0].cget("text").startswith("❌")
+    assert ui.source_cards["biletinial"]["icon"].cget("text") == "❌"
+    assert "Hata: Timeout" in ui.source_cards["biletinial"]["error"].cget("text")
     ui.svc.sources = lambda now=None: []
     ui.refresh_rows()
     assert ui.source_labels == [] and ui.source_bar.winfo_manager() == ""

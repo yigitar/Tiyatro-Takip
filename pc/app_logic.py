@@ -45,11 +45,12 @@ def default_geometry(screen_w: int, screen_h: int) -> str:
     return f"{w}x{h}+{x}+{y}"
 
 
-def list_pane_px(row_count: int, pane_px: int, detail_need: int | None = None) -> int:
+def list_pane_px(row_count: int, pane_px: int, detail_need: int | None = None, *,
+                 row_px: int = ROW_PX, head_px: int = HEADING_PX) -> int:
     """Height for the list so it fits its rows. The detail pane gets what it needs
     (``detail_need`` px; unknown = 40 % of the pane) as long as the list keeps 3 rows; scrollbars appear only when both do not fit."""
-    wanted = HEADING_PX + max(row_count, 3) * ROW_PX + 6
-    floor = HEADING_PX + 3 * ROW_PX + 6
+    wanted = head_px + max(row_count, 3) * row_px + 6
+    floor = head_px + 3 * row_px + 6
     if not detail_need:
         floor = max(floor, int(pane_px * 0.25))
     ceiling = pane_px - detail_need if detail_need else int(pane_px * 0.6)
@@ -82,6 +83,69 @@ def source_line(view: dict) -> str:
     from tiyatro import sources as S
     text = S.line(view)
     return f"{text} · {view['portal_text']}" if view.get("portal_text") else text
+
+
+def _ago(then: datetime, now: datetime) -> str:
+    minutes = int((now - then).total_seconds() // 60)
+    if minutes < 1:
+        return "az önce"
+    if minutes < 60:
+        return f"{minutes} dk önce"
+    if minutes < 24 * 60:
+        return f"{minutes // 60} sa önce"
+    return f"{minutes // (24 * 60)} gün önce"
+
+
+def _day_time(then: datetime, now: datetime) -> str:
+    """"bugün 12:10" / "dün 12:10" / "13.11 12:10" (Istanbul time)."""
+    then, today = then.astimezone(ISTANBUL), now.astimezone(ISTANBUL).date()
+    delta = (today - then.date()).days
+    day = "bugün" if delta == 0 else "dün" if delta == 1 else f"{then:%d.%m}"
+    return f"{day} {then:%H:%M}"
+
+
+@dataclass(frozen=True)
+class SourceCard:
+    id: str
+    title: str
+    status: str            # ok | stale | failed | unknown
+    icon: str
+    color: str
+    lines: tuple[str, ...]  # Son kontrol / Son güncelleme / N etkinlik [/ portal]
+    error: str = ""
+
+
+CARD_COLORS = {"ok": GREEN, "stale": AMBER, "failed": RED, "unknown": GRAY}
+
+
+def source_card(view: dict, now: datetime) -> SourceCard:
+    """Text of one source card: "Son kontrol: 14:35 (3 dk önce)", "Son güncelleme: bugün
+    12:10", "6 etkinlik", Başiskele also "Rezervasyon portalı: boş". Unknown values are "—"."""
+    def stamp(key: str, fallback: str, with_ago: bool) -> str:
+        iso = view.get(key)
+        try:
+            then = parse_iso(iso) if isinstance(iso, str) else None
+        except ValueError:
+            then = None
+        if then is None:
+            return fallback or BLANK
+        hhmm = f"{then.astimezone(ISTANBUL):%H:%M}"
+        if with_ago:
+            clock = hhmm if then.astimezone(ISTANBUL).date() == now.astimezone(ISTANBUL).date()                 else _day_time(then, now)
+            return f"{clock} ({_ago(then, now)})"
+        return _day_time(then, now)
+
+    count = view.get("items_count")
+    lines = [f"Son kontrol: {stamp('last_check_at', view.get('last_check'), True)}",
+             f"Son güncelleme: {stamp('last_change_at', view.get('last_change'), False)}",
+             f"{count} etkinlik" if isinstance(count, int) else f"{BLANK} etkinlik"]
+    if view.get("portal_text"):
+        text = view["portal_text"]
+        lines.append(text[:1].upper() + text[1:])
+    status = view.get("status") if view.get("status") in CARD_COLORS else "unknown"
+    error = view.get("error") if status == "failed" and view.get("error") else ""
+    return SourceCard(view["id"], str(view.get("name") or view["id"]), status,
+                      str(view.get("icon") or "⚪"), CARD_COLORS[status], tuple(lines), error)
 
 
 def source_links(config, state) -> dict[str, str]:
@@ -293,6 +357,14 @@ LIST_COLUMNS = (("follow", "Takip", 50), ("title", "Oyun", 220), ("link", "Sayfa
                 ("summary", "Durum özeti", 170))
 CHECKED, UNCHECKED = "☑", "☐"
 LEGEND = "normal = kaynaktan alınan, italik = türetilmiş/varsayım"
+# "Açıklama" box (wave 8): list styles and source states, each item shown with a real sample
+LEGEND_LIST = (("Normal yazı", "= kaynaktan alınan", "normal"),
+               ("İtalik", "= türetilmiş / varsayım", "derived"),
+               ("Mor kalın", "= yeni, henüz açılmadı", "new"))
+LEGEND_STATES = (("✅", "güncel", GREEN), ("⚠️", "30 dk'dan eski (kontrol gecikti)", AMBER),
+                 ("❌", "son kontrol başarısız", RED), ("⚪", "henüz kontrol edilmedi", GRAY))
+LEGEND_TIMES = ("Son kontrol = kaynağa en son bakılma · Son güncelleme = kaynağın kendi "
+                "içeriğinin en son değişmesi")
 BLANK = "—"
 
 
@@ -647,7 +719,7 @@ def sanitize_geometry(geometry, screen_w: int, screen_h: int) -> str | None:
 
 
 def load_ui(path) -> dict:
-    ui = {"geometry": None, "beep": True}
+    ui = {"geometry": None, "beep": True, "keep_awake": False}
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -658,6 +730,8 @@ def load_ui(path) -> dict:
             ui["geometry"] = data["geometry"]
         if isinstance(data.get("beep"), bool):
             ui["beep"] = data["beep"]
+        if isinstance(data.get("keep_awake"), bool):
+            ui["keep_awake"] = data["keep_awake"]
     return ui
 
 
@@ -689,17 +763,51 @@ def save_ui(path, ui: dict) -> None:
 
 # ---- single instance -----------------------------------------------------------------------
 
-class SingleInstance:
-    """Holds a loopback TCP port for the life of the process; the OS frees it on exit
-    (also after a crash), so there is no stale lock file to clean up."""
+MUTEX_NAME = r"Local\TiyatroTakipPC"   # per Windows session; the OS frees it on exit/crash
+ERROR_ALREADY_EXISTS = 183
 
-    def __init__(self, port: int = DEFAULT_PORT):
-        self.port = port
+
+class SingleInstance:
+    """Only one PC app per Windows session. Windows: a named mutex (``CreateMutexW``) held
+    for the life of the process; the OS releases it when the process ends, also after a
+    crash or kill, so there is no stale pid/lock file. Other systems (tests on CI): a
+    loopback TCP port with the same property."""
+
+    def __init__(self, name: str = MUTEX_NAME, port: int = DEFAULT_PORT):
+        self.name, self.port = name, port
+        self._handle = None
         self._sock: socket.socket | None = None
 
+    @property
+    def held(self) -> bool:
+        return self._handle is not None or self._sock is not None
+
     def acquire(self) -> bool:
-        if self._sock is not None:
+        if self.held:
             return True
+        if os.name == "nt":
+            return self._acquire_mutex()
+        return self._acquire_port()
+
+    def _acquire_mutex(self) -> bool:
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+        kernel32.CreateMutexW.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        ctypes.set_last_error(0)
+        handle = kernel32.CreateMutexW(None, False, self.name)
+        err = ctypes.get_last_error()
+        if not handle:
+            return False   # cannot tell: do not start a second copy blindly
+        if err == ERROR_ALREADY_EXISTS:
+            kernel32.CloseHandle(handle)
+            return False
+        self._handle, self._close = handle, kernel32.CloseHandle
+        return True
+
+    def _acquire_port(self) -> bool:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
@@ -713,6 +821,9 @@ class SingleInstance:
         return True
 
     def release(self) -> None:
+        if self._handle is not None:
+            self._close(self._handle)
+            self._handle = None
         if self._sock is not None:
             self._sock.close()
             self._sock = None

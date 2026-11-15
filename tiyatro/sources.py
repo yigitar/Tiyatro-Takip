@@ -133,6 +133,10 @@ def describe(state: dict | None, now: datetime) -> list[dict]:
         count = rec.get("items_count")
         out.append({"id": sid, "name": str(rec.get("name") or source_name(sid)),
                     "status": st, "icon": ICONS[st],
+                    "last_check_at": rec.get("last_check_at")
+                    if _dt(rec.get("last_check_at")) else None,
+                    "last_change_at": rec.get("last_change_at")
+                    if _dt(rec.get("last_change_at")) else None,
                     "last_check": time_text(rec.get("last_check_at"), now),
                     "last_change": time_text(rec.get("last_change_at"), now),
                     "items_count": count if isinstance(count, int) else None,

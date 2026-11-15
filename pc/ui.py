@@ -27,18 +27,22 @@ except ImportError:  # pragma: no cover
 
 from pc import activity as A
 from pc import app_logic as L
+from pc import winsetup
 from pc.activity_ui import ActivityTab, default_reveal
 from pc.service import RefreshError
 from pc.settings import DEFAULT_LOCAL_DIR, SettingsError, load_settings
 from pc.table import DERIVED_COLOR, GridTable
 from pc.viewmodel import APP_TITLE, DAY_SHORT, credit_lines
-from pc.widgets import AutoScrollbar, RichLabel, autosize_text
+from pc.widgets import AutoScrollbar, Flow, LinkButton, RichLabel, autosize_text
 from tiyatro import sources as S
 from tiyatro.config import config_to_dict
 from tiyatro.models import ISTANBUL
 
 log = logging.getLogger("pc.app")
 
+STRIP_BG, STRIP_EDGE, VALUE_COLOR = "#eef2f7", "#c7d0dc", "#111827"
+LEGEND_BG, LEGEND_EDGE = "#f8fafc", "#cbd5e1"
+CARD_BG, CARD_MIN_PX = "white", 300
 POLL_MS = 200
 STATUS_MS = 5000
 RELOAD_MS = 60_000
@@ -334,8 +338,10 @@ class TargetEditor(tk.Toplevel):
 class App:
     def __init__(self, root: tk.Tk, service, local_dir: Path | str = DEFAULT_LOCAL_DIR, *,
                  open_url=webbrowser.open, beep=default_beep, msgbox=messagebox,
-                 inline: bool = False, reveal=default_reveal):
+                 inline: bool = False, reveal=default_reveal, win=winsetup):
         self.root, self.service = root, service
+        self.win = win   # Windows integration (autostart, keep awake); injectable for tests
+        self._awake_on = False
         self.local_dir = Path(local_dir)
         self.open_url, self.beep, self.mb = open_url, beep, msgbox
         self.reveal = reveal
@@ -360,12 +366,21 @@ class App:
 
         ui = L.load_ui(self.local_dir / "ui.json")
         self.beep_enabled = ui["beep"]
+        self.keep_awake = ui["keep_awake"]
         self.sort = L.load_sort(self.local_dir / "ui.json")  # (column, "asc"|"desc") or None
         self._default_rows: list = []
         self.bold_font = tkfont.nametofont("TkDefaultFont").copy()
         self.bold_font.configure(weight="bold")
         self.italic_font = tkfont.nametofont("TkDefaultFont").copy()
         self.italic_font.configure(slant="italic")
+        base = tkfont.nametofont("TkDefaultFont").actual()["size"]
+        bigger = (lambda n: base + n) if base > 0 else (lambda n: base - n)
+        self.small_font = tkfont.nametofont("TkDefaultFont").copy()
+        self.value_font = tkfont.nametofont("TkDefaultFont").copy()
+        self.value_font.configure(weight="bold", size=bigger(1))
+        self.icon_font = tkfont.nametofont("TkDefaultFont").copy()
+        self.icon_font.configure(size=bigger(11))
+        self.scale = max(1.0, float(root.winfo_fpixels("1i")) / 96.0)
         self.seen = L.SeenStore.load(self.local_dir / "ui.json")  # items the user has opened
         root.title(APP_TITLE)
         geom = L.sanitize_geometry(ui["geometry"], root.winfo_screenwidth(),
@@ -382,14 +397,22 @@ class App:
     def _build(self) -> None:
         root = self.root
         menu = tk.Menu(root)
-        settings = tk.Menu(menu, tearoff=False)
+        settings = tk.Menu(menu, tearoff=False, postcommand=self._sync_autostart)
         self.beep_var = tk.BooleanVar(value=self.beep_enabled)
         settings.add_checkbutton(label="Sesli uyarı", variable=self.beep_var,
                                  command=self._beep_toggled)
+        self.autostart_var = tk.BooleanVar(value=self._autostart_state())
+        settings.add_checkbutton(label="Windows açılışında başlat",
+                                 variable=self.autostart_var, command=self._autostart_toggled)
+        self.keep_awake_var = tk.BooleanVar(value=self.keep_awake)
+        settings.add_checkbutton(label="Bilgisayarın uyumasını engelle",
+                                 variable=self.keep_awake_var, command=self._keep_awake_toggled)
         settings.add_separator()
         settings.add_command(label="Çıkış", command=self.close)
         menu.add_cascade(label="Ayarlar", menu=settings)
         root.configure(menu=menu)
+
+        self._build_status()   # info strip right under the menu bar
 
         bar = ttk.Frame(root)
         bar.pack(fill="x", padx=8, pady=6)
@@ -411,18 +434,16 @@ class App:
             self.save_ui, self.mb, self.reveal)
         self.notebook.add(self.activity_tab, text="Etkinlik günlüğü")
 
-        self.source_bar = ttk.Frame(games)  # "Kaynaklar" strip (wave 4 B)
-        self.source_labels: list = []
-        self.source_buttons: list = []   # "Portalı aç" link of the Başiskele row
-        self.source_open_buttons: dict = {}   # source id -> "Kaynağı aç" button
+        self.source_bar = tk.Frame(games)  # "Kaynaklar": one card per source (wave 8)
+        self.source_cards: dict = {}       # source id -> widgets of its card
+        self.source_labels: list = []      # body label of every card (lines of text)
+        self.source_titles: list = []
+        self.source_buttons: list = []     # "Portalı aç" links
+        self.source_open_buttons: dict = {}   # source id -> "Kaynağı aç" link
         self._source_sig = None
-        self.legend = ttk.Frame(games)  # what normal / italic cells mean (derived values)
-        self.legend.pack(side="bottom", fill="x", pady=(2, 0))
-        plain, derived = L.LEGEND.split(", ", 1)
-        self.legend_texts = [plain + ",", derived]
-        ttk.Label(self.legend, text=plain + ",", foreground=L.GRAY).pack(side="left")
-        ttk.Label(self.legend, text=derived, font=self.italic_font,
-                  foreground=DERIVED_COLOR).pack(side="left", padx=(4, 0))
+        self._card_cols = 0
+        self.source_bar.bind("<Configure>", lambda _e: self._layout_cards())
+        self._build_legend(games)
         pane = ttk.PanedWindow(games, orient="vertical")
         self.pane = pane
         self._sash_user, self._fit_key, self._need_seen = False, None, 0
@@ -439,7 +460,6 @@ class App:
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
-        self.tree.tag_configure("watched", bold=True)
         self.tree.tag_configure("new", bold=True, foreground=NEW_COLOR, column="title")
         self.tree.tag_configure("removed", background="#fde2e2", foreground="#7f1d1d")
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
@@ -449,31 +469,81 @@ class App:
         pane.add(self.detail, weight=2)
         self._detail_placeholder()
 
-        self._build_status()
+    def px(self, n: int) -> int:
+        return int(round(n * self.scale))
 
     def _build_status(self) -> None:
-        self.status = ttk.Frame(self.root, relief="sunken", borderwidth=1)
-        self.status.pack(fill="x", side="bottom", padx=0, pady=(6, 0))
-        self.status_labels: dict[str, ttk.Label] = {}
+        """Info strip under the menu bar: small grey caption above a bold value, tinted
+        background, wraps onto a second row when the window is narrow."""
+        self.status = tk.Frame(self.root, background=STRIP_BG, highlightthickness=1,
+                               highlightbackground=STRIP_EDGE)
+        self.status.pack(fill="x", side="top")
+        self.status.columnconfigure(0, weight=1)
+        self.status_flow = Flow(self.status, gap_x=self.px(22), gap_y=self.px(2),
+                                background=STRIP_BG)
+        self.status_flow.grid(row=0, column=0, sticky="we", padx=self.px(10), pady=self.px(4))
+        self.status_labels: dict[str, tk.Label] = {}
         cells = (("last", "Son tarama"), ("mode", "Mod"), ("next", "Sonraki açılış"),
                  ("gh", "GitHub"), ("hb", "PC kaydı"), ("pending", "Bekleyen bildirim"))
-        for i, (key, title) in enumerate(cells):
-            frame = ttk.Frame(self.status)
-            frame.grid(row=0, column=i, sticky="w", padx=8, pady=2)
-            ttk.Label(frame, text=f"{title}: ", foreground=L.GRAY).pack(side="left")
-            lbl = ttk.Label(frame, text="—")
-            lbl.pack(side="left")
+        for key, title in cells:
+            frame = tk.Frame(self.status_flow, background=STRIP_BG)
+            tk.Label(frame, text=title, foreground=L.GRAY, background=STRIP_BG,
+                     font=self.small_font, anchor="w").pack(anchor="w")
+            lbl = tk.Label(frame, text="—", background=STRIP_BG, foreground=VALUE_COLOR,
+                           font=self.value_font, anchor="w", justify="left",
+                           wraplength=self.px(520))
+            lbl.pack(anchor="w")
             self.status_labels[key] = lbl
+            self.status_flow.add(frame)
         self.paused_badge = tk.Label(self.status, text="DURAKLATILDI", background=L.RED,
-                                     foreground="white", padx=6)
-        self.warn_label = ttk.Label(self.status, text="", foreground=L.AMBER)
-        self.warn_label.grid(row=1, column=0, columnspan=4, sticky="w", padx=8)
-        self.err_label = ttk.Label(self.status, text="", foreground=L.RED, cursor="hand2")
-        self.err_label.grid(row=1, column=4, columnspan=3, sticky="w", padx=8)
+                                     foreground="white", padx=8, pady=2, font=self.value_font)
+        self.warn_label = tk.Label(self.status, text="", foreground=L.AMBER, background=STRIP_BG,
+                                   anchor="w")
+        self.warn_label.grid(row=1, column=0, sticky="w", padx=self.px(10))
+        self.err_label = tk.Label(self.status, text="", foreground=L.RED, cursor="hand2",
+                                  background=STRIP_BG, anchor="w")
+        self.err_label.grid(row=2, column=0, sticky="w", padx=self.px(10))
+        self.warn_label.grid_remove()   # shown only while they have text
+        self.err_label.grid_remove()
         self._err_text = ""
         Tooltip(self.err_label, lambda: self._err_text)
         self.err_label.bind("<Button-1>", lambda _e: self._err_text and self.mb.showinfo(
             APP_TITLE, self._err_text))
+
+    def _build_legend(self, parent) -> None:
+        """"Açıklama" box: what normal / italic / purple-bold list text and the source status
+        icons mean, each with a real sample. Sits right above the list header."""
+        self.legend = tk.Frame(parent, background=LEGEND_BG, highlightthickness=1,
+                               highlightbackground=LEGEND_EDGE)
+        self.legend.pack(side="top", fill="x", pady=(0, self.px(4)))
+        tk.Label(self.legend, text="Açıklama", font=self.bold_font, background=LEGEND_BG,
+                 foreground=VALUE_COLOR).grid(row=0, column=0, sticky="nw", padx=self.px(8),
+                                              pady=self.px(4))
+        self.legend.columnconfigure(1, weight=1)
+        flow = Flow(self.legend, gap_x=self.px(18), gap_y=self.px(1), background=LEGEND_BG)
+        flow.grid(row=0, column=1, sticky="we", padx=(0, self.px(8)), pady=self.px(3))
+        self.legend_flow = flow
+        self.legend_texts: list[str] = []
+
+        def item(sample, meaning, *, font=None, color=VALUE_COLOR):
+            frame = tk.Frame(flow, background=LEGEND_BG)
+            tk.Label(frame, text=sample, font=font, foreground=color,
+                     background=LEGEND_BG).pack(side="left")
+            tk.Label(frame, text=" " + meaning, foreground=L.GRAY,
+                     background=LEGEND_BG).pack(side="left")
+            self.legend_texts.append(f"{sample} {meaning}")
+            flow.add(frame)
+
+        styles = {"normal": (None, VALUE_COLOR), "derived": (self.italic_font, DERIVED_COLOR),
+                  "new": (self.bold_font, NEW_COLOR)}
+        for sample, meaning, style in L.LEGEND_LIST:
+            font, color = styles[style]
+            item(sample, meaning, font=font, color=color)
+        for icon, meaning, color in L.LEGEND_STATES:
+            item(icon, meaning, color=color)
+        note = tk.Label(flow, text=L.LEGEND_TIMES, foreground=L.GRAY, background=LEGEND_BG)
+        self.legend_texts.append(L.LEGEND_TIMES)
+        flow.add(note)
 
     # ---- helpers ---------------------------------------------------------------------
     def now(self) -> datetime:
@@ -600,7 +670,9 @@ class App:
             return
         self._fit_key = key
         try:
-            self.pane.sashpos(0, L.list_pane_px(len(self.rows), pane_px, need))
+            self.pane.sashpos(0, L.list_pane_px(len(self.rows), pane_px, need,
+                                                row_px=self.tree.row_px,
+                                                head_px=self.tree.head_px))
         except tk.TclError:
             pass
 
@@ -610,8 +682,9 @@ class App:
             self.root.after_idle(self._fit_panes)
 
     def _render_sources(self) -> None:
-        """"Kaynaklar" strip: ✅/⚠️/❌, last check, last content change, item count per source;
-        the Başiskele row also carries the reservation-portal state and a "Portalı aç" link."""
+        """"Kaynaklar": three side-by-side cards (Biletinial, Başiskele, VKV), each with a
+        big status icon in the status colour as accent, last check / last update / item
+        count (Başiskele also the reservation portal) and "Kaynağı aç" (+ "Portalı aç")."""
         fn = getattr(self.service, "sources", None)
         pfn = getattr(self.service, "portals", None)
         try:
@@ -622,38 +695,105 @@ class App:
             log.exception("sources() failed")
             return
         views = L.source_views_with_portals(views, portals)
-        sig = tuple((L.source_line(v), v.get("portal_url"), links.get(v["id"])) for v in views)
-        if sig == self._source_sig:
+        now = self.now()
+        cards = [L.source_card(v, now) for v in views]
+        sig = tuple((v["id"], v.get("portal_url"), links.get(v["id"])) for v in views)
+        if sig != self._source_sig:        # set of cards / links changed: rebuild
+            self._source_sig = sig
+            for child in self.source_bar.winfo_children():
+                child.destroy()
+            self.source_cards, self.source_labels, self.source_titles = {}, [], []
+            self.source_buttons, self.source_open_buttons = [], {}
+            self._card_cols = 0
+            if not views:
+                self.source_bar.pack_forget()
+                return
+            for v in views:
+                self._build_card(v, links.get(v["id"]))
+            self.source_bar.pack(fill="x", pady=(0, self.px(4)), before=self.legend)
+            self._layout_cards()
+        for card in cards:                 # same cards: only update texts and colours
+            w = self.source_cards.get(card.id)
+            if w is None:
+                continue
+            w["frame"].configure(highlightbackground=card.color, highlightcolor=card.color)
+            w["stripe"].configure(background=card.color)
+            w["icon"].configure(text=card.icon, foreground=card.color)
+            w["title"].configure(text=card.title)
+            w["body"].configure(text="\n".join(card.lines))
+            w["error"].configure(text=f"Hata: {card.error}" if card.error else "")
+            if card.error:
+                w["error"].grid()
+            else:
+                w["error"].grid_remove()
+
+    def _build_card(self, view: dict, link: str | None) -> None:
+        wrap = self.px(CARD_MIN_PX) - self.px(90)
+        frame = tk.Frame(self.source_bar, background=CARD_BG, highlightthickness=2,
+                         highlightbackground=L.GRAY, highlightcolor=L.GRAY)
+        stripe = tk.Frame(frame, background=L.GRAY, width=self.px(6))
+        stripe.grid(row=0, column=0, rowspan=4, sticky="ns")
+        icon = tk.Label(frame, text="", font=self.icon_font, background=CARD_BG,
+                        foreground=L.GRAY)
+        icon.grid(row=0, column=1, rowspan=2, sticky="n", padx=(self.px(10), self.px(6)),
+                  pady=self.px(6))
+        title = tk.Label(frame, text="", font=self.value_font, background=CARD_BG,
+                         foreground=VALUE_COLOR, anchor="w")
+        title.grid(row=0, column=2, sticky="we", pady=(self.px(6), 0), padx=(0, self.px(8)))
+        body = tk.Label(frame, text="", background=CARD_BG, foreground=VALUE_COLOR,
+                        anchor="nw", justify="left", wraplength=wrap)
+        body.grid(row=1, column=2, sticky="we", padx=(0, self.px(8)))
+        error = tk.Label(frame, text="", background=CARD_BG, foreground=L.RED, anchor="w",
+                         justify="left", wraplength=wrap)
+        error.grid(row=2, column=2, sticky="we", padx=(0, self.px(8)))
+        error.grid_remove()
+        links = tk.Frame(frame, background=CARD_BG)
+        links.grid(row=3, column=1, columnspan=2, sticky="w", padx=(self.px(8), 0),
+                   pady=(0, self.px(4)))
+        frame.columnconfigure(2, weight=1)
+
+        def rewrap(event, labels=(body, error)):   # text wraps to the card, never clips
+            room = max(self.px(120), event.width - self.px(90))
+            for lab in labels:
+                if int(lab.cget("wraplength")) != room:
+                    lab.configure(wraplength=room)
+        frame.bind("<Configure>", rewrap)
+        sid = view["id"]
+        if link:
+            button = LinkButton(links, "Kaynağı aç", lambda u=link: self.open_url(u),
+                                background=CARD_BG)
+            button.pack(side="left", padx=(0, self.px(10)))
+            self.source_open_buttons[sid] = button
+        if view.get("portal_url"):
+            button = LinkButton(links, "Portalı aç",
+                                lambda u=view["portal_url"]: self.open_url(u),
+                                background=CARD_BG)
+            button.pack(side="left")
+            self.source_buttons.append(button)
+        self.source_cards[sid] = {"frame": frame, "stripe": stripe, "icon": icon,
+                                  "title": title, "body": body, "error": error,
+                                  "links": links}
+        self.source_labels.append(body)
+        self.source_titles.append(title)
+
+    def _layout_cards(self) -> None:
+        """Cards side by side (one equal-width column each, up to 3); fewer columns, so
+        the cards wrap onto further rows, when the window is narrow."""
+        frames = [self.source_cards[k]["frame"] for k in self.source_cards]
+        if not frames:
             return
-        self._source_sig = sig
-        for child in self.source_bar.winfo_children():
-            child.destroy()
-        self.source_labels, self.source_buttons = [], []
-        self.source_open_buttons = {}
-        if not views:
-            self.source_bar.pack_forget()
+        width = self.source_bar.winfo_width()
+        cols = 3 if width <= 1 else max(1, min(len(frames), 3, width // self.px(CARD_MIN_PX)))
+        if cols == self._card_cols:
             return
-        colors = {"ok": L.GREEN, "stale": L.AMBER, "failed": L.RED, "unknown": L.GRAY}
-        for v in views:
-            line = ttk.Frame(self.source_bar)
-            line.pack(fill="x", pady=0)
-            label = ttk.Label(line, text=L.source_line(v),
-                              foreground=colors.get(v["status"], L.GRAY))
-            label.pack(side="left")
-            self.source_labels.append(label)
-            if links.get(v["id"]):   # every source: its list / venue / program page
-                opener = ttk.Button(line, text="Kaynağı aç", width=11,
-                                    command=lambda u=links[v["id"]]: self.open_url(u))
-                opener.pack(side="left", padx=8)
-                self.source_open_buttons[v["id"]] = opener
-            if v.get("portal_url"):
-                button = ttk.Button(line, text="Portalı aç", width=10,
-                                    command=lambda u=v["portal_url"]: self.open_url(u))
-                button.pack(side="left", padx=8)
-                self.source_buttons.append(button)
-        ttk.Label(self.source_bar, text=S.LEGEND, foreground=L.GRAY, wraplength=900,
-                  justify="left").pack(anchor="w")
-        self.source_bar.pack(fill="x", pady=(0, 4), before=self.pane)
+        self._card_cols = cols
+        for c in range(3):
+            self.source_bar.columnconfigure(c, weight=1 if c < cols else 0,
+                                            uniform="card" if c < cols else "")
+        for n, frame in enumerate(frames):
+            frame.grid(row=n // cols, column=n % cols, sticky="nsew",
+                       padx=(0 if n % cols == 0 else self.px(6), 0),
+                       pady=(0 if n < cols else self.px(6), 0))
 
     def sort_by(self, column: str) -> None:
         """Header click: ascending -> descending -> default order (see ``L.next_sort``)."""
@@ -1047,6 +1187,10 @@ class App:
         more = f" (+{len(errors) - 1})" if len(errors) > 1 else ""
         self.err_label.configure(text=(shown[:80] + ("…" if len(shown) > 80 else "") + more)
                                  if shown else "")
+        if shown:
+            self.err_label.grid()
+        else:
+            self.err_label.grid_remove()
 
     def update_status(self) -> None:
         try:
@@ -1063,8 +1207,12 @@ class App:
         labels["hb"].configure(text=v.heartbeat, foreground=v.heartbeat_color)
         labels["pending"].configure(text=v.pending)
         self.warn_label.configure(text=v.warning)
+        if v.warning:
+            self.warn_label.grid()
+        else:
+            self.warn_label.grid_remove()
         if v.paused:
-            self.paused_badge.grid(row=0, column=6, padx=8)
+            self.paused_badge.grid(row=0, column=1, padx=8)
         else:
             self.paused_badge.grid_remove()
         self.pause_btn.configure(text="Devam" if v.paused else "Duraklat")
@@ -1154,6 +1302,47 @@ class App:
         self.beep_enabled = bool(self.beep_var.get())
         self.save_ui()
 
+    # ---- Windows integration (Settings menu) --------------------------------------------------
+    def _autostart_state(self) -> bool:
+        try:
+            return bool(self.win.autostart_enabled())
+        except Exception:
+            log.exception("autostart state unreadable")
+            return False
+
+    def _sync_autostart(self) -> None:
+        """Menu is about to open: show what the registry says right now."""
+        self.autostart_var.set(self._autostart_state())
+
+    def _autostart_toggled(self) -> None:
+        want = bool(self.autostart_var.get())
+        try:
+            actual = bool(self.win.set_autostart(want))
+        except Exception as exc:
+            log.exception("autostart not changed")
+            actual, error = self._autostart_state(), f"{type(exc).__name__}: {exc}"
+        else:
+            error = "" if actual == want else "Windows kayıt defteri değeri beklenen durumda değil."
+        self.autostart_var.set(actual)
+        if error:
+            self.mb.showerror(APP_TITLE, "Windows açılışında başlatma ayarı değiştirilemedi.\n\n"
+                              + error)
+
+    def _apply_keep_awake(self, on: bool) -> bool:
+        ok = bool(self.win.set_keep_awake(on))
+        self._awake_on = on and ok
+        return ok
+
+    def _keep_awake_toggled(self) -> None:
+        want = bool(self.keep_awake_var.get())
+        ok = self._apply_keep_awake(want)
+        if want and not ok:
+            self.keep_awake_var.set(False)
+            self.mb.showerror(APP_TITLE, "Bilgisayarın uyumasını engelleme etkinleştirilemedi.")
+            want = False
+        self.keep_awake = want
+        self.save_ui()
+
     # ---- lifecycle ----------------------------------------------------------------------------------
     def save_ui(self) -> None:
         try:
@@ -1163,6 +1352,7 @@ class App:
                       {"geometry": geom if geom and "x" in geom else old["geometry"],
                        "geometry_v": L.GEOMETRY_VERSION,
                        "beep": self.beep_enabled,
+                       "keep_awake": self.keep_awake,
                        "sort": list(self.sort) if self.sort else None,
                        "seen": self.seen.to_json(),
                        "activity": self.activity_tab.filters()})
@@ -1171,6 +1361,8 @@ class App:
 
     def start(self) -> None:
         """Start the scan worker and the timers (not used by tests)."""
+        if self.keep_awake and not self._apply_keep_awake(True):
+            log.warning("keep awake could not be enabled")
         self.refresh_rows()
         self.update_status()
         self._service_hook("log_startup")
@@ -1197,6 +1389,8 @@ class App:
         self.closing = True
         self._stop_beeps()
         self.save_ui()
+        if self._awake_on:   # give the power state back (also reset by Windows on exit)
+            self._apply_keep_awake(False)
         for pop in list(self.popups):
             try:
                 pop.destroy()
@@ -1211,13 +1405,14 @@ class App:
 
 
 def main() -> int:
+    winsetup.enable_dpi_awareness()   # before the first Tk window (crisp text, real DPI)
+    guard = L.SingleInstance()
+    if not guard.acquire():           # another copy runs: show it instead of starting a second
+        if not winsetup.focus_existing_window(APP_TITLE):
+            winsetup.info_box(APP_TITLE, "Uygulama zaten çalışıyor.")
+        return 0
     root = tk.Tk()
     root.withdraw()
-    guard = L.SingleInstance()
-    if not guard.acquire():
-        messagebox.showinfo(APP_TITLE, "Uygulama zaten çalışıyor.")
-        root.destroy()
-        return 0
     secrets: list[str] = []
     try:
         setup_logging(DEFAULT_LOCAL_DIR, secrets)

@@ -229,7 +229,9 @@ def test_source_strip_has_an_open_button_for_every_source(ui):
 
 
 def test_legend_and_derived_styling_in_the_detail(ui):
-    assert " ".join(ui.legend_texts) == L.LEGEND
+    assert ui.legend_texts[:3] == ["Normal yazı = kaynaktan alınan",
+                                   "İtalik = türetilmiş / varsayım",
+                                   "Mor kalın = yeni, henüz açılmadı"]
     ui.select_slug("p1")                      # age 7 -> Kitle by the age rule = derived
     tags = ui.meta_label.tag_ranges("derived")
     assert tags, "Kitle is derived (age rule) and must be italic"

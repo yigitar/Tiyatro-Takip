@@ -105,3 +105,89 @@ class RichLabel(tk.Text):
 
     def cget(self, key):
         return self._plain if key == "text" else super().cget(key)
+
+
+class LinkButton(tk.Label):
+    """Plain text link that behaves like a button: ``invoke()``, hand cursor, underlined
+    while hovered. Used instead of a bordered ``ttk.Button`` where a small unobtrusive
+    "open" action is wanted (source cards)."""
+
+    def __init__(self, master, text: str, command, *, color: str = "#1d4ed8",
+                 hover_color: str = "#1e40af", font=None, background=None, **kw):
+        opts = {"text": text, "foreground": color, "cursor": "hand2", "padx": 2, "pady": 2}
+        if background is not None:
+            opts["background"] = background
+        super().__init__(master, **opts, **kw)
+        base = tkfont.Font(font=font or tkfont.nametofont("TkDefaultFont"))
+        self._plain = base
+        self._under = tkfont.Font(font=base)
+        self._under.configure(underline=True)
+        self.configure(font=self._plain)
+        self._command, self._color, self._hover = command, color, hover_color
+        self.bind("<Enter>", self._enter)
+        self.bind("<Leave>", self._leave)
+        self.bind("<Button-1>", lambda _e: self.invoke())
+
+    def _enter(self, _e=None):
+        self.configure(font=self._under, foreground=self._hover)
+
+    def _leave(self, _e=None):
+        self.configure(font=self._plain, foreground=self._color)
+
+    def invoke(self) -> None:
+        if self._command is not None:
+            self._command()
+
+
+class Flow(tk.Frame):
+    """Container that lays its children out left to right and wraps them onto further
+    rows when the width is not enough (children are created with the flow as master and
+    registered with ``add``). Children are ``place``d at computed coordinates, so rows do
+    not share column widths; the flow sets its own height to the rows it needs. Re-flows
+    by itself when the width or a child's size changes; coordinates are only re-applied
+    when they actually changed."""
+
+    def __init__(self, master, *, gap_x: int = 12, gap_y: int = 2, **kw):
+        super().__init__(master, **kw)
+        self.items: list[tk.Widget] = []
+        self.gap_x, self.gap_y = gap_x, gap_y
+        self._placed: list | None = None
+        self._pending = False
+        self.rows = 0
+        self.bind("<Configure>", lambda _e: self._request())
+
+    def add(self, widget: tk.Widget) -> tk.Widget:
+        self.items.append(widget)
+        widget.bind("<Configure>", lambda _e: self._request(), add="+")
+        self._request()
+        return widget
+
+    def _request(self) -> None:
+        if not self._pending:
+            self._pending = True
+            self.after_idle(self.relayout)
+
+    def relayout(self) -> None:
+        self._pending = False
+        if not self.winfo_exists() or not self.items:
+            return
+        width = self.winfo_width()
+        width = width if width > 1 else 10 ** 6   # not laid out yet: one row
+        x = y = row_h = 0
+        placed = []
+        rows = 1
+        for w in self.items:
+            need, h = w.winfo_reqwidth(), w.winfo_reqheight()
+            if x and x + need > width:
+                x, y, row_h, rows = 0, y + row_h + self.gap_y, 0, rows + 1
+            placed.append((x, y))
+            x += need + self.gap_x
+            row_h = max(row_h, h)
+        total = y + row_h
+        self.rows = rows
+        if placed == self._placed and int(self.cget("height")) == total:
+            return
+        self._placed = placed
+        for w, (px, py) in zip(self.items, placed):
+            w.place(x=px, y=py)
+        self.configure(height=total)
