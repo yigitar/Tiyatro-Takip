@@ -1,11 +1,11 @@
 {
- "attempts": 2,
- "claimed_at": "2026-11-15T18:37:32+03:00",
+ "attempts": 3,
+ "claimed_at": "2026-11-15T19:04:52+03:00",
  "claimed_by": "github",
  "key": "ON_SALE:18699574",
- "lease_until": "2026-11-15T18:38:17+03:00",
- "message_id": 14,
+ "lease_until": "2026-11-15T19:05:37+03:00",
+ "message_id": null,
  "note": null,
- "sent_at": "2026-11-15T18:37:33+03:00",
- "status": "sent"
+ "sent_at": null,
+ "status": "claimed"
 }
