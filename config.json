@@ -8,7 +8,7 @@
  "paused": false,
  "plays": {
   "hic-kimsenin-oykusu-kocaeli-buyuksehir-sehir-tiyatrolari": {
-   "active": true,
+   "active": false,
    "tag_overrides": {},
    "targets": []
   },
