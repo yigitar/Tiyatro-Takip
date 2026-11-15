@@ -306,3 +306,36 @@ def test_worker_renders_python_state_lists_and_item_screens():
         assert set(urls) - {p.url} and set(urls) - {p.url} <= session_urls  # Seans buttons (page 1)
     src = res["rendered"][-1]
     assert len([b for row in src["keyboard"] for b in row if "url" in b]) == 3
+
+
+def test_adding_a_target_follows_an_unfollowed_play_parity_with_pc():  # wave 9
+    """tg on a play whose config entry has active=false flips it to true (PC and Worker
+    identical); a missing entry is created followed; removing a target never unfollows."""
+    assert START_CONFIG["plays"]["kucuk-prens"]["active"] is False
+    for slug, route_h, kind in (("kucuk-prens", KP, "y"), ("kucuk-prens", KP, "c"),
+                                ("yeni-oyun", YN, "c"), ("kusursuz-bir-aile", KB, "c")):
+        res = node({"config": START_CONFIG, "state": START_STATE,
+                    "applies": [f"tg:{route_h}:{kind}"], "renders": []})
+        py = copy.deepcopy(START_CONFIG)
+        configedit.ensure_target(py, slug, kind)
+        assert res["applied"][0] == py, (slug, kind)
+        assert py["plays"][slug]["active"] is True
+        assert any(t["id"] == kind for t in py["plays"][slug]["targets"])
+    # duplicate add of an existing target: nothing is added, so nothing changes
+    unfollowed = copy.deepcopy(START_CONFIG)
+    unfollowed["plays"]["kusursuz-bir-aile"]["active"] = False
+    res = node({"config": unfollowed, "state": START_STATE,
+                "applies": [f"tg:{KB}:y"], "renders": []})
+    py = copy.deepcopy(unfollowed)
+    configedit.ensure_target(py, "kusursuz-bir-aile", "y")
+    assert res["applied"][0] == py and py["plays"]["kusursuz-bir-aile"]["active"] is False
+    # removing a target does not unfollow, and does not follow either
+    res = node({"config": unfollowed, "state": START_STATE,
+                "applies": [f"hs:{KB}:y:rm"], "renders": []})
+    py = copy.deepcopy(unfollowed)
+    configedit.remove_target(py, "kusursuz-bir-aile", "y")
+    assert res["applied"][0] == py and py["plays"]["kusursuz-bir-aile"]["active"] is False
+    followed = copy.deepcopy(START_CONFIG)
+    res = node({"config": followed, "state": START_STATE,
+                "applies": [f"hs:{KB}:y:rm"], "renders": []})
+    assert res["applied"][0]["plays"]["kusursuz-bir-aile"]["active"] is True

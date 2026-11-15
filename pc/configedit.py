@@ -7,7 +7,7 @@ so applying one twice equals applying it once.
 
 Parity with the Telegram menu: ``ta`` -> set_active (no default target is created: an
 active play without targets watches every session), ``tg`` -> ensure_target,
-``hp`` -> set_people, ``hd wd/we/all`` -> set_days_group, ``hd d<n>`` -> set_day,
+(a newly added target also sets the play active), ``hp`` -> set_people, ``hd wd/we/all`` -> set_days_group, ``hd d<n>`` -> set_day,
 ``hf``/``ht`` -> set_hours, ``hx`` -> set_excluded_date, ``hs rm`` -> remove_target,
 ``pz`` -> set_paused, ``ef`` -> set_event_follow. ``set_days`` and ``set_day_override`` are PC-only (rule
 ``overrides``); seven selected days normalise to ``null`` (= every day) as in the menu.
@@ -121,8 +121,10 @@ def ensure_target(cfg: dict, slug: str, kind: str) -> None:
         return  # already there: no-op
     except ValueError:
         pass
-    ensure_play(cfg, slug)["targets"].append(
+    watch = ensure_play(cfg, slug)
+    watch["targets"].append(
         {"id": kind, "name": KINDS[kind], "people": 2, "rule": _empty_rule()})
+    watch["active"] = True  # adding a target to an unfollowed play follows it
 
 
 def set_people(cfg: dict, slug: str, tid: str, n: int) -> None:

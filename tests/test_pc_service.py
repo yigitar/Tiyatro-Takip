@@ -1079,3 +1079,16 @@ def test_service_set_active_adds_no_target(monkeypatch, tmp_path):
     store, svc = editor(tmp_path)
     svc.set_active("kucuk-prens", True)
     assert cfg(store)["plays"]["kucuk-prens"]["targets"] == []
+
+
+def test_adding_a_target_follows_an_unfollowed_play(tmp_path):  # wave 9
+    store, svc = editor(tmp_path)
+    raw = cfg(store)
+    raw["plays"]["kucuk-prens"]["active"] = False
+    store.files["config.json"] = (raw, "c1")
+    svc.ensure_target("kucuk-prens", "c")
+    out = cfg(store)["plays"]["kucuk-prens"]
+    assert out["active"] is True and [t["id"] for t in out["targets"]] == ["c"]
+    svc.set_active("kucuk-prens", False)
+    svc.remove_target("kucuk-prens", "c")  # removing never follows or unfollows
+    assert cfg(store)["plays"]["kucuk-prens"]["active"] is False

@@ -241,10 +241,12 @@ function ensurePlay(out, slug) {
 function addTarget(out, slug, code) {
   const kind = KINDS[code];
   if (!kind || findTarget(out, slug, kind[0])) return;
-  ensurePlay(out, slug).targets.push({
+  const w = ensurePlay(out, slug);
+  w.targets.push({
     id: kind[0], name: kind[1], people: 2,
     rule: { days: null, from_time: null, to_time: null, overrides: {}, exclude_dates: [] },
   });
+  w.active = true; // adding a target to an unfollowed play follows it (pc/configedit.ensure_target)
 }
 
 function ruleOf(t) {
