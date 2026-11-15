@@ -45,8 +45,22 @@ gün, saat ve kişi sayısına göre daraltmak istersen hedef eklersin.
   etkinlik yeniden açılırsa "yeniden açıldı" bildirimi gelir. Etkinlikler ücretsizdir;
   sitede çevrimiçi rezervasyon bağlantısı **yoktur**, bu yüzden her VKV bildirimi
   telefon (0262) 435 6700, e-posta info@vkvfordkultur.org.tr ve etkinlik bağlantısını içerir.
-- **Takip düğmesi:** Her etkinlik tek tek açılıp kapatılır (PC: "Diğer kaynaklar" sekmesinde
-  Takip sütunu; Telegram: "Diğer kaynaklar" ekranı). Varsayılan: tiyatro/müzikal açık,
+- **Tek liste (PC):** Ayrı sekme yoktur; "Oyunlar" listesi üç kaynağın (Biletinial, Başiskele,
+  VKV) kayıtlarını birlikte tutar. "Kaynak" sütunu sıralanabilir; Başiskele/VKV
+  satırlarında "Seans" etkinliğin tarih-saatini, "Durum özeti" rezervasyon durumunu
+  ("rezervasyon 19 Kas 12:00'da açılacak" / "rezervasyon açık" / "doldu" / "duyuru
+  bekleniyor") gösterir. Ayrıntıda "Etkinlik tarihi" ile "Rezervasyon açılışı" ayrı yazılır;
+  VKV için telefon/e-posta/bağlantı bloğu ve "Sayfayı aç" vardır.
+- **Boş Kitle/Tür/Etiketler kuralı:** Kitle: sayfa/kategori "çocuk" diyorsa, "çocuk"
+  etiketi varsa veya yaş sınırı 12 ve altındaysa **Çocuk**; sayfa "yetişkin" diyorsa,
+  yaş 13+ ise ya da hiçbir çocuk işareti yoksa **Yetişkin**. Tür: sayfadaki tür alanı
+  (kitle sözcükleri atılır); yalnızca kitle yazıyorsa başlık/açıklamadaki açık tür
+  sözcüğü (müzikal, komedi, dram, trajedi, monolog, stand-up, operet, kabare); o da
+  yoksa tiyatro etkinliği için "Tiyatro". Etiketler boşsa kitle ("çocuk"/"yetişkin") ve
+  gündüz saati ("gündüz") etiketi gösterilir. "—" yalnızca tiyatro olmayan ve türü hiç
+  belli olmayan kayıtlarda kalır.
+- **Takip düğmesi:** Her etkinlik tek tek açılıp kapatılır (PC: ayrıntıdaki "Aktif
+  (takip ediliyor)" kutusu, oyunlarla aynı; Telegram: "Diğer kaynaklar" ekranı). Varsayılan: tiyatro/müzikal açık,
   diğerleri (atölye, söyleşi, film) kapalı. Kapalı etkinlik listede gri kalır, bildirim
   göndermez. Seçimler `config.json` içindeki `event_follow` anahtarında tutulur.
 - **Kaynak durumu:** Her kaynak (Biletinial, Başiskele, VKV) için ✅ güncel / ⚠️ 30 dakikadan
@@ -67,9 +81,10 @@ rezervasyonu **şu anda açık** olan etkinlikleri listeler; çoğu zaman liste 
 - **Ne yapar:** Her normal taramada (5 dk) sayfayı okur. Liste boştan doluya geçerse
   "etkinlik açıldı", doluyken içeriği değişirse "güncellendi" bildirimi gelir (etkinlik
   adları ve bağlantıları ile). Sayfa üst üste 3 kez okunamazsa "okunamıyor" uyarısı gelir.
-  İlk bakışta liste boşsa sessizce başlangıç olarak kaydedilir. PC uygulamasının
-  "Oyunlar" sekmesinde tek satırlık bir "Portallar" şeridi (boş / N etkinlik açık, son
-  kontrol saati, [Aç] düğmesi) ve Telegram ana menüsünde ile "Yaklaşan açılışlar"
+  İlk bakışta liste boşsa sessizce başlangıç olarak kaydedilir. PC uygulamasında portal
+  bilgisi Başiskele kaynak satırına eklenir ("rezervasyon portalı: boş / N etkinlik açık")
+  ve satırda belediyenin rezervasyon sayfasını tarayıcıda açan "Portalı aç" düğmesi
+  bulunur; Telegram ana menüsünde ile "Yaklaşan açılışlar"
   ekranında bir durum satırı vardır. Duraklat bu bildirimleri de atar.
 - **Ne yapmaz:** Yalnızca ücretsiz rezervasyon etkinliklerini kapsar. Başiskele
   salonlarında oynayan, Biletinial'dan biletle satılan Şehir Tiyatroları oyunları zaten

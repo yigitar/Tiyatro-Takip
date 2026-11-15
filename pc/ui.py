@@ -412,7 +412,7 @@ class App:
         self._source_sig = None
         pane = ttk.PanedWindow(games, orient="vertical")
         self.pane = pane
-        self._sash_user, self._fit_key = False, None
+        self._sash_user, self._fit_key, self._need_seen = False, None, 0
         pane.bind("<B1-Motion>", lambda _e: setattr(self, "_sash_user", True), add="+")
         pane.pack(fill="both", expand=True)
         top = ttk.Frame(pane)
@@ -565,6 +565,12 @@ class App:
         if body is not None and body.winfo_exists():
             self.root.update_idletasks()
             need = body.winfo_reqheight() + DETAIL_CHROME_PX
+        # the divider must not jump around while the user clicks through rows: keep the
+        # largest detail height seen at this window size
+        if self._fit_key is None or self._fit_key[1] != pane_px:
+            self._need_seen = 0
+        if need is not None:
+            self._need_seen = need = max(self._need_seen, need)
         key = (len(self.rows), pane_px, need)
         if key == self._fit_key:
             return

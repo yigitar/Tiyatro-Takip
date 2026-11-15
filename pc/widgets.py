@@ -1,6 +1,8 @@
 """Small Tk helpers: a scrollbar that only exists while the content does not fit."""
 from __future__ import annotations
 
+import tkinter as tk
+from tkinter import font as tkfont
 from tkinter import ttk
 
 
@@ -31,18 +33,44 @@ class AutoScrollbar(ttk.Scrollbar):
         super().set(first, last)
 
 
+def wrapped_lines(text, font, width_px: int) -> int:
+    """Number of display lines ``text`` takes when word-wrapped to ``width_px`` (greedy,
+    like a Tk Text with ``wrap="word"``). Measured with the font instead of Tk's
+    ``count -displaylines``, which blocks on a widget that is not mapped yet."""
+    width_px = max(int(width_px), 20)
+    space = font.measure(" ")
+    total = 0
+    for paragraph in str(text).split(chr(10)):
+        lines, used = 1, 0
+        for word in paragraph.split():
+            w = font.measure(word)
+            if used and used + space + w > width_px:
+                lines, used = lines + 1, 0
+            while w > width_px:           # a word longer than the line is broken
+                lines, w = lines + 1, w - width_px
+            used = w if not used else used + space + w
+        total += lines
+    return total
+
+
 def autosize_text(text, max_lines, min_lines: int = 1, on_change=None):
     """Keep a (disabled) ``tk.Text`` exactly as tall as its wrapped content, up to
     ``max_lines`` (an int or a callable); beyond that it scrolls. Re-fits on every width
     change. ``on_change`` runs after the height changed. Returns the fit function."""
+    font = tkfont.Font(root=text, font=text.cget("font"))
+
     def fit(_event=None):
         try:
-            counted = text.count("1.0", "end-1c", "displaylines")
-        except Exception:  # widget gone / not counted yet
+            width = text.winfo_width()
+            if width <= 1:                    # not laid out yet: the requested width
+                width = text.winfo_reqwidth()
+            inner = 2 * (int(str(text.cget("borderwidth"))) + int(str(text.cget("padx")))
+                         + int(str(text.cget("highlightthickness"))))
+            n = wrapped_lines(text.get("1.0", "end-1c"), font, width - inner)
+        except tk.TclError:                   # widget gone
             return
-        n = counted[0] if counted else 1
         cap = max_lines() if callable(max_lines) else max_lines
-        height = max(min_lines, min(int(cap), max(int(n), 1)))
+        height = max(min_lines, min(int(cap), n))
         if int(text.cget("height")) != height:
             text.configure(height=height)
             if on_change is not None:

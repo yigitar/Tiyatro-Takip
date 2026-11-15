@@ -85,9 +85,8 @@ GENERIC_GENRE = "Tiyatro"
 _GENRE_KEYWORDS = (
     ("Müzikal", r"m[uü]zikal\w*"), ("Komedi", r"komedi\w*"), ("Dram", r"dram(?:a|atik|ı)?"),
     ("Trajedi", r"trajedi\w*"), ("Monolog", r"monolog\w*"), ("Stand-up", r"stand[\s-]?up"),
-    ("Operet", r"operet\w*"), ("Gerilim", r"gerilim\w*"), ("Fantastik", r"fantastik\w*"),
-    ("Macera", r"macera\w*"), ("Kabare", r"kabare\w*"), ("Tarihi", r"tarihi"),
-)
+    ("Operet", r"operet\w*"), ("Kabare", r"kabare\w*"),
+)  # only unambiguous genre words: plot words ("gerilim", "macera") are not genres
 
 
 def _fold_tr(text: str) -> str:

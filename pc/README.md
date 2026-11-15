@@ -55,5 +55,5 @@ ile başlar.
 
 ## Dosyalar (hepsi `pc/local/` altında, git'e girmez)
 
-`app.log` (dönen günlük, jetonlar maskelenir), `crash.log`, `ui.json` (pencere boyutu, ses ayarı),
+`app.log` (dönen günlük, jetonlar maskelenir), `crash.log`, `ui.json` (pencere boyutu — sürüm numarasıyla; sürüm değişince eski boyut bir kez atılır, varsayılan ekranın ~%92'sidir —, ses ayarı),
 `state.json`, `plays.json`, `notified.json` (yerel durum).
