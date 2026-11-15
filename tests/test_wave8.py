@@ -31,6 +31,8 @@ def _name():
 
 
 @windows_only
+
+
 def test_second_instance_is_refused_with_a_named_mutex_and_allowed_after_release():
     name = _name()
     a, b = L.SingleInstance(name), L.SingleInstance(name)
@@ -42,6 +44,8 @@ def test_second_instance_is_refused_with_a_named_mutex_and_allowed_after_release
 
 
 @windows_only
+
+
 def test_mutex_is_released_by_the_os_when_the_holder_dies_no_stale_lock(tmp_path):
     name = _name()
     code = ("import sys,time;sys.path.insert(0,sys.argv[2]);from pc import app_logic as L;"
@@ -200,6 +204,8 @@ def test_autostart_toggle_writes_then_removes_the_value_and_reflects_the_registr
 
 
 @windows_only
+
+
 def test_autostart_against_the_real_registry_on_a_throwaway_key():
     key, name = rf"Software\TiyatroTakipTest{uuid.uuid4().hex}", "Probe"
     import winreg
@@ -363,9 +369,8 @@ def test_saved_keep_awake_is_restored_on_the_next_start(tk_root, tmp_path):
     app.close(destroy=False)
 
 
-def test_status_strip_is_packed_above_the_tabs_and_holds_the_buttons(ui):
-    order = ui.root.pack_slaves()
-    assert order.index(ui.status) < order.index(ui.notebook) and len(order) == 2  # no bar row
+def test_status_block_is_in_the_sidebar_and_holds_the_buttons(ui):
+    assert ui.status.master is ui.sidebar and ui.notebook.master is ui.shell
     assert ui.refresh_btn.master is ui.pause_btn.master is ui.actions
     assert ui.actions.master is ui.status
     assert set(ui.status_labels) == {"last", "mode", "next", "gh", "hb", "pending"}
@@ -512,17 +517,13 @@ def test_table_metrics_scale_with_the_dpi_but_not_below_the_font(tk_root):
 
 def test_legend_box_is_titled_and_shows_real_samples(ui):
     titles = [w.cget("text") for w in ui.legend.winfo_children() if w.winfo_class() == "Label"]
-    assert titles == ["Açıklama"]
+    assert titles[0] == "Açıklama"
     assert ui.legend_texts[:3] == ["Normal yazı = kaynaktan alınan",
                                    "İtalik = türetilmiş / varsayım",
                                    "Mor kalın = yeni, henüz açılmadı"]
     assert [t.split(" ")[0] for t in ui.legend_texts[3:7]] == ["✅", "⚠️", "❌", "⚪"]
     assert not hasattr(ui, "legend_label")
-    # legend sits above the list, not at the bottom
-    order = ui.legend.master.pack_slaves()
-    assert order.index(ui.legend) < order.index(ui.pane)
-
-
+    assert ui.legend.master is ui.sidebar         # wave 12: in the sidebar, not above the list
 # ---- source cards ------------------------------------------------------------------------------
 
 def _records(now, fail_vkv=True):
@@ -609,46 +610,47 @@ def inside(inner, outer):
             and inner[3] <= outer[3])
 
 
-def test_three_cards_side_by_side_with_buttons_and_no_clipping(ui):
+def test_three_cards_stacked_in_the_sidebar_with_buttons_and_no_clipping(ui):
     _three_sources(ui)
     _show(ui, 1400)
     try:
         assert list(ui.source_cards) == ["biletinial", "basiskele", "vkv"]
         frames = [ui.source_cards[k]["frame"] for k in ui.source_cards]
-        assert len({f.winfo_rooty() for f in frames}) == 1             # one row
-        xs = [f.winfo_rootx() for f in frames]
-        assert xs == sorted(xs) and len({f.winfo_width() for f in frames}) <= 2
-        assert sum(f.winfo_width() for f in frames) <= ui.source_bar.winfo_width()
+        assert len({f.winfo_rootx() for f in frames}) == 1              # one column
+        ys = [f.winfo_rooty() for f in frames]
+        assert ys == sorted(ys) and len(set(ys)) == 3                   # stacked, in order
+        for f in frames:
+            assert inside(rect(f), rect(ui.source_bar))
         for key, card in ui.source_cards.items():
             for part in ("title", "body", "icon", "links"):
                 assert inside(rect(card[part]), rect(card["frame"])), (key, part)
-            body = card["body"]
-            assert body.winfo_height() >= body.winfo_reqheight()        # not squeezed
-            assert body.winfo_width() >= body.winfo_reqwidth()
+            for part in ("title", "body"):                  # text fits: nothing clipped
+                lab = card[part]
+                assert lab.winfo_height() >= lab.winfo_reqheight(), (key, part)
+                assert lab.winfo_width() >= lab.winfo_reqwidth(), (key, part)
         assert set(ui.source_open_buttons) == {"biletinial", "basiskele", "vkv"}
         assert [b.cget("text") for b in ui.source_buttons] == ["Portalı aç"]
         assert ui.source_cards["vkv"]["error"].winfo_ismapped()          # failed card
         assert not ui.source_cards["biletinial"]["error"].winfo_ismapped()
-        # no overlaps between the stacked blocks
-        blocks = [rect(ui.status), rect(ui.source_bar),
-                  rect(ui.legend), rect(ui.pane)]
+        blocks = [rect(ui.status), rect(ui.source_bar), rect(ui.legend)]   # no overlaps
         for a, b in zip(blocks, blocks[1:]):
             assert a[3] <= b[1] + 1
-        assert ui.status.winfo_rooty() < ui.notebook.winfo_rooty()
+        assert rect(ui.sidebar)[2] <= rect(ui.notebook)[0] + 1            # sidebar left of tabs
     finally:
         ui.root.withdraw()
 
 
-def test_cards_wrap_when_the_window_is_narrow_and_stay_inside(ui):
+def test_narrow_window_turns_the_sidebar_into_a_top_strip(ui):
     _three_sources(ui)
     _show(ui, 760)
     try:
+        assert ui.narrow is True
+        assert rect(ui.side_wrap)[3] <= rect(ui.notebook)[1] + 1       # strip above the tabs
+        assert rect(ui.side_wrap)[2] - rect(ui.side_wrap)[0] >= 740      # full width
         frames = [ui.source_cards[k]["frame"] for k in ui.source_cards]
-        assert len({f.winfo_rooty() for f in frames}) == 2              # wrapped
-        assert frames[0].winfo_rooty() == frames[1].winfo_rooty() < frames[2].winfo_rooty()
         for f in frames:
             assert inside(rect(f), rect(ui.source_bar))
-        assert inside(rect(ui.source_bar), rect(ui.notebook))
+        assert inside(rect(ui.source_bar), rect(ui.sidebar))
     finally:
         ui.root.withdraw()
 

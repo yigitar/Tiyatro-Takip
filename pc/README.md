@@ -34,14 +34,14 @@ getirir (bulamazsa "zaten çalışıyor" der). Pencereyi kapatmak uygulamayı ka
 
 ## Kullanım
 
-- Pencere düzeni (dalga 9): "Listeyi güncelle" ve "Duraklat" üstteki bilgi şeridinin en sağındadır (ayrı düğme satırı yoktur); kaynak kartlarında "Kaynağı aç" / "Portalı aç" başlık satırında, sağa yaslıdır. Kazanılan yükseklik listeye verilir.
+- Pencere düzeni (dalga 12): sabit/durum parçaları solda dar bir kenar çubuğundadır (genişlik ~280 px, DPI ile ölçeklenir; içerik sığmazsa kendi kaydırma çubuğu çıkar): bilgi değerleri (Son tarama, Mod, Sonraki açılış, GitHub, PC kaydı, Bekleyen bildirim) alt alta anahtar/değer, altında "Listeyi güncelle" ve "Duraklat", sonra üç kaynak kartı alt alta (başlık satırında simge, ad, "Kaynağı aç" / "Portalı aç"; uzun ad ikinci satıra sarar), en altta "Açıklama". Sağ tarafta Oyunlar | Etkinlik günlüğü sekmeleri vardır; liste tam genişlik ve yüksekliğin en az %55'ini alır (sürüklenebilir ayırıcı korunur), altındaki ayrıntı iki sütundur: solda başlık/özellikler/Aktif/hedef ekleme düğmeleri + seans tablosu ve altında Özet, sağda Hedefler kutusu ve altında Oyuncular + Yapım; ayrıntı alanı ~820 px'ten darsa bloklar alt alta dizilir, sığmayan içerik kaydırılır. Pencere 1000 px'ten (DPI ile ölçekli) darsa kenar çubuğu üstte bir şeride dönüşür (durum | kartlar yan yana, Açıklama altında; yüksekliği pencerenin ~%40'ıyla sınırlı, aşarsa kaydırılır). Özet metnindeki boş satır yığınları (boşluk/nbsp/CR dahil) en fazla bir boş satıra indirilir ve baştaki/sondaki boşluklar kırpılır (yalnız gösterimde, kayıtlı veri değişmez; Telegram oyun ekranı özeti zaten tek satıra indirir).
 - Liste: varsayılan sıra en yakın seans, sonra başlıktır (takip durumuna bakılmaz: kutuyu işaretlemek satırı yerinden oynatmaz; "Takip" başlığına tıklayarak takipte olanları öne alabilirsin); ilk sütun ☑/☐ takip kutusudur (tıklayınca değişir). KALKTI işareti son "Listeyi güncelle"ye göredir; açılmamış yeni öğelerin adı kalın mor görünür. Italik gri-mavi değerler kaynaktan alınmamış, türetilmiş/varsayımdır (ayrıntı: ana README).
 - Oyun seçilince: Biletinial bağlantısı, seanslar, hedefler (Düzenle / Sil), Aktif anahtarı,
   Yetişkin/Çocuk hedefi ekleme. Değişiklikler Telegram menüsüyle aynı `config.json`'a yazılır.
 - Hedef düzenleyici: kişi sayısı, günler, saat sınırları, güne özel saat, hariç tarihler.
-- Üst durum çubuğu (menünün altında): son tarama, mod (Normal/Hızlı), sonraki açılış, GitHub
+- Durum bloğu (sol kenar çubuğu): son tarama, mod (Normal/Hızlı), sonraki açılış, GitHub
   sağlığı, PC kaydı yaşı, bekleyen bildirim, hatalar (üzerine gelince ayrıntı).
-- Kaynaklar: Biletinial, Başiskele, VKV için yan yana üç kart (durum simgesi/rengi, son kontrol,
+- Kaynaklar: Biletinial, Başiskele, VKV için alt alta üç kart (durum simgesi/rengi, son kontrol,
   son güncelleme, etkinlik sayısı, "Kaynağı aç"; Başiskele'de rezervasyon portalı + "Portalı aç").
   "Açıklama" kutusu liste yazı stillerini ve durum simgelerini örnekle açıklar.
 - Ayarlar > Sesli uyarı: bildirim penceresindeki bip'i açar/kapatır.

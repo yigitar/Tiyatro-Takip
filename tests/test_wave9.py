@@ -190,10 +190,6 @@ def test_toggling_follow_keeps_order_selection_and_scroll(ui):
 
 from tests.test_wave8 import _show, _three_sources, inside, rect  # noqa: E402
 
-BEFORE_LIST_PX = {"wide": 325, "narrow": 202}   # list height before wave 9 (60 plays), measured
-BEFORE_CARD_PX = 132
-
-
 def _overlap(a, b):
     return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
@@ -219,43 +215,33 @@ def _check_layout(ui):
         assert links[0] >= title[0] and links[3] <= body[1] + 1, key     # same row, above text
         assert abs(links[1] - title[1]) <= ui.px(8), key
         assert f[2] - links[2] <= ui.px(24), key                          # right-aligned
-        assert rect(card["links"])[1] < rect(card["body"])[1]
-    # the buttons live in the info strip, far right; nothing overlaps them
-    strip = rect(ui.status)
+    # the buttons live in the status block, side by side; nothing overlaps them
+    status = rect(ui.status)
     refresh, pause = rect(ui.refresh_btn), rect(ui.pause_btn)
-    assert inside(refresh, strip) and inside(pause, strip) and refresh[2] <= pause[0]
-    assert strip[2] - pause[2] <= ui.px(30)
+    assert inside(refresh, status) and inside(pause, status) and refresh[2] <= pause[0]
     assert ui.refresh_btn.winfo_ismapped() and ui.pause_btn.winfo_ismapped()
     for lab in ui.status_labels.values():
-        assert not _overlap(rect(lab.master), refresh) and not _overlap(rect(lab.master), pause)
-    assert ui.root.pack_slaves() == [ui.status, ui.notebook]            # no buttons bar row
-    blocks = [rect(ui.status), rect(ui.source_bar), rect(ui.legend), rect(ui.pane)]
-    for a, b in zip(blocks, blocks[1:]):
-        assert a[3] <= b[1] + 1
-    assert inside(rect(ui.pane), rect(ui.notebook))
+        assert not _overlap(rect(lab), refresh) and not _overlap(rect(lab), pause)
 
 
-def test_wide_window_layout_cards_shrink_and_list_gets_the_space(ui):
+def test_wide_window_list_gets_most_of_the_height(ui):
     _many_plays(ui)
     _show(ui, 1500, 850)
     try:
         _check_layout(ui)
-        cards = [ui.source_cards[k]["frame"].winfo_height() for k in ui.source_cards]
-        assert max(cards) < BEFORE_CARD_PX
-        gained_pane = ui.pane.winfo_height() - 542          # pane height before wave 9
-        assert gained_pane > 30
-        # the list gets all of it: its height grows by at least the gained height
-        assert ui.tree.winfo_height() >= BEFORE_LIST_PX["wide"] + gained_pane - 8
+        assert ui.tree.winfo_height() >= 0.55 * ui.pane.winfo_height() - 8
+        assert ui.tree.body.winfo_height() // ui.tree.row_px >= 15       # was 4 before wave 12
+        assert inside(rect(ui.pane), rect(ui.notebook))
     finally:
         ui.root.withdraw()
 
 
-def test_narrow_window_layout_no_overlap_and_list_not_smaller(ui):
+def test_narrow_window_layout_no_overlap_and_list_still_big(ui):
     _many_plays(ui)
     _show(ui, 760, 800)
     try:
         _check_layout(ui)
-        assert ui.tree.winfo_height() >= BEFORE_LIST_PX["narrow"]
+        assert ui.tree.body.winfo_height() // ui.tree.row_px >= 8
     finally:
         ui.root.withdraw()
 

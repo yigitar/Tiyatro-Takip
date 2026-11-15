@@ -47,15 +47,18 @@ def test_old_saved_geometry_is_discarded_once_then_kept(tmp_path):
 
 def test_list_pane_fits_its_rows_and_leaves_the_detail_what_it_needs():
     pane = 1000
-    assert L.list_pane_px(2, pane) == L.list_pane_px(3, pane) == 250   # 3 rows < 25 % floor
+    floor3 = L.HEADING_PX + 3 * L.ROW_PX + 6
+    assert L.list_pane_px(2, pane) == L.list_pane_px(3, pane) == floor3   # few rows: no waste
     few, mid, many = (L.list_pane_px(n, pane) for n in (2, 20, 200))
     assert mid == L.HEADING_PX + 20 * L.ROW_PX + 6 and few < mid < many
-    assert many == int(pane * 0.6)                                # unknown need: detail keeps 40 %
-    # a known detail need wins over the list's wish, down to the 25 % floor
-    assert L.list_pane_px(200, pane, 700) == 300
-    assert L.list_pane_px(200, pane, 950) == L.HEADING_PX + 3 * L.ROW_PX + 6   # floor: 3 rows
+    assert many == int(pane * L.LIST_SHARE)          # unknown need: the list keeps its share
+    # wave 12: the list keeps at least 55 % even when the detail wants more (it scrolls) ...
+    assert L.list_pane_px(200, pane, 700) == int(pane * 0.55)
+    assert L.list_pane_px(200, pane, 950) == int(pane * 0.55)
+    # ... and takes everything the detail does not need
+    assert L.list_pane_px(200, pane, 300) == 700
     assert L.list_pane_px(5, pane, 300) == L.HEADING_PX + 5 * L.ROW_PX + 6   # list needs less
-    assert L.list_pane_px(6, 100) <= 60
+    assert L.list_pane_px(6, 100) <= 100
 
 
 # ---- auto-hide scrollbar -----------------------------------------------------------------------

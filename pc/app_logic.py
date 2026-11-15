@@ -45,22 +45,23 @@ def default_geometry(screen_w: int, screen_h: int) -> str:
     return f"{w}x{h}+{x}+{y}"
 
 
-# Detail pane height while no row is selected (placeholder): fixed, so height gained or lost
-# elsewhere in the window (info strip, cards) goes to the list, not split 60/40 (wave 9).
-DETAIL_PLACEHOLDER_PX = 212
+# Wave 12: the list gets at least this share of the main area by default (the detail pane
+# below it gets the rest, or less when it needs less); with no row selected the detail
+# placeholder is the remaining share, so selecting a row does not make the divider jump.
+LIST_SHARE = 0.55
 
 
 def list_pane_px(row_count: int, pane_px: int, detail_need: int | None = None, *,
                  row_px: int = ROW_PX, head_px: int = HEADING_PX) -> int:
-    """Height for the list so it fits its rows. The detail pane gets what it needs
-    (``detail_need`` px; unknown = 40 % of the pane) as long as the list keeps 3 rows; scrollbars appear only when both do not fit."""
+    """Divider position (= list height). The list wants its rows (``head + rows``); it gets
+    at least ``LIST_SHARE`` of the pane, more when the detail needs less than the rest
+    (``detail_need`` px; unknown = the rest). Never fewer than 3 rows; the detail pane
+    scrolls when it does not fit in what is left."""
     wanted = head_px + max(row_count, 3) * row_px + 6
     floor = head_px + 3 * row_px + 6
-    if not detail_need:
-        floor = max(floor, int(pane_px * 0.25))
-    ceiling = pane_px - detail_need if detail_need else int(pane_px * 0.6)
-    result = int(max(floor, min(wanted, ceiling)))
-    return result if detail_need else min(result, int(pane_px * 0.6))
+    share = int(pane_px * LIST_SHARE)
+    ceiling = pane_px - detail_need if detail_need else share
+    return int(max(floor, min(wanted, max(ceiling, share))))
 
 
 def source_views_with_portals(views: list[dict], portals) -> list[dict]:

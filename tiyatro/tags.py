@@ -195,3 +195,26 @@ def time_of_day(hours) -> str:
     if any(h >= _DAYTIME_BEFORE_HOUR for h in hrs):
         parts.append("gece")
     return "+".join(parts)
+
+
+_ODD_SPACES = dict.fromkeys(map(ord, "      ⁠"), " ")
+_ODD_SPACES.update(dict.fromkeys(map(ord, "​‌‍﻿"), None))
+
+
+def clean_summary(text) -> str:
+    """Summary text for display: CR / CRLF -> LF, no-break and zero-width spaces handled,
+    trailing/leading blanks of every line cut, runs of blank (or whitespace-only) lines
+    collapsed to ONE blank line, leading and trailing blank lines removed. Display only:
+    stored state is never rewritten with it."""
+    if not isinstance(text, str):
+        return ""
+    text = text.replace("\r\n", "\n").replace("\r", "\n").translate(_ODD_SPACES)
+    out: list[str] = []
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line and (not out or not out[-1]):
+            continue
+        out.append(line)
+    while out and not out[-1]:
+        out.pop()
+    return "\n".join(out)

@@ -365,6 +365,16 @@ test("play screen shows a short summary and the first 6 cast names (+N)", () => 
   assert.ok(t.indexOf("Oyuncular:") < t.indexOf("Seanslar"));
 });
 
+test("wave 12: the play-screen summary is one clean line (CR, nbsp, blank-line runs collapse)", () => {
+  const s = makeState();
+  s.plays["kusursuz-bir-aile"].summary =
+    "\r\n\r\n  Ilk satir  \r\n \r\n \r\n\r\n\r\nIkinci satir\r\n\n\n  ";
+  const t = render(`p:${KB}`, cfg, s).text;
+  const line = t.split("\n").find((l) => l.startsWith("📝"));
+  assert.equal(line, "📝 Ilk satir Ikinci satir");
+  assert.ok(!/\n\n\n/.test(t) && !t.includes("\r") && !t.includes(" "));
+});
+
 test("play screen without summary/cast (or malformed ones) shows neither line", () => {
   for (const bad of [{}, { summary: null, cast: [] }, { summary: 5, cast: "x" }, { summary: "  ", cast: [null, 3] }]) {
     const s = makeState();

@@ -37,12 +37,16 @@ from pc.widgets import AutoScrollbar, Flow, LinkButton, RichLabel, autosize_text
 from tiyatro import sources as S
 from tiyatro.config import config_to_dict
 from tiyatro.models import ISTANBUL
+from tiyatro.tags import clean_summary
 
 log = logging.getLogger("pc.app")
 
 STRIP_BG, STRIP_EDGE, VALUE_COLOR = "#eef2f7", "#c7d0dc", "#111827"
 LEGEND_BG, LEGEND_EDGE = "#f8fafc", "#cbd5e1"
-CARD_BG, CARD_MIN_PX = "white", 300
+CARD_BG, CARD_MIN_PX = "white", 250
+SIDE_BG, SIDE_W = "#f1f4f8", 280   # sidebar background / width (96 dpi px)
+NARROW_PX = 1000    # window narrower than this: the sidebar becomes a strip on top
+STACK_PX = 820      # detail pane narrower than this stacks its columns
 POLL_MS = 200
 STATUS_MS = 5000
 RELOAD_MS = 60_000
@@ -379,7 +383,7 @@ class App:
         self.value_font = tkfont.nametofont("TkDefaultFont").copy()
         self.value_font.configure(weight="bold", size=bigger(1))
         self.icon_font = tkfont.nametofont("TkDefaultFont").copy()
-        self.icon_font.configure(size=bigger(11))
+        self.icon_font.configure(size=bigger(3))
         self.scale = max(1.0, float(root.winfo_fpixels("1i")) / 96.0)
         self.seen = L.SeenStore.load(self.local_dir / "ui.json")  # items the user has opened
         root.title(APP_TITLE)
@@ -412,18 +416,15 @@ class App:
         menu.add_cascade(label="Ayarlar", menu=settings)
         root.configure(menu=menu)
 
-        self._build_status()   # info strip right under the menu bar
-
-        self.notebook = ttk.Notebook(root)
-        self.notebook.pack(fill="both", expand=True, padx=8, pady=(self.px(6), 0))
-        games = ttk.Frame(self.notebook)
-        self.notebook.add(games, text="Oyunlar")
-        self.activity_tab = ActivityTab(
-            self.notebook, self.activity, A.load_filters(self.local_dir / "ui.json"),
-            self.save_ui, self.mb, self.reveal)
-        self.notebook.add(self.activity_tab, text="Etkinlik günlüğü")
-
-        self.source_bar = tk.Frame(games)  # "Kaynaklar": one card per source (wave 8)
+        # Wave 12: fixed / status parts on the left (sidebar), tabs + list + detail on the
+        # right. Below ``NARROW_PX`` the sidebar becomes a strip on top.
+        self.shell = tk.Frame(root)
+        self.shell.pack(fill="both", expand=True)
+        self.shell.rowconfigure(1, weight=1)
+        self.shell.columnconfigure(1, weight=1)
+        self.narrow = False
+        self._shell_mode = None
+        self._side_h = 0
         self.source_cards: dict = {}       # source id -> widgets of its card
         self.source_labels: list = []      # body label of every card (lines of text)
         self.source_titles: list = []
@@ -431,8 +432,20 @@ class App:
         self.source_open_buttons: dict = {}   # source id -> "Kaynağı aç" link
         self._source_sig = None
         self._card_cols = 0
+        self._have_sources = False
+        self._build_side()
+
+        self.notebook = ttk.Notebook(self.shell)
+        games = ttk.Frame(self.notebook)
+        self.notebook.add(games, text="Oyunlar")
+        self.activity_tab = ActivityTab(
+            self.notebook, self.activity, A.load_filters(self.local_dir / "ui.json"),
+            self.save_ui, self.mb, self.reveal)
+        self.notebook.add(self.activity_tab, text="Etkinlik günlüğü")
+
         self.source_bar.bind("<Configure>", lambda _e: self._layout_cards())
-        self._build_legend(games)
+        self._arrange_shell()
+        self.shell.bind("<Configure>", lambda _e: self._arrange_shell())
         pane = ttk.PanedWindow(games, orient="vertical")
         self.pane = pane
         self._sash_user, self._fit_key, self._need_seen = False, None, 0
@@ -461,83 +474,184 @@ class App:
     def px(self, n: int) -> int:
         return int(round(n * self.scale))
 
-    def _build_status(self) -> None:
-        """Info strip under the menu bar: small grey caption above a bold value, tinted
-        background, wraps onto a second row when the window is narrow."""
-        self.status = tk.Frame(self.root, background=STRIP_BG, highlightthickness=1,
+    # ---- sidebar (fixed / status parts) ----------------------------------------------
+    def _build_side(self) -> None:
+        """Scrollable column (own scrollbar only when its content does not fit) with three
+        blocks: status values + buttons, the source cards, the "Açıklama" legend."""
+        self.side_wrap = tk.Frame(self.shell, background=SIDE_BG, width=self.px(SIDE_W),
+                                  height=1)
+        self.side_wrap.pack_propagate(False)
+        self.side_canvas = tk.Canvas(self.side_wrap, highlightthickness=0, borderwidth=0,
+                                     background=SIDE_BG)
+        self.side_vsb = AutoScrollbar(self.side_wrap, orient="vertical",
+                                      command=self.side_canvas.yview)
+        self.side_canvas.configure(yscrollcommand=self.side_vsb.set)
+        self.side_vsb.pack(side="right", fill="y")
+        self.side_canvas.pack(side="left", fill="both", expand=True)
+        self.sidebar = tk.Frame(self.side_canvas, background=SIDE_BG)
+        self._side_win = self.side_canvas.create_window((0, 0), window=self.sidebar,
+                                                        anchor="nw")
+        self.sidebar.bind("<Configure>", lambda _e: self._side_changed())
+        self.side_canvas.bind("<Configure>", self._side_resized)
+        self._build_status(self.sidebar)
+        self.source_bar = tk.Frame(self.sidebar, background=SIDE_BG)  # one card per source
+        self._build_legend(self.sidebar)
+
+    def _side_resized(self, event) -> None:
+        self.side_canvas.itemconfigure(self._side_win, width=event.width)
+        self._side_changed()
+
+    def _side_changed(self) -> None:
+        """Scroll region follows the content; as a top strip its height is the content's,
+        at most ~40 % of the window (then it scrolls)."""
+        need = self.sidebar.winfo_reqheight()
+        self.side_canvas.configure(scrollregion=(0, 0, self.sidebar.winfo_reqwidth(), need))
+        if self.narrow:
+            cap = max(self.px(120), int(self.root.winfo_height() * 0.4))
+            height = max(1, min(need, cap))
+            if height != self._side_h:
+                self._side_h = height
+                self.side_wrap.configure(height=height)
+
+    def _arrange_shell(self) -> None:
+        """Sidebar left (wide) or strip on top (narrow, window below ``NARROW_PX``)."""
+        width = self.shell.winfo_width()
+        narrow = 1 < width < self.px(NARROW_PX)
+        if self._shell_mode == narrow:
+            return
+        self._shell_mode = self.narrow = narrow
+        self._side_h = 0
+        if narrow:
+            self.side_wrap.configure(width=1)
+            self.side_wrap.grid(row=0, column=0, columnspan=2, rowspan=1, sticky="we")
+            self.notebook.grid(row=1, column=0, columnspan=2, rowspan=1, sticky="nsew",
+                               padx=8, pady=(self.px(6), 0))
+        else:
+            self.side_wrap.configure(width=self.px(SIDE_W), height=1)
+            self.side_wrap.grid(row=0, column=0, rowspan=2, columnspan=1, sticky="ns")
+            self.notebook.grid(row=0, column=1, rowspan=2, columnspan=1, sticky="nsew",
+                               padx=(0, 8), pady=(self.px(6), 0))
+        self._arrange_side()
+        self._side_changed()
+
+    def _arrange_side(self) -> None:
+        """Blocks stacked in one column; as a top strip the status and the cards sit side by
+        side and the legend below them."""
+        gap = self.px(6)
+        sb = self.sidebar
+        if self.narrow:
+            sb.columnconfigure(0, weight=1, minsize=self.px(SIDE_W))
+            sb.columnconfigure(1, weight=2)
+            self.status.grid(row=0, column=0, columnspan=1, sticky="nwe", padx=gap, pady=gap)
+            self.source_bar.grid(row=0, column=1, columnspan=1, sticky="nwe",
+                                 padx=(0, gap), pady=gap)
+            self.legend.grid(row=1, column=0, columnspan=2, sticky="we", padx=gap,
+                             pady=(0, gap))
+        else:
+            sb.columnconfigure(0, weight=1, minsize=0)
+            sb.columnconfigure(1, weight=0)
+            self.status.grid(row=0, column=0, columnspan=1, sticky="we", padx=gap, pady=gap)
+            self.source_bar.grid(row=1, column=0, columnspan=1, sticky="we", padx=gap,
+                                 pady=(0, gap))
+            self.legend.grid(row=2, column=0, columnspan=1, sticky="we", padx=gap,
+                             pady=(0, gap))
+        if not self._have_sources:
+            self.source_bar.grid_remove()
+
+    def _build_status(self, parent) -> None:
+        """Info values as a compact vertical key / value block (caption left in small grey,
+        bold value right, wrapping) with "Listeyi güncelle" / "Duraklat" below them."""
+        self.status = tk.Frame(parent, background=STRIP_BG, highlightthickness=1,
                                highlightbackground=STRIP_EDGE)
-        self.status.pack(fill="x", side="top")
-        self.status.columnconfigure(0, weight=1)
-        self.status_flow = Flow(self.status, gap_x=self.px(22), gap_y=self.px(2),
-                                background=STRIP_BG)
-        self.status_flow.grid(row=0, column=0, sticky="we", padx=self.px(10), pady=self.px(4))
+        st = self.status
+        st.columnconfigure(1, weight=1)
+        pad = self.px(8)
         self.status_labels: dict[str, tk.Label] = {}
+        self._status_captions: list[tk.Label] = []
         cells = (("last", "Son tarama"), ("mode", "Mod"), ("next", "Sonraki açılış"),
                  ("gh", "GitHub"), ("hb", "PC kaydı"), ("pending", "Bekleyen bildirim"))
-        for key, title in cells:
-            frame = tk.Frame(self.status_flow, background=STRIP_BG)
-            tk.Label(frame, text=title, foreground=L.GRAY, background=STRIP_BG,
-                     font=self.small_font, anchor="w").pack(anchor="w")
-            lbl = tk.Label(frame, text="—", background=STRIP_BG, foreground=VALUE_COLOR,
-                           font=self.value_font, anchor="w", justify="left",
-                           wraplength=self.px(520))
-            lbl.pack(anchor="w")
+        for n, (key, title) in enumerate(cells):
+            top = self.px(5) if n == 0 else self.px(1)
+            cap = tk.Label(st, text=title, foreground=L.GRAY, background=STRIP_BG,
+                           font=self.small_font, anchor="nw", justify="left")
+            cap.grid(row=n, column=0, sticky="nw", padx=(pad, self.px(6)),
+                     pady=(top, self.px(1)))
+            lbl = tk.Label(st, text="—", background=STRIP_BG, foreground=VALUE_COLOR,
+                           font=self.value_font, anchor="nw", justify="left",
+                           wraplength=self.px(140))
+            lbl.grid(row=n, column=1, sticky="we", padx=(0, pad), pady=(top, self.px(1)))
             self.status_labels[key] = lbl
-            self.status_flow.add(frame)
-        self.paused_badge = tk.Label(self.status, text="DURAKLATILDI", background=L.RED,
+            self._status_captions.append(cap)
+        st.bind("<Configure>", self._rewrap_status)
+        self.paused_badge = tk.Label(st, text="DURAKLATILDI", background=L.RED,
                                      foreground="white", padx=8, pady=2, font=self.value_font)
-        # Actions at the far right of the strip (the old buttons bar row is gone).
-        self.status.columnconfigure(2, weight=0)
-        self.actions = tk.Frame(self.status, background=STRIP_BG)
-        self.actions.grid(row=0, column=2, sticky="e", padx=(0, self.px(10)), pady=self.px(4))
-        self.progress = ttk.Progressbar(self.actions, mode="indeterminate", length=self.px(70))
+        self.warn_label = tk.Label(st, text="", foreground=L.AMBER, background=STRIP_BG,
+                                   anchor="w", justify="left", wraplength=self.px(240))
+        self.warn_label.grid(row=7, column=0, columnspan=2, sticky="we", padx=pad)
+        self.err_label = tk.Label(st, text="", foreground=L.RED, cursor="hand2",
+                                  background=STRIP_BG, anchor="w", justify="left",
+                                  wraplength=self.px(240))
+        self.err_label.grid(row=8, column=0, columnspan=2, sticky="we", padx=pad)
+        self.msg_var = tk.StringVar()
+        self.msg_label = tk.Label(st, textvariable=self.msg_var, background=STRIP_BG,
+                                  foreground=VALUE_COLOR, anchor="w", justify="left",
+                                  wraplength=self.px(240))
+        self.msg_label.grid(row=9, column=0, columnspan=2, sticky="we", padx=pad)
+        for lab in (self.warn_label, self.err_label, self.msg_label):
+            lab.grid_remove()           # shown only while they have text
+        # Actions: progress bar (only while refreshing) above the two buttons.
+        self.actions = tk.Frame(st, background=STRIP_BG)
+        self.actions.grid(row=10, column=0, columnspan=2, sticky="we", padx=pad,
+                          pady=(self.px(6), self.px(8)))
+        self.actions.columnconfigure(0, weight=1, uniform="act")
+        self.actions.columnconfigure(1, weight=1, uniform="act")
+        self.progress = ttk.Progressbar(self.actions, mode="indeterminate")
+        self.progress.grid(row=0, column=0, columnspan=2, sticky="we", pady=(0, self.px(4)))
+        self.progress.grid_remove()
         self.refresh_btn = ttk.Button(self.actions, text="Listeyi güncelle",
                                       command=self.refresh_list)
-        self.refresh_btn.pack(side="left")
+        self.refresh_btn.grid(row=1, column=0, sticky="we")
         self.pause_btn = ttk.Button(self.actions, text="Duraklat", command=self.toggle_pause)
-        self.pause_btn.pack(side="left", padx=(self.px(6), 0))
-        self.msg_var = tk.StringVar()
-        self.msg_label = tk.Label(self.status, textvariable=self.msg_var, background=STRIP_BG,
-                                  foreground=VALUE_COLOR, anchor="w", justify="left",
-                                  wraplength=self.px(900))
-        self.msg_label.grid(row=3, column=0, columnspan=3, sticky="w", padx=self.px(10))
-        self.msg_label.grid_remove()    # shown only while it has text
-        self.warn_label = tk.Label(self.status, text="", foreground=L.AMBER, background=STRIP_BG,
-                                   anchor="w")
-        self.warn_label.grid(row=1, column=0, sticky="w", padx=self.px(10))
-        self.err_label = tk.Label(self.status, text="", foreground=L.RED, cursor="hand2",
-                                  background=STRIP_BG, anchor="w")
-        self.err_label.grid(row=2, column=0, sticky="w", padx=self.px(10))
-        self.warn_label.grid_remove()   # shown only while they have text
-        self.err_label.grid_remove()
+        self.pause_btn.grid(row=1, column=1, sticky="we", padx=(self.px(6), 0))
         self._err_text = ""
         Tooltip(self.err_label, lambda: self._err_text)
         self.err_label.bind("<Button-1>", lambda _e: self._err_text and self.mb.showinfo(
             APP_TITLE, self._err_text))
 
+    def _rewrap_status(self, event) -> None:
+        """Values and message lines wrap to the block width (never clip)."""
+        cap = max((c.winfo_reqwidth() for c in self._status_captions), default=0)
+        room = max(self.px(60), event.width - cap - self.px(30))
+        for lbl in self.status_labels.values():
+            if int(lbl.cget("wraplength")) != room:
+                lbl.configure(wraplength=room)
+        full = max(self.px(100), event.width - self.px(24))
+        for lab in (self.warn_label, self.err_label, self.msg_label):
+            if int(lab.cget("wraplength")) != full:
+                lab.configure(wraplength=full)
+
     def _build_legend(self, parent) -> None:
-        """"Açıklama" box: what normal / italic / purple-bold list text and the source status
-        icons mean, each with a real sample. Sits right above the list header."""
+        """"Açıklama" box (vertical, compact): what normal / italic / purple-bold list text and
+        the source status icons mean, each with a real sample."""
         self.legend = tk.Frame(parent, background=LEGEND_BG, highlightthickness=1,
                                highlightbackground=LEGEND_EDGE)
-        self.legend.pack(side="top", fill="x", pady=(0, self.px(4)))
+        pad = self.px(8)
         tk.Label(self.legend, text="Açıklama", font=self.bold_font, background=LEGEND_BG,
-                 foreground=VALUE_COLOR).grid(row=0, column=0, sticky="nw", padx=self.px(8),
-                                              pady=self.px(4))
-        self.legend.columnconfigure(1, weight=1)
-        flow = Flow(self.legend, gap_x=self.px(18), gap_y=self.px(1), background=LEGEND_BG)
-        flow.grid(row=0, column=1, sticky="we", padx=(0, self.px(8)), pady=self.px(3))
-        self.legend_flow = flow
+                 foreground=VALUE_COLOR).pack(anchor="w", padx=pad, pady=(self.px(4), 0))
         self.legend_texts: list[str] = []
+        self._legend_notes: list[tk.Label] = []
 
         def item(sample, meaning, *, font=None, color=VALUE_COLOR):
-            frame = tk.Frame(flow, background=LEGEND_BG)
+            frame = tk.Frame(self.legend, background=LEGEND_BG)
             tk.Label(frame, text=sample, font=font, foreground=color,
                      background=LEGEND_BG).pack(side="left")
-            tk.Label(frame, text=" " + meaning, foreground=L.GRAY,
-                     background=LEGEND_BG).pack(side="left")
+            lab = tk.Label(frame, text=" " + meaning, foreground=L.GRAY,
+                           background=LEGEND_BG, justify="left", anchor="w",
+                           wraplength=self.px(SIDE_W) - self.px(100))
+            lab.pack(side="left")
+            self._legend_notes.append(lab)
             self.legend_texts.append(f"{sample} {meaning}")
-            flow.add(frame)
+            frame.pack(anchor="w", padx=pad)
 
         styles = {"normal": (None, VALUE_COLOR), "derived": (self.italic_font, DERIVED_COLOR),
                   "new": (self.bold_font, NEW_COLOR)}
@@ -546,9 +660,24 @@ class App:
             item(sample, meaning, font=font, color=color)
         for icon, meaning, color in L.LEGEND_STATES:
             item(icon, meaning, color=color)
-        note = tk.Label(flow, text=L.LEGEND_TIMES, foreground=L.GRAY, background=LEGEND_BG)
+        note = tk.Label(self.legend, text=L.LEGEND_TIMES, foreground=L.GRAY,
+                        background=LEGEND_BG, anchor="w", justify="left",
+                        wraplength=self.px(SIDE_W) - self.px(40))
         self.legend_texts.append(L.LEGEND_TIMES)
-        flow.add(note)
+        note.pack(anchor="w", padx=pad, pady=(self.px(2), self.px(5)), fill="x")
+        self._legend_full = note
+        self.legend.bind("<Configure>", self._rewrap_legend)
+
+    def _rewrap_legend(self, event) -> None:
+        """Legend text wraps to the box (the long time note full width, items less)."""
+        full = max(self.px(100), event.width - self.px(24))
+        if int(self._legend_full.cget("wraplength")) != full:
+            self._legend_full.configure(wraplength=full)
+        for lab in self._legend_notes:
+            room = max(self.px(80), event.width - self.px(24) - lab.master.winfo_children()[0]
+                       .winfo_reqwidth() - self.px(4))
+            if int(lab.cget("wraplength")) != room:
+                lab.configure(wraplength=room)
 
     # ---- helpers ---------------------------------------------------------------------
     def now(self) -> datetime:
@@ -674,21 +803,21 @@ class App:
             self._need_seen = 0
         if need is not None:
             self._need_seen = need = max(self._need_seen, need)
-        key = (len(self.rows), pane_px, need)
+        target = L.list_pane_px(len(self.rows), pane_px, need or self._placeholder_px(pane_px),
+                                row_px=self.tree.row_px, head_px=self.tree.head_px)
+        key = (len(self.rows), pane_px, target)    # the divider position decides, not the need
         if key == self._fit_key:
             return
         self._fit_key = key
         try:
-            self.pane.sashpos(0, L.list_pane_px(len(self.rows), pane_px,
-                                                need or self._placeholder_px(pane_px),
-                                                row_px=self.tree.row_px,
-                                                head_px=self.tree.head_px))
+            self.pane.sashpos(0, target)
         except tk.TclError:
             pass
 
     def _placeholder_px(self, pane_px: int) -> int:
-        """Detail height with no row selected: fixed (scaled), never above 40 % of the pane."""
-        return min(self.px(L.DETAIL_PLACEHOLDER_PX), int(pane_px * 0.4))
+        """Detail height with no row selected: what the list's share leaves, so choosing a
+        row does not make the divider jump."""
+        return pane_px - int(pane_px * L.LIST_SHARE)
 
     def _refit(self) -> None:
         """Detail content changed size: fit the panes again when idle."""
@@ -719,12 +848,13 @@ class App:
             self.source_cards, self.source_labels, self.source_titles = {}, [], []
             self.source_buttons, self.source_open_buttons = [], {}
             self._card_cols = 0
+            self._have_sources = bool(views)
             if not views:
-                self.source_bar.pack_forget()
+                self.source_bar.grid_remove()
                 return
             for v in views:
                 self._build_card(v, links.get(v["id"]))
-            self.source_bar.pack(fill="x", pady=(0, self.px(4)), before=self.legend)
+            self._arrange_side()
             self._layout_cards()
         for card in cards:                 # same cards: only update texts and colours
             w = self.source_cards.get(card.id)
@@ -742,43 +872,50 @@ class App:
                 w["error"].grid_remove()
 
     def _build_card(self, view: dict, link: str | None) -> None:
-        wrap = self.px(CARD_MIN_PX) - self.px(90)
+        """Compact card: stripe | status icon | name | links on the title row, then 1-3 short
+        lines (and the red error line) across the card width."""
+        wrap = self.px(CARD_MIN_PX) - self.px(40)
         frame = tk.Frame(self.source_bar, background=CARD_BG, highlightthickness=2,
                          highlightbackground=L.GRAY, highlightcolor=L.GRAY)
         stripe = tk.Frame(frame, background=L.GRAY, width=self.px(6))
         stripe.grid(row=0, column=0, rowspan=3, sticky="ns")
         icon = tk.Label(frame, text="", font=self.icon_font, background=CARD_BG,
                         foreground=L.GRAY)
-        icon.grid(row=0, column=1, rowspan=2, sticky="n", padx=(self.px(10), self.px(6)),
-                  pady=self.px(6))
+        icon.grid(row=0, column=1, sticky="w", padx=(self.px(6), self.px(2)),
+                  pady=(self.px(4), 0))
         title = tk.Label(frame, text="", font=self.value_font, background=CARD_BG,
-                         foreground=VALUE_COLOR, anchor="w")
-        title.grid(row=0, column=2, sticky="we", pady=(self.px(6), 0), padx=(0, self.px(8)))
+                         foreground=VALUE_COLOR, anchor="w", justify="left")
+        title.grid(row=0, column=2, sticky="we", pady=(self.px(4), 0), padx=(0, self.px(4)))
         # "Kaynağı aç" / "Portalı aç" sit on the title row, right-aligned beside the name.
         links = tk.Frame(frame, background=CARD_BG)
-        links.grid(row=0, column=3, sticky="ne", padx=(0, self.px(8)), pady=(self.px(6), 0))
+        links.grid(row=0, column=3, sticky="e", padx=(0, self.px(4)), pady=(self.px(4), 0))
         body = tk.Label(frame, text="", background=CARD_BG, foreground=VALUE_COLOR,
                         anchor="nw", justify="left", wraplength=wrap)
-        body.grid(row=1, column=2, columnspan=2, sticky="we", padx=(0, self.px(8)),
-                  pady=(0, self.px(6)))
+        body.grid(row=1, column=1, columnspan=3, sticky="we", padx=(self.px(8), self.px(6)),
+                  pady=(0, self.px(4)))
         error = tk.Label(frame, text="", background=CARD_BG, foreground=L.RED, anchor="w",
                          justify="left", wraplength=wrap)
-        error.grid(row=2, column=2, columnspan=2, sticky="we", padx=(0, self.px(8)),
-                   pady=(0, self.px(6)))
+        error.grid(row=2, column=1, columnspan=3, sticky="we", padx=(self.px(8), self.px(6)),
+                   pady=(0, self.px(4)))
         error.grid_remove()
         frame.columnconfigure(2, weight=1)
 
         def rewrap(event, labels=(body, error)):   # text wraps to the card, never clips
-            room = max(self.px(120), event.width - self.px(90))
+            room = max(self.px(100), event.width - self.px(34))
             for lab in labels:
                 if int(lab.cget("wraplength")) != room:
                     lab.configure(wraplength=room)
+            # a long name ("Başiskele Belediyesi") wraps onto a second line beside the links
+            name_room = max(self.px(60), event.width - links.winfo_reqwidth()
+                            - icon.winfo_reqwidth() - self.px(40))
+            if int(title.cget("wraplength")) != name_room:
+                title.configure(wraplength=name_room)
         frame.bind("<Configure>", rewrap)
         sid = view["id"]
         if link:
             button = LinkButton(links, "Kaynağı aç", lambda u=link: self.open_url(u),
                                 background=CARD_BG)
-            button.pack(side="left", padx=(0, self.px(10)))
+            button.pack(side="left", padx=(0, self.px(4)))
             self.source_open_buttons[sid] = button
         if view.get("portal_url"):
             button = LinkButton(links, "Portalı aç",
@@ -793,13 +930,14 @@ class App:
         self.source_titles.append(title)
 
     def _layout_cards(self) -> None:
-        """Cards side by side (one equal-width column each, up to 3); fewer columns, so
-        the cards wrap onto further rows, when the window is narrow."""
+        """Cards stacked vertically (one column) in the sidebar; as a wide top strip
+        (window narrower than ``NARROW_PX``) they may sit two or three side by side."""
         frames = [self.source_cards[k]["frame"] for k in self.source_cards]
         if not frames:
             return
         width = self.source_bar.winfo_width()
-        cols = 3 if width <= 1 else max(1, min(len(frames), 3, width // self.px(CARD_MIN_PX)))
+        cols = 1 if width <= 1 else max(1, min(len(frames), 3,
+                                               width // max(1, self.px(CARD_MIN_PX + 70))))
         if cols == self._card_cols:
             return
         self._card_cols = cols
@@ -809,7 +947,7 @@ class App:
         for n, frame in enumerate(frames):
             frame.grid(row=n // cols, column=n % cols, sticky="nsew",
                        padx=(0 if n % cols == 0 else self.px(6), 0),
-                       pady=(0 if n < cols else self.px(6), 0))
+                       pady=(0 if n < cols else self.px(5), 0))
 
     def sort_by(self, column: str) -> None:
         """Header click: ascending -> descending -> default order (see ``L.next_sort``)."""
@@ -896,20 +1034,25 @@ class App:
             return
         self._detail_sig = sig
         body = self._detail_body()
+        parts = {name: ttk.Frame(body) for name in ("left", "summary", "people")}
+        parts["targets"] = ttk.LabelFrame(body, text="Hedefler")
+        self._detail_parts = parts
+        self._detail_stack = None
+        left = parts["left"]
 
-        head = ttk.Frame(body)
+        head = ttk.Frame(left)
         head.pack(fill="x", padx=8, pady=4)
         ttk.Label(head, text=row.title, font=self.bold_font).pack(side="left")
         self.open_btn = ttk.Button(head, text="Sayfayı aç",
                                    command=lambda: row.url and self.open_url(row.url),
                                    state="normal" if row.url else "disabled")
         self.open_btn.pack(side="right")
-        self.meta_label = RichLabel(body, self.italic_font, DERIVED_COLOR)
+        self.meta_label = RichLabel(left, self.italic_font, DERIVED_COLOR)
         self.meta_label.set_parts(L.meta_parts(row))
-        self.meta_label.pack(padx=8, anchor="w")
+        self.meta_label.pack(padx=8, anchor="w", fill="x")
 
-        acts = ttk.Frame(body)
-        acts.pack(fill="x", padx=8)
+        acts = ttk.Frame(left)
+        acts.pack(fill="x", padx=8, pady=(2, 0))
         self.active_var = tk.BooleanVar(value=row.active)
         self.active_chk = ttk.Checkbutton(
             acts, text="Aktif (takip ediliyor)", variable=self.active_var,
@@ -927,16 +1070,14 @@ class App:
             btn.pack(side="left", padx=6)
             self.add_buttons[kind] = btn
 
-        cols = ttk.Frame(body)
-        cols.pack(fill="both", expand=True, padx=8, pady=6)
-        left = ttk.Frame(cols)
-        left.pack(side="left", fill="both", expand=True)
+        sess = ttk.Frame(left)
+        sess.pack(fill="both", expand=True, padx=8, pady=6)
         self._session_links: dict[str, str] = {}
         self.session_tree = GridTable(
-            left, (("when", "Seans", 160), ("status", "Durum", 100),
+            sess, (("when", "Seans", 160), ("status", "Durum", 100),
                    ("opens", "Satış açılışı", 170), ("link", "Bağlantı", 96)),
             on_cell=self._session_click, sortable=False, row_px=L.ROW_PX, head_px=L.HEADING_PX,
-            height_rows=min(max(len(sessions), 2), 8))
+            stretch=("when", "opens"), height_rows=min(max(len(sessions), 2), 8))
         missing = False
         for n, s in enumerate(sessions):
             text, url, note = L.session_link(s, row.url)
@@ -948,31 +1089,35 @@ class App:
         if not sessions:
             self.session_tree.insert("", "end", iid="none", cells=[
                 L.Cell("yaklaşan seans yok"), L.Cell(""), L.Cell(""), L.Cell("")])
-        self.session_tree.pack(side="top", fill="both", expand=True)
+        sess_sb = AutoScrollbar(sess, orient="vertical", command=self.session_tree.yview)
+        self.session_tree.configure(yscrollcommand=sess_sb.set)
+        sess_sb.pack(side="right", fill="y")
+        self.session_tree.pack(side="left", fill="both", expand=True)
         self.session_note = ttk.Label(left, text="Seans bağlantısı olmayan satırda düğme oyun "
                                       "sayfasını açar (\"Oyun ↗\")." if missing else "",
                                       foreground=L.GRAY)
         if missing:
-            self.session_note.pack(side="top", anchor="w")
-        sess_sb = AutoScrollbar(cols, orient="vertical", command=self.session_tree.yview)
-        self.session_tree.configure(yscrollcommand=sess_sb.set)
-        sess_sb.pack(side="left", fill="y")
+            self.session_note.pack(side="top", anchor="w", padx=8)
 
-        targets = ttk.LabelFrame(cols, text="Hedefler")
-        targets.pack(side="left", fill="both", expand=True, padx=(8, 0))
+        targets = parts["targets"]
         self.target_buttons = {}
+        target_labels = []
         watch = self.service.config.plays.get(row.slug) if self.service.config else None
         if watch is None or not watch.targets:
             implicit = watch is not None and watch.active
             text = L.NO_TARGET_TEXT if implicit else "Hedef yok."
-            ttk.Label(targets, text=text, **(   # "tüm seanslar" is our default, not data
-                {"font": self.italic_font, "foreground": DERIVED_COLOR} if implicit else {})
-                      ).pack(anchor="w", padx=6, pady=4)
+            # "tüm seanslar" is our default, not data: italic grey-blue
+            lab = ttk.Label(targets, text=text, justify="left", **(
+                {"font": self.italic_font, "foreground": DERIVED_COLOR} if implicit else {}))
+            lab.pack(anchor="w", padx=6, pady=4)
+            target_labels.append(lab)
         for t in (watch.targets if watch else []):
             line = ttk.Frame(targets)
             line.pack(fill="x", padx=6, pady=2)
-            ttk.Label(line, text=L.target_summary_text(t), wraplength=360,
-                      justify="left").pack(side="left", fill="x", expand=True)
+            lab = ttk.Label(line, text=L.target_summary_text(t), wraplength=self.px(260),
+                            justify="left")
+            lab.pack(side="left", fill="x", expand=True)
+            target_labels.append(lab)
             delete = ttk.Button(line, text="Sil", width=5)
             delete.configure(command=lambda tid=t.id, nm=t.name, b=delete:
                              self.delete_target(row.slug, tid, nm, b))
@@ -982,7 +1127,48 @@ class App:
             edit.pack(side="right", padx=4)
             self.target_buttons[t.id] = edit
 
-        self._build_info(body, row)
+        def rewrap_targets(event, labels=target_labels):
+            for lab in labels:
+                lab.configure(wraplength=max(self.px(100), event.width - self.px(150)))
+        targets.bind("<Configure>", rewrap_targets)
+
+        self._build_info(row)
+        self._arrange_detail()
+        self._refit()
+
+    def _arrange_detail(self) -> None:
+        """Detail blocks in two columns when the pane is wide (left: title, meta, Aktif,
+        session table, then Özet; right: Hedefler, then Oyuncular + Yapım), one column
+        when it is narrow."""
+        parts = getattr(self, "_detail_parts", None)
+        body = getattr(self, "detail_body", None)
+        if not parts or body is None or not body.winfo_exists():
+            return
+        width = self.detail_canvas.winfo_width()
+        if width <= 1:
+            width = self.pane.winfo_width()
+        stack = 1 < width < self.px(STACK_PX)
+        if stack == self._detail_stack:
+            return
+        self._detail_stack = stack
+        gap = self.px(8)
+        if stack:
+            body.columnconfigure(0, weight=1)
+            body.columnconfigure(1, weight=0)
+            for n, name in enumerate(("left", "targets", "summary", "people")):
+                parts[name].grid(row=n, column=0, columnspan=1, sticky="nsew",
+                                 padx=(0, gap), pady=(0, self.px(6)))
+        else:
+            body.columnconfigure(0, weight=3)
+            body.columnconfigure(1, weight=2)
+            parts["left"].grid(row=0, column=0, columnspan=1, sticky="nsew",
+                               pady=(0, self.px(6)))
+            parts["targets"].grid(row=0, column=1, columnspan=1, sticky="nsew",
+                                  padx=(gap, gap), pady=(self.px(4), self.px(6)))
+            parts["summary"].grid(row=1, column=0, columnspan=1, sticky="nsew",
+                                  pady=(0, self.px(6)))
+            parts["people"].grid(row=1, column=1, columnspan=1, sticky="nsew",
+                                 padx=(gap, gap), pady=(0, self.px(6)))
         self._refit()
 
     def _session_click(self, iid: str, key: str) -> None:
@@ -1064,7 +1250,9 @@ class App:
         body = ttk.Frame(canvas)
         window = canvas.create_window((0, 0), window=body, anchor="nw")
         body.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(window, width=e.width))
+        canvas.bind("<Configure>", lambda e: (canvas.itemconfigure(window, width=e.width),
+                                              self._arrange_detail()))
+        self._detail_parts, self._detail_stack = None, None
         self.detail_canvas, self.detail_vsb, self.detail_body = canvas, vsb, body
         return body
 
@@ -1082,19 +1270,30 @@ class App:
         canvas = getattr(self, "detail_canvas", None)
         if node is self.detail and canvas is not None and canvas.winfo_exists():
             canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+            return
+        try:   # the sidebar scrolls the same way, but only while its content does not fit
+            node = widget
+            while node is not None and node is not self.side_wrap:
+                node = node.master
+        except (AttributeError, tk.TclError, KeyError):
+            return
+        if node is self.side_wrap and self.side_vsb.shown:
+            self.side_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
 
-    def _build_info(self, body, row) -> None:
-        """Özet / Oyuncular / Yapım below the session list; "Bilgi yok" when unknown."""
-        info = ttk.Frame(body)
-        info.pack(fill="x", padx=8, pady=(0, 8))
-        ttk.Label(info, text="Özet", font=self.bold_font).pack(anchor="w")
-        box = ttk.Frame(info)
-        box.pack(fill="x")
+    def _build_info(self, row) -> None:
+        """Özet (left, wide) and Oyuncular / Yapım (right) below the session list; "Bilgi
+        yok" when unknown. The summary is shown cleaned (no stray blank lines) and the Text
+        is sized to the cleaned content."""
+        parts = self._detail_parts
+        summary_box, people = parts["summary"], parts["people"]
+        ttk.Label(summary_box, text="Özet", font=self.bold_font).pack(anchor="w", padx=8)
+        box = ttk.Frame(summary_box)
+        box.pack(fill="x", padx=8)
         self.summary_text = tk.Text(box, height=1, wrap="word", borderwidth=1, relief="solid",
                                     font="TkDefaultFont")
         sb = AutoScrollbar(box, orient="vertical", command=self.summary_text.yview)
         self.summary_text.configure(yscrollcommand=sb.set)
-        self.summary_text.insert("1.0", row.summary or NO_INFO)
+        self.summary_text.insert("1.0", clean_summary(row.summary) or NO_INFO)
         self.summary_text.configure(state="disabled")
         self.summary_text.pack(side="left", fill="x", expand=True)
         sb.pack(side="right", fill="y")
@@ -1102,19 +1301,20 @@ class App:
         autosize_text(self.summary_text,
                       lambda: max(6, int(self.pane.winfo_height() * 0.4 / 17)),
                       on_change=self._refit)
-        ttk.Label(info, text="Oyuncular", font=self.bold_font).pack(anchor="w", pady=(6, 0))
-        self.cast_label = ttk.Label(info, text=", ".join(row.cast) or NO_INFO,
-                                    wraplength=600, justify="left")
+        ttk.Label(people, text="Oyuncular", font=self.bold_font).pack(anchor="w")
+        self.cast_label = ttk.Label(people, text=", ".join(row.cast) or NO_INFO,
+                                    wraplength=self.px(300), justify="left")
         self.cast_label.pack(anchor="w", fill="x")
-        ttk.Label(info, text="Yapım", font=self.bold_font).pack(anchor="w", pady=(6, 0))
-        self.credits_label = ttk.Label(info, text="\n".join(credit_lines(row.credits)) or NO_INFO,
-                                       wraplength=600, justify="left")
+        ttk.Label(people, text="Yapım", font=self.bold_font).pack(anchor="w", pady=(6, 0))
+        self.credits_label = ttk.Label(
+            people, text="\n".join(credit_lines(row.credits)) or NO_INFO,
+            wraplength=self.px(300), justify="left")
         self.credits_label.pack(anchor="w", fill="x")
 
         def wrap(event):
             for lbl in (self.cast_label, self.credits_label):
-                lbl.configure(wraplength=max(200, event.width - 20))
-        info.bind("<Configure>", wrap)
+                lbl.configure(wraplength=max(self.px(120), event.width - self.px(12)))
+        people.bind("<Configure>", wrap)
 
 
     # ---- config edits -----------------------------------------------------------------------
@@ -1171,7 +1371,7 @@ class App:
             return
         self.busy += 1
         self.refresh_btn.configure(state="disabled", text="Güncelleniyor…")
-        self.progress.pack(side="left", padx=(0, self.px(6)), before=self.refresh_btn)
+        self.progress.grid()
         self.progress.start(12)
         self.set_message("Oyun listesi güncelleniyor…")
         self.run_bg(self.service.refresh_now, self._refresh_done)
@@ -1179,7 +1379,7 @@ class App:
     def _refresh_done(self, plays, exc) -> None:
         self.busy -= 1
         self.progress.stop()
-        self.progress.pack_forget()
+        self.progress.grid_remove()
         self.refresh_btn.configure(state="normal", text="Listeyi güncelle")
         if exc is not None:
             text = (str(exc) if isinstance(exc, RefreshError)
@@ -1228,7 +1428,8 @@ class App:
         else:
             self.warn_label.grid_remove()
         if v.paused:
-            self.paused_badge.grid(row=0, column=1, padx=8, sticky="e")
+            self.paused_badge.grid(row=6, column=0, columnspan=2, padx=self.px(8),
+                                   pady=(self.px(4), 0), sticky="we")
         else:
             self.paused_badge.grid_remove()
         self.pause_btn.configure(text="Devam" if v.paused else "Duraklat")

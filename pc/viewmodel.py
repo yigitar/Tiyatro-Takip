@@ -14,7 +14,7 @@ from tiyatro.models import ISTANBUL, Config, Event, Play, Target
 from tiyatro.notify import (DAY_BEFORE_TEXT, DAYS, KIND_TEXT, MONTHS, SRC_TEXT, format_message,
                             portal_headline, portal_label, source_headline)
 from tiyatro import srcevents
-from tiyatro.tags import (apply_overrides, audience_is_stated, derived_tags, genre_is_stated,
+from tiyatro.tags import (apply_overrides, clean_summary, audience_is_stated, derived_tags, genre_is_stated,
                           resolve_audience, resolve_genre, time_of_day)
 from tiyatro.timeutil import parse_iso
 
@@ -177,7 +177,7 @@ def _details(entry: dict) -> tuple[str, list[str], list[tuple[str, str]]]:
     summary = entry.get("summary")
     cast = entry.get("cast")
     credits = entry.get("credits")
-    return (summary.strip() if isinstance(summary, str) else "",
+    return (clean_summary(summary),
             [c.strip() for c in cast if isinstance(c, str) and c.strip()]
             if isinstance(cast, list) else [],
             [(k, v.strip()) for k, v in credits.items()
