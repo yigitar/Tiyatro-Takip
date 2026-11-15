@@ -13,7 +13,7 @@
    "targets": []
   },
   "on-ikinci-gece-kocaeli-bb": {
-   "active": true,
+   "active": false,
    "tag_overrides": {},
    "targets": []
   }
