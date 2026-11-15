@@ -480,7 +480,7 @@ test("play screen shows Kitle and Tür, never the audience as the genre", () => 
 });
 
 // ---- wave 4 B: Kaynaklar screen ----
-import { sourceViews, eventViews } from "../src/menu.js";
+import { sourceViews, eventViews, HELP } from "../src/menu.js";
 
 function srcState(extra = {}) {
   const s = makeState();
@@ -601,4 +601,39 @@ test("eo screen paginates, stays under 4096 chars and every callback fits 64 byt
   for (const b of flat(r.keyboard)) assert.ok(bytes(b.callback_data) <= 64, b.callback_data);
   assert.ok(labels(r).includes("‹ Önceki") && labels(r).includes("Sonraki ›"));
   assert.ok(render("eo:99", cfg, s).text.includes("sayfa 7/7"));
+});
+
+// ---- wave 4 G: every screen explains its buttons in 1-2 plain lines ----
+test("every screen carries 1-2 italic explanation lines right under its title", () => {
+  const s = srcState();
+  Object.assign(s, evState());
+  s.sources = srcState().sources;
+  const routes = { m: HELP.main, "pl:0": [HELP.list[0]], [`p:${KB}`]: HELP.play, [`ts:${KB}:y`]: HELP.target,
+    tl: HELP.watchlist, up: HELP.upcoming, src: HELP.sources, rf: HELP.sources, "eo:0": HELP.events };
+  for (const [route, lines] of Object.entries(routes)) {
+    const text = render(route, cfg, s).text;
+    assert.ok(lines.length >= 1 && lines.length <= 2, route);
+    const split = text.split("\n");
+    for (const l of lines) {
+      assert.ok(split.includes(`<i>${l}</i>`), `${route} lacks: ${l}`);
+    }
+    const pos = split.indexOf(`<i>${lines[0]}</i>`);
+    assert.ok(pos >= 1 && pos <= 4, `${route}: help should sit under the title (line ${pos})`);
+    assert.ok(text.length <= 4096, route);
+  }
+});
+
+test("main menu explains Yenile and rf shows the per-source results", () => {
+  assert.ok(HELP.main.join(" ").includes("Yenile: tüm kaynakları (Biletinial, Başiskele, VKV) şimdi tarar ve listeyi günceller"));
+  const r = render("rf", cfg, srcState());
+  for (const icon of ["✅ <b>Biletinial", "⚠️ <b>Başiskele", "❌ <b>VKV"]) assert.ok(r.text.includes(icon), r.text);
+});
+
+test("explanations do not push a long play screen over 4096 characters", () => {
+  const s = makeState();
+  const e = s.plays["kusursuz-bir-aile"];
+  e.summary = "Özet. ".repeat(400);
+  e.cast = Array.from({ length: 80 }, (_, i) => `Oyuncu Adı ${i}`);
+  assert.ok(render(`p:${KB}`, cfg, s).text.length <= 4096);
+  assert.ok(render(`p:${KB}`, cfg, s).text.includes("ℹ️ Aktif yap"));
 });

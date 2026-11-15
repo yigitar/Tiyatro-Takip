@@ -167,6 +167,22 @@ function rows(...rs) {
   return rs.map((r) => r.filter(Boolean)).filter((r) => r.length > 0);
 }
 
+/** 1-2 plain-language lines under a screen title: what the buttons below do. */
+const help = (...lines) => lines.map((l) => `<i>${l}</i>`);
+export const HELP = {
+  main: [
+    "ℹ️ Oyunlar: oyun seç, takibi aç/kapat · Takip listem: takip ettiklerin ve hedefleri · Yaklaşan açılışlar: bilet satışı açılacak seanslar.",
+    "🔄 Yenile: tüm kaynakları (Biletinial, Başiskele, VKV) şimdi tarar ve listeyi günceller · Kaynaklar: son kontrol zamanları · Diğer kaynaklar: Başiskele/VKV etkinlikleri · Duraklat: bildirimleri geçici durdurur.",
+  ],
+  list: ["ℹ️ Bir oyuna dokun: ayrıntısını, seanslarını ve takip ayarlarını açar.", "🟢 takipte olan oyunlarda bilet satışı açılınca bildirim alırsın."],
+  play: ["ℹ️ Aktif yap: bu oyunda satış açılınca bildirim gelir (hedef yoksa tüm seanslar için).", "Hedef: hangi gün/saat ve kaç kişilik biletle ilgilendiğini sınırlar; ✏️ ile düzenlenir."],
+  target: ["ℹ️ Kişi sayısı, gün ve saat seç: yalnızca bunlara uyan seanslar bildirilir.", "Tarih düğmesi (🚫) o günü atlar; Hedefi sil bu kısıtı kaldırır."],
+  watchlist: ["ℹ️ Takip ettiğin oyunlar ve her birinin hedefleri.", "Bir oyuna dokununca hedeflerini değiştirebilir veya takibi kapatabilirsin."],
+  upcoming: ["ℹ️ Takip ettiğin oyunlarda bilet satışının açılacağı zamanlar.", "Açılıştan 1 gün ve 10 dk önce ayrıca hatırlatma gelir."],
+  sources: ["ℹ️ Yenile: tüm kaynakları şimdi tarar ve listeyi günceller; sonuç burada kaynak başına simgeyle görünür.", "Durumu göster: bu ekranı son sonuçlarla tazeler."],
+  events: ["ℹ️ Başiskele Belediyesi ve VKV Gölcük etkinlikleri. Bir etkinliğe dokununca takibi açılır/kapanır:", "🟢 takipte (bildirim gelir) · ⚪ takipte değil."],
+};
+
 const BACK_MAIN = () => btn("🏠 Ana menü", "m");
 
 function notFound(what, backExtra) {
@@ -372,7 +388,7 @@ function sourceLines(state, now) {
 
 /** "Kaynaklar" screen; ``refreshed`` adds the note shown right after the 🔄 Yenile button. */
 function sourcesScreen(state, refreshed) {
-  const lines = ["📡 <b>Kaynaklar</b>"];
+  const lines = ["📡 <b>Kaynaklar</b>", ...help(...HELP.sources)];
   if (refreshed) lines.push("🔄 Tarama istendi: tüm kaynaklar birkaç dakika içinde yeniden taranır. Aşağıdaki sonuçlar son taramadan; yenisi için “Durumu göster”e bas.");
   const body = sourceLines(state);
   if (body.length === 0) lines.push("Henüz kaynak bilgisi yok.");
@@ -427,8 +443,7 @@ function eventsScreen(config, state, pageArg) {
   const page = Math.min(/^\d+$/.test(pageArg ?? "") ? Number(pageArg) : 0, pages - 1);
   const shown = all.slice(page * EVENT_PAGE, (page + 1) * EVENT_PAGE);
   const now = Date.now();
-  const lines = [`📅 <b>Diğer kaynaklar</b>${pages > 1 ? ` (sayfa ${page + 1}/${pages})` : ""}`,
-    "Başiskele Belediyesi ve VKV Gölcük etkinlikleri. Bir etkinliğe dokununca takibi açılır/kapanır: 🟢 takipte (bildirim gelir) · ⚪ takipte değil."];
+  const lines = [`📅 <b>Diğer kaynaklar</b>${pages > 1 ? ` (sayfa ${page + 1}/${pages})` : ""}`, ...help(...HELP.events)];
   if (all.length === 0) lines.push("", "Henüz etkinlik bilgisi yok.");
   for (const { rec, followed } of shown) {
     const bits = [esc(SOURCE_SHORT[rec.source] ?? rec.source ?? "")];
@@ -461,6 +476,7 @@ function mainScreen(config, state) {
   const lastScan = state?.meta?.last_scan;
   const text = [
     "🎭 <b>Tiyatro Takip</b>",
+    ...help(...HELP.main),
     `Durum: ${paused ? "⏸ duraklatıldı" : "▶️ çalışıyor"}`,
     ...(paused ? ["Duraklatılmışken oluşan bildirimler atılır; devam edince gönderilmez."] : []),
     `Takip edilen oyun: ${watched}`,
@@ -492,7 +508,7 @@ function listScreen(config, state, pageArg, idx) {
     page < pages - 1 ? btn("Sonraki ›", `pl:${page + 1}`) : null,
   ];
   return {
-    text: `🎭 <b>Oyunlar</b> (sayfa ${page + 1}/${pages})\n🟢 takipte · ⚪ takipte değil`,
+    text: [`🎭 <b>Oyunlar</b> (sayfa ${page + 1}/${pages})`, "🟢 takipte · ⚪ takipte değil", ...help(HELP.list[0])].join("\n"),
     keyboard: rows(
       ...slice.map((s) => [btn(
         `${cfgPlays(config)[s]?.active === true ? "🟢" : "⚪"} ${trunc(playTitle(state, s), 38)}`,
@@ -554,7 +570,7 @@ function playScreen(config, state, slug, idx) {
   const entry = statePlays(state)[slug] ?? {};
   const watch = cfgPlays(config)[slug];
   const active = watch?.active === true;
-  const lines = [`🎭 <b>${esc(playTitle(state, slug))}</b>`];
+  const lines = [`🎭 <b>${esc(playTitle(state, slug))}</b>`, ...help(...HELP.play)];
   if (Array.isArray(entry.tags) && entry.tags.length) lines.push(`🏷 Etiketler: ${esc(entry.tags.join(", "))}`);
   const meta = [];
   const kitle = audienceOf(entry.genre, entry.tags, entry.age_limit);
@@ -604,6 +620,7 @@ function targetScreen(config, state, slug, t, idx) {
   const lines = [
     `🎯 <b>${esc(playTitle(state, slug))}</b>`,
     targetSummary(t),
+    ...help(...HELP.target),
   ];
   const ex = Array.isArray(rule.exclude_dates) ? rule.exclude_dates : [];
   if (ex.length) lines.push(`Hariç tarihler: ${esc(ex.join(", "))}`);
@@ -662,7 +679,7 @@ function watchlistScreen(config, state, idx, pageArg) {
   const pages = Math.max(1, Math.ceil(slugs.length / TL_PAGE));
   const page = Math.min(/^\d+$/.test(pageArg ?? "") ? Number(pageArg) : 0, pages - 1);
   const shown = slugs.slice(page * TL_PAGE, (page + 1) * TL_PAGE);
-  const lines = [`📋 <b>Takip listem</b>${pages > 1 ? ` (sayfa ${page + 1}/${pages})` : ""}`];
+  const lines = [`📋 <b>Takip listem</b>${pages > 1 ? ` (sayfa ${page + 1}/${pages})` : ""}`, ...help(...HELP.watchlist)];
   if (slugs.length === 0) lines.push("Takip edilen oyun yok.");
   for (const s of shown) {
     const targets = (cfgPlays(config)[s].targets ?? []).filter(isObj);
@@ -696,7 +713,7 @@ function upcomingScreen(config, state) {
     }
   }
   items.sort((a, b) => Date.parse(a.rec.opens_at) - Date.parse(b.rec.opens_at));
-  const lines = ["⏳ <b>Yaklaşan açılışlar</b>", ...portalLines(state)];
+  const lines = ["⏳ <b>Yaklaşan açılışlar</b>", ...help(...HELP.upcoming), ...portalLines(state)];
   if (items.length === 0) lines.push("Takip ettiğin oyunlarda yaklaşan açılış yok.");
   for (const { slug, rec } of items.slice(0, 15)) {
     lines.push("", `<b>${esc(playTitle(state, slug))}</b>`,
