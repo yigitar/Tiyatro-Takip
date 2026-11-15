@@ -21,6 +21,43 @@ değişikliklerinde Telegram ve bilgisayar uygulaması üzerinden bildirim gönd
     yaklaşık 15 sn'de bir okunur.
   - Saat sınırları iki uçta da dahildir: "≤20:00" 20:00 seanslarını kapsar.
 
+## Takip kuralı: hedefsiz oyun = tüm seanslar
+
+Takibi açık bir oyunun hiç hedefi yoksa, o oyunun **herhangi bir seansı** satışa açılınca
+(iade ile yeniden açılma dahil) bildirim gelir. Takibi açarken otomatik hedef eklenmez;
+gün, saat ve kişi sayısına göre daraltmak istersen hedef eklersin.
+
+## Diğer kaynaklar: Başiskele Belediyesi ve VKV Gölcük
+
+- **Başiskele:** Belediyenin haber RSS'inden (`https://www.basiskele.bel.tr/rss`) aylık
+  "Kültür-Sanat" program haberi bulunur; haberdeki her tarihli satır bir etkinliktir
+  (tarih, saat, ad, tür, mekân). Yeni bir etkinlik görülünce bir kez "yeni etkinlik
+  duyuruldu" bildirimi gelir. Haber açıkça bir rezervasyon/bilet açılış saati söylüyorsa
+  açılıştan 1 gün ve 10 dk önce hatırlatma gelir; haberde böyle bir saat yoksa hatırlatma
+  gönderilmez. İlk okuma sessiz başlangıçtır. Instagram izlenmez.
+- **VKV Ford Otosan Gölcük:** `https://www.vkvfordkultur.org.tr/Etkinlikler` sayfasından
+  yalnızca Tiyatro ve Çocuk Tiyatrosu etkinlikleri izlenir (sayfa o ayı gösterir; sonraki
+  ay sayfaya yansıyınca okunur). Etkinlik sayfası "… saat 12:00'da rezervasyona
+  açılacaktır" diyorsa açılış saati duyurusu, açılıştan 1 gün ve 10 dk önce hatırlatma
+  gelir; açılış saati gelince (sayfa hâlâ eski cümleyi gösterse bile) ve cümle
+  kalkınca "rezervasyon açıldı" bildirimi gelir. Açılış saatinin 1 dk öncesinden 30 dk
+  sonrasına kadar etkinlik sayfası yaklaşık 60 sn'de bir okunur. "Dolmuştur" olan bir
+  etkinlik yeniden açılırsa "yeniden açıldı" bildirimi gelir. Etkinlikler ücretsizdir;
+  sitede çevrimiçi rezervasyon bağlantısı **yoktur**, bu yüzden her VKV bildirimi
+  telefon (0262) 435 6700, e-posta info@vkvfordkultur.org.tr ve etkinlik bağlantısını içerir.
+- **Takip düğmesi:** Her etkinlik tek tek açılıp kapatılır (PC: "Diğer kaynaklar" sekmesinde
+  Takip sütunu; Telegram: "Diğer kaynaklar" ekranı). Varsayılan: tiyatro/müzikal açık,
+  diğerleri (atölye, söyleşi, film) kapalı. Kapalı etkinlik listede gri kalır, bildirim
+  göndermez. Seçimler `config.json` içindeki `event_follow` anahtarında tutulur.
+- **Kaynak durumu:** Her kaynak (Biletinial, Başiskele, VKV) için ✅ güncel / ⚠️ 30 dakikadan
+  eski / ❌ son kontrol başarısız simgesi, "Son kontrol" ve "Son güncelleme" (kaynağın kendi
+  içeriğinin değişme zamanı) gösterilir: PC'de Oyunlar sekmesinin üstünde, Telegram'da
+  "Kaynaklar" ekranında. "Listeyi güncelle" ve Telegram "Yenile" tüm kaynakları tarar.
+- **Sınırlamalar:** VKV'de rezervasyonun "açıldığı" andaki sayfa metni henüz
+  gözlemlenmedi (açılmış bir etkinlik sayfasında eski cümle kalıyor olabilir), bu yüzden
+  açılış bildirimi saate bağlıdır ve gerekirse "sayfa henüz güncellenmemiş olabilir" notunu
+  taşır. Başiskele haberinin tarihleri yılsız yazıldığından yıl, gün adından çıkarılır.
+
 ## Başiskele rezervasyon portalı
 
 Uygulama, Başiskele Belediyesi'nin ücretsiz rezervasyon sayfasını
