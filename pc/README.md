@@ -34,7 +34,8 @@ getirir (bulamazsa "zaten çalışıyor" der). Pencereyi kapatmak uygulamayı ka
 
 ## Kullanım
 
-- Liste: izlenen oyunlar üstte; ilk sütun ☑/☐ takip kutusudur (tıklayınca değişir). KALKTI işareti son "Listeyi güncelle"ye göredir; açılmamış yeni öğelerin adı kalın mor görünür. Italik gri-mavi değerler kaynaktan alınmamış, türetilmiş/varsayımdır (ayrıntı: ana README).
+- Pencere düzeni (dalga 9): "Listeyi güncelle" ve "Duraklat" üstteki bilgi şeridinin en sağındadır (ayrı düğme satırı yoktur); kaynak kartlarında "Kaynağı aç" / "Portalı aç" başlık satırında, sağa yaslıdır. Kazanılan yükseklik listeye verilir.
+- Liste: varsayılan sıra en yakın seans, sonra başlıktır (takip durumuna bakılmaz: kutuyu işaretlemek satırı yerinden oynatmaz; "Takip" başlığına tıklayarak takipte olanları öne alabilirsin); ilk sütun ☑/☐ takip kutusudur (tıklayınca değişir). KALKTI işareti son "Listeyi güncelle"ye göredir; açılmamış yeni öğelerin adı kalın mor görünür. Italik gri-mavi değerler kaynaktan alınmamış, türetilmiş/varsayımdır (ayrıntı: ana README).
 - Oyun seçilince: Biletinial bağlantısı, seanslar, hedefler (Düzenle / Sil), Aktif anahtarı,
   Yetişkin/Çocuk hedefi ekleme. Değişiklikler Telegram menüsüyle aynı `config.json`'a yazılır.
 - Hedef düzenleyici: kişi sayısı, günler, saat sınırları, güne özel saat, hariç tarihler.

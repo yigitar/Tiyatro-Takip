@@ -363,9 +363,11 @@ def test_saved_keep_awake_is_restored_on_the_next_start(tk_root, tmp_path):
     app.close(destroy=False)
 
 
-def test_status_strip_is_packed_above_the_buttons_and_the_tabs(ui):
+def test_status_strip_is_packed_above_the_tabs_and_holds_the_buttons(ui):
     order = ui.root.pack_slaves()
-    assert order.index(ui.status) < order.index(ui.msg_label.master) < order.index(ui.notebook)
+    assert order.index(ui.status) < order.index(ui.notebook) and len(order) == 2  # no bar row
+    assert ui.refresh_btn.master is ui.pause_btn.master is ui.actions
+    assert ui.actions.master is ui.status
     assert set(ui.status_labels) == {"last", "mode", "next", "gh", "hb", "pending"}
     assert ui.status_labels["gh"].cget("text").startswith("sağlıklı")
 
@@ -628,7 +630,7 @@ def test_three_cards_side_by_side_with_buttons_and_no_clipping(ui):
         assert ui.source_cards["vkv"]["error"].winfo_ismapped()          # failed card
         assert not ui.source_cards["biletinial"]["error"].winfo_ismapped()
         # no overlaps between the stacked blocks
-        blocks = [rect(ui.status), rect(ui.msg_label.master), rect(ui.source_bar),
+        blocks = [rect(ui.status), rect(ui.source_bar),
                   rect(ui.legend), rect(ui.pane)]
         for a, b in zip(blocks, blocks[1:]):
             assert a[3] <= b[1] + 1

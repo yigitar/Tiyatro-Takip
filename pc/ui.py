@@ -414,19 +414,8 @@ class App:
 
         self._build_status()   # info strip right under the menu bar
 
-        bar = ttk.Frame(root)
-        bar.pack(fill="x", padx=8, pady=6)
-        self.refresh_btn = ttk.Button(bar, text="Listeyi güncelle", command=self.refresh_list)
-        self.refresh_btn.pack(side="left")
-        self.pause_btn = ttk.Button(bar, text="Duraklat", command=self.toggle_pause)
-        self.pause_btn.pack(side="left", padx=6)
-        self.progress = ttk.Progressbar(bar, mode="indeterminate", length=90)
-        self.msg_var = tk.StringVar()
-        self.msg_label = ttk.Label(bar, textvariable=self.msg_var, wraplength=700)
-        self.msg_label.pack(side="left", padx=10)
-
         self.notebook = ttk.Notebook(root)
-        self.notebook.pack(fill="both", expand=True, padx=8)
+        self.notebook.pack(fill="both", expand=True, padx=8, pady=(self.px(6), 0))
         games = ttk.Frame(self.notebook)
         self.notebook.add(games, text="Oyunlar")
         self.activity_tab = ActivityTab(
@@ -497,6 +486,22 @@ class App:
             self.status_flow.add(frame)
         self.paused_badge = tk.Label(self.status, text="DURAKLATILDI", background=L.RED,
                                      foreground="white", padx=8, pady=2, font=self.value_font)
+        # Actions at the far right of the strip (the old buttons bar row is gone).
+        self.status.columnconfigure(2, weight=0)
+        self.actions = tk.Frame(self.status, background=STRIP_BG)
+        self.actions.grid(row=0, column=2, sticky="e", padx=(0, self.px(10)), pady=self.px(4))
+        self.progress = ttk.Progressbar(self.actions, mode="indeterminate", length=self.px(70))
+        self.refresh_btn = ttk.Button(self.actions, text="Listeyi güncelle",
+                                      command=self.refresh_list)
+        self.refresh_btn.pack(side="left")
+        self.pause_btn = ttk.Button(self.actions, text="Duraklat", command=self.toggle_pause)
+        self.pause_btn.pack(side="left", padx=(self.px(6), 0))
+        self.msg_var = tk.StringVar()
+        self.msg_label = tk.Label(self.status, textvariable=self.msg_var, background=STRIP_BG,
+                                  foreground=VALUE_COLOR, anchor="w", justify="left",
+                                  wraplength=self.px(900))
+        self.msg_label.grid(row=3, column=0, columnspan=3, sticky="w", padx=self.px(10))
+        self.msg_label.grid_remove()    # shown only while it has text
         self.warn_label = tk.Label(self.status, text="", foreground=L.AMBER, background=STRIP_BG,
                                    anchor="w")
         self.warn_label.grid(row=1, column=0, sticky="w", padx=self.px(10))
@@ -569,7 +574,11 @@ class App:
 
     def set_message(self, text: str, error: bool = False) -> None:
         self.msg_var.set(text)
-        self.msg_label.configure(foreground=L.RED if error else "")
+        self.msg_label.configure(foreground=L.RED if error else VALUE_COLOR)
+        if text:
+            self.msg_label.grid()
+        else:
+            self.msg_label.grid_remove()
 
     # ---- queue pump -------------------------------------------------------------------
     def pump(self) -> None:
@@ -670,11 +679,16 @@ class App:
             return
         self._fit_key = key
         try:
-            self.pane.sashpos(0, L.list_pane_px(len(self.rows), pane_px, need,
+            self.pane.sashpos(0, L.list_pane_px(len(self.rows), pane_px,
+                                                need or self._placeholder_px(pane_px),
                                                 row_px=self.tree.row_px,
                                                 head_px=self.tree.head_px))
         except tk.TclError:
             pass
+
+    def _placeholder_px(self, pane_px: int) -> int:
+        """Detail height with no row selected: fixed (scaled), never above 40 % of the pane."""
+        return min(self.px(L.DETAIL_PLACEHOLDER_PX), int(pane_px * 0.4))
 
     def _refit(self) -> None:
         """Detail content changed size: fit the panes again when idle."""
@@ -732,7 +746,7 @@ class App:
         frame = tk.Frame(self.source_bar, background=CARD_BG, highlightthickness=2,
                          highlightbackground=L.GRAY, highlightcolor=L.GRAY)
         stripe = tk.Frame(frame, background=L.GRAY, width=self.px(6))
-        stripe.grid(row=0, column=0, rowspan=4, sticky="ns")
+        stripe.grid(row=0, column=0, rowspan=3, sticky="ns")
         icon = tk.Label(frame, text="", font=self.icon_font, background=CARD_BG,
                         foreground=L.GRAY)
         icon.grid(row=0, column=1, rowspan=2, sticky="n", padx=(self.px(10), self.px(6)),
@@ -740,16 +754,18 @@ class App:
         title = tk.Label(frame, text="", font=self.value_font, background=CARD_BG,
                          foreground=VALUE_COLOR, anchor="w")
         title.grid(row=0, column=2, sticky="we", pady=(self.px(6), 0), padx=(0, self.px(8)))
+        # "Kaynağı aç" / "Portalı aç" sit on the title row, right-aligned beside the name.
+        links = tk.Frame(frame, background=CARD_BG)
+        links.grid(row=0, column=3, sticky="ne", padx=(0, self.px(8)), pady=(self.px(6), 0))
         body = tk.Label(frame, text="", background=CARD_BG, foreground=VALUE_COLOR,
                         anchor="nw", justify="left", wraplength=wrap)
-        body.grid(row=1, column=2, sticky="we", padx=(0, self.px(8)))
+        body.grid(row=1, column=2, columnspan=2, sticky="we", padx=(0, self.px(8)),
+                  pady=(0, self.px(6)))
         error = tk.Label(frame, text="", background=CARD_BG, foreground=L.RED, anchor="w",
                          justify="left", wraplength=wrap)
-        error.grid(row=2, column=2, sticky="we", padx=(0, self.px(8)))
+        error.grid(row=2, column=2, columnspan=2, sticky="we", padx=(0, self.px(8)),
+                   pady=(0, self.px(6)))
         error.grid_remove()
-        links = tk.Frame(frame, background=CARD_BG)
-        links.grid(row=3, column=1, columnspan=2, sticky="w", padx=(self.px(8), 0),
-                   pady=(0, self.px(4)))
         frame.columnconfigure(2, weight=1)
 
         def rewrap(event, labels=(body, error)):   # text wraps to the card, never clips
@@ -1155,7 +1171,7 @@ class App:
             return
         self.busy += 1
         self.refresh_btn.configure(state="disabled", text="Güncelleniyor…")
-        self.progress.pack(side="left", padx=6)
+        self.progress.pack(side="left", padx=(0, self.px(6)), before=self.refresh_btn)
         self.progress.start(12)
         self.set_message("Oyun listesi güncelleniyor…")
         self.run_bg(self.service.refresh_now, self._refresh_done)
@@ -1212,7 +1228,7 @@ class App:
         else:
             self.warn_label.grid_remove()
         if v.paused:
-            self.paused_badge.grid(row=0, column=1, padx=8)
+            self.paused_badge.grid(row=0, column=1, padx=8, sticky="e")
         else:
             self.paused_badge.grid_remove()
         self.pause_btn.configure(text="Devam" if v.paused else "Duraklat")

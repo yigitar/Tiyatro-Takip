@@ -106,7 +106,8 @@ def test_panes_are_sized_to_the_row_count(ui):
     ui.root.update()
     pane_px = ui.pane.winfo_height()
     if pane_px >= 100:
-        assert ui.pane.sashpos(0) == L.list_pane_px(len(ui.rows), pane_px)
+        assert ui.pane.sashpos(0) == L.list_pane_px(
+            len(ui.rows), pane_px, ui._placeholder_px(pane_px))
         # the user drags the divider: later refreshes leave it alone
         ui._sash_user = True
         ui.pane.sashpos(0, 150)

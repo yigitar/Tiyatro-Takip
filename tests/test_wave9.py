@@ -184,3 +184,84 @@ def test_toggling_follow_keeps_order_selection_and_scroll(ui):
     ui.root.update()
     assert list(ui.tree.get_children()) == order and ui.tree.selection() == ("q40",)
     assert abs(ui.tree.yview()[0] - top) < 1e-6
+
+
+# ---- layout compaction: real mapped window geometry ---------------------------------------------
+
+from tests.test_wave8 import _show, _three_sources, inside, rect  # noqa: E402
+
+BEFORE_LIST_PX = {"wide": 325, "narrow": 202}   # list height before wave 9 (60 plays), measured
+BEFORE_CARD_PX = 132
+
+
+def _overlap(a, b):
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def _many_plays(ui):
+    from datetime import datetime
+    from tiyatro.models import ISTANBUL
+    now = datetime.now(ISTANBUL)
+    for i in range(60):
+        ui.svc._state["plays"][f"q{i:02d}"] = {
+            "title": f"Oyun {i:02d}", "url": "https://example.test/q", "tags": [],
+            "sessions": {"s": {"start": (now + timedelta(days=10 + i)).isoformat(),
+                               "status": "on_sale"}}}
+    _three_sources(ui)
+
+
+def _check_layout(ui):
+    # links on the title row, right-aligned beside the name
+    for key, card in ui.source_cards.items():
+        f, title, links, body = (rect(card[k]) for k in ("frame", "title", "links", "body"))
+        assert inside(links, f) and inside(title, f), key
+        assert not _overlap(title, links), key
+        assert links[0] >= title[0] and links[3] <= body[1] + 1, key     # same row, above text
+        assert abs(links[1] - title[1]) <= ui.px(8), key
+        assert f[2] - links[2] <= ui.px(24), key                          # right-aligned
+        assert rect(card["links"])[1] < rect(card["body"])[1]
+    # the buttons live in the info strip, far right; nothing overlaps them
+    strip = rect(ui.status)
+    refresh, pause = rect(ui.refresh_btn), rect(ui.pause_btn)
+    assert inside(refresh, strip) and inside(pause, strip) and refresh[2] <= pause[0]
+    assert strip[2] - pause[2] <= ui.px(30)
+    assert ui.refresh_btn.winfo_ismapped() and ui.pause_btn.winfo_ismapped()
+    for lab in ui.status_labels.values():
+        assert not _overlap(rect(lab.master), refresh) and not _overlap(rect(lab.master), pause)
+    assert ui.root.pack_slaves() == [ui.status, ui.notebook]            # no buttons bar row
+    blocks = [rect(ui.status), rect(ui.source_bar), rect(ui.legend), rect(ui.pane)]
+    for a, b in zip(blocks, blocks[1:]):
+        assert a[3] <= b[1] + 1
+    assert inside(rect(ui.pane), rect(ui.notebook))
+
+
+def test_wide_window_layout_cards_shrink_and_list_gets_the_space(ui):
+    _many_plays(ui)
+    _show(ui, 1500, 850)
+    try:
+        _check_layout(ui)
+        cards = [ui.source_cards[k]["frame"].winfo_height() for k in ui.source_cards]
+        assert max(cards) < BEFORE_CARD_PX
+        gained_pane = ui.pane.winfo_height() - 542          # pane height before wave 9
+        assert gained_pane > 30
+        # the list gets all of it: its height grows by at least the gained height
+        assert ui.tree.winfo_height() >= BEFORE_LIST_PX["wide"] + gained_pane - 8
+    finally:
+        ui.root.withdraw()
+
+
+def test_narrow_window_layout_no_overlap_and_list_not_smaller(ui):
+    _many_plays(ui)
+    _show(ui, 760, 800)
+    try:
+        _check_layout(ui)
+        assert ui.tree.winfo_height() >= BEFORE_LIST_PX["narrow"]
+    finally:
+        ui.root.withdraw()
+
+
+def test_progress_and_message_live_in_the_strip_and_hide_when_empty(ui):
+    ui.set_message("Oyun listesi güncelleniyor…")
+    assert ui.msg_label.winfo_manager() == "grid" and ui.msg_label.master is ui.status
+    ui.set_message("")
+    assert ui.msg_label.winfo_manager() == ""

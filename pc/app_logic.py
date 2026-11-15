@@ -45,6 +45,11 @@ def default_geometry(screen_w: int, screen_h: int) -> str:
     return f"{w}x{h}+{x}+{y}"
 
 
+# Detail pane height while no row is selected (placeholder): fixed, so height gained or lost
+# elsewhere in the window (info strip, cards) goes to the list, not split 60/40 (wave 9).
+DETAIL_PLACEHOLDER_PX = 212
+
+
 def list_pane_px(row_count: int, pane_px: int, detail_need: int | None = None, *,
                  row_px: int = ROW_PX, head_px: int = HEADING_PX) -> int:
     """Height for the list so it fits its rows. The detail pane gets what it needs
