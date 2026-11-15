@@ -104,22 +104,38 @@ def genre_from_text(*texts) -> str:
     return best
 
 
-# Source events (Başiskele, VKV) that are clearly not theatre (wave 10): the category/title
-# carries a plain non-theatre word. Only then is Tür "Diğer etkinlik" (always derived); an
+# Source events (Başiskele, VKV) that are clearly not theatre (wave 10/11): the category/title
+# carries a plain non-theatre word. Only then is Tür "Diğer – <tür>" (always derived); an
 # item without such a word keeps "—". Words that also name theatre ("tiyatro", "müzikal")
-# veto it in srcevents.genre_of via is_theatre.
-OTHER_EVENT_LABEL = "Diğer etkinlik"
-_NON_THEATRE_WORDS = ("atölye", "söyleşi", "film", "sinema", "konser", "sergi", "eğitim",
-                      "kurs", "seminer", "workshop", "panel")
+# veto it in srcevents.genre_of via is_theatre. All labels start with "Diğer", so a sort by
+# Tür keeps them together.
+OTHER_EVENT_PREFIX = "Diğer"
+_OTHER_EVENT_KINDS = (
+    ("Diğer – Atölye", ("atölye", "workshop")),
+    ("Diğer – Söyleşi", ("söyleşi",)),
+    ("Diğer – Film", ("film", "sinema")),
+    ("Diğer – Konser", ("konser",)),
+    ("Diğer – Sergi", ("sergi",)),
+    ("Diğer – Eğitim", ("eğitim", "kurs")),
+    ("Diğer – Seminer/Panel", ("seminer", "panel")),
+)
+
+
+def other_event_label(*texts) -> str:
+    """"Diğer – <tür>" for the earliest non-theatre word that starts a word of the given
+    texts (Turkish-folded, prefix match: "Filmi", "Konseri"), else ""."""
+    import re
+    blob = _fold_tr(" ".join(str(t or "") for t in texts))
+    best, best_pos = "", None
+    for label, words in _OTHER_EVENT_KINDS:
+        m = re.search(rf"(?<!\w)(?:{'|'.join(_fold_tr(w) for w in words)})", blob)
+        if m and (best_pos is None or m.start() < best_pos):
+            best, best_pos = label, m.start()
+    return best
 
 
 def has_non_theatre_word(*texts) -> bool:
-    """A non-theatre word (atölye, söyleşi, film, konser, sergi, eğitim, ...) starts a word
-    of the given texts (Turkish-folded, prefix match: "Filmi", "Konseri")."""
-    import re
-    blob = _fold_tr(" ".join(str(t or "") for t in texts))
-    words = "|".join(_fold_tr(w) for w in _NON_THEATRE_WORDS)
-    return re.search(rf"(?<!\w)(?:{words})", blob) is not None
+    return bool(other_event_label(*texts))
 
 
 def resolve_audience(genre="", tags=(), age_limit=None, text="") -> str:

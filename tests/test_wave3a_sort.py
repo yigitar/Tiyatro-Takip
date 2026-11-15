@@ -60,6 +60,9 @@ def test_sort_text_columns_turkish_and_missing_last():
     genre = [R("a", genre="Dram"), R("b", genre=""), R("c", genre="Çocuk Oyunu")]
     assert slugs(L.sort_rows(genre, ("genre", "asc"))) == ["c", "a", "b"]
     assert slugs(L.sort_rows(genre, ("genre", "desc"))) == ["a", "c", "b"]
+    diger = [R("a", genre="Dram"), R("b", genre="Diğer – Söyleşi"), R("c", genre="Çocuk Oyunu"),
+             R("d", genre="Diğer – Atölye"), R("e", genre="Diğer – Film")]
+    assert slugs(L.sort_rows(diger, ("genre", "asc"))) == ["c", "d", "e", "b", "a"]  # Diğer – * together
 
 
 def test_sort_sessions_status_and_follow():

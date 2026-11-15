@@ -59,8 +59,12 @@ gün, saat ve kişi sayısına göre daraltmak istersen hedef eklersin.
   yoksa Tür **"—"** kalır: "Tiyatro" tür değildir, hiçbir yerde doldurulmaz (dalga 9).
   **Dalga 10:** Başiskele/VKV etkinliğinde tür sözcüğü yoksa ve kategori/başlıkta açıkça
   tiyatro olmayan bir sözcük varsa (atölye, söyleşi, film, sinema, konser, sergi, eğitim,
-  kurs, seminer, workshop, panel) ve metinde "tiyatro"/"müzikal" geçmiyorsa Tür **"Diğer
-  etkinlik"** olur (türetilmiş, italik). Belirsiz olanlar (tiyatro olabilecek, tür sözcüğü
+  kurs, seminer, workshop, panel) ve metinde "tiyatro"/"müzikal" geçmiyorsa Tür
+  **"Diğer – <tür>"** olur (türetilmiş, italik): atölye/workshop -> "Diğer – Atölye",
+  söyleşi -> "Diğer – Söyleşi", film/sinema -> "Diğer – Film", konser -> "Diğer – Konser",
+  sergi -> "Diğer – Sergi", eğitim/kurs -> "Diğer – Eğitim", seminer/panel ->
+  "Diğer – Seminer/Panel" (metindeki ilk sözcük belirler). Hepsi "Diğer" ile başladığı için
+  Tür'e göre sıralamada bir arada durur (dalga 11). Belirsiz olanlar (tiyatro olabilecek, tür sözcüğü
   olmayan) "—" kalır. Biletinial değişmedi: yalnız tiyatro sayfaları taranır, tür alanı
   zaten sayfadan gelir. Yeni etkinlik bildirimi hâlâ her yeni öğe için gider.
 - **Takip kutusu (varsayılan: KAPALI):** Yeni görünen her oyun ve her etkinlik (Biletinial,

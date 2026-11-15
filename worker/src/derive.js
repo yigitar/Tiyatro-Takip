@@ -76,14 +76,34 @@ export function genreFromText(...texts) {
   return best;
 }
 
-// Source events that are clearly not theatre (tags.py OTHER_EVENT_LABEL / has_non_theatre_word).
-export const OTHER_EVENT_LABEL = "Diğer etkinlik";
-const NON_THEATRE_RE = new RegExp(
-  `(?<!${W})(?:${["atölye", "söyleşi", "film", "sinema", "konser", "sergi", "eğitim", "kurs",
-    "seminer", "workshop", "panel"].map(foldTr).join("|")})`, "u");
+// Source events that are clearly not theatre (tags.py other_event_label).
+export const OTHER_EVENT_PREFIX = "Diğer";
+const OTHER_EVENT_KINDS = [
+  ["Diğer – Atölye", ["atölye", "workshop"]],
+  ["Diğer – Söyleşi", ["söyleşi"]],
+  ["Diğer – Film", ["film", "sinema"]],
+  ["Diğer – Konser", ["konser"]],
+  ["Diğer – Sergi", ["sergi"]],
+  ["Diğer – Eğitim", ["eğitim", "kurs"]],
+  ["Diğer – Seminer/Panel", ["seminer", "panel"]],
+].map(([label, words]) => [label, new RegExp(`(?<!${W})(?:${words.map(foldTr).join("|")})`, "u")]);
 
-export const hasNonTheatreWord = (...texts) =>
-  NON_THEATRE_RE.test(foldTr(texts.map((t) => String(t ?? "")).join(" ")));
+/** "Diğer – <tür>" for the earliest non-theatre word starting a word of `texts`, else "". */
+export function otherEventLabel(...texts) {
+  const blob = foldTr(texts.map((t) => String(t ?? "")).join(" "));
+  let best = "";
+  let bestPos = null;
+  for (const [label, re] of OTHER_EVENT_KINDS) {
+    const m = re.exec(blob);
+    if (m && (bestPos === null || m.index < bestPos)) {
+      best = label;
+      bestPos = m.index;
+    }
+  }
+  return best;
+}
+
+export const hasNonTheatreWord = (...texts) => otherEventLabel(...texts) !== "";
 
 /** Kitle with the stated fallback: unknown -> "Yetişkin" unless a child marker exists. */
 export function resolveAudience(genre = "", tags = [], age = null, text = "") {
@@ -109,10 +129,10 @@ export function isTheatre(kind, title) {
   return low.includes("tiyatro") || low.includes("müzikal");
 }
 
-/** Tür of a Başiskele/VKV event (srcevents.genre_of): genre, else "Diğer etkinlik" when clearly not theatre, else "". */
+/** Tür of a Başiskele/VKV event (srcevents.genre_of): genre, else "Diğer – <tür>" when clearly not theatre, else "". */
 export function eventGenre(kind, title) {
   return resolveGenre(kind, [title])
-    || (!isTheatre(kind, title) && hasNonTheatreWord(kind, title) ? OTHER_EVENT_LABEL : "");
+    || (!isTheatre(kind, title) ? otherEventLabel(kind, title) : "");
 }
 
 // ---------------------------------------------------------------- time helpers

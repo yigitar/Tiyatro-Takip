@@ -356,10 +356,16 @@ test("texts no longer mention the old behaviour (default-ON, Diğer kaynaklar)",
   assert.ok(/Yenile: tüm kaynakları/.test(HELP.sources[0]) && /Yenile: tüm kaynakları \(Biletinial, Başiskele, VKV\)/.test(HELP.main[1]));
 });
 
-test("wave 10: non-theatre source events get Diğer etkinlik only when certain", () => {
-  for (const t of ["Seramik Atölyesi", "Yazar Söyleşisi", "Konser: Bahar", "Resim Sergisi", "Girişimcilik Eğitimi", "Kısa Film Gösterimi"]) {
-    assert.equal(eventGenre("", t), "Diğer etkinlik", t);
+test("wave 10: non-theatre source events get Diğer – tür only when certain", () => {
+  for (const [t, want] of [["Seramik Atölyesi", "Diğer – Atölye"], ["Yazar Söyleşisi", "Diğer – Söyleşi"],
+    ["Konser: Bahar", "Diğer – Konser"], ["Resim Sergisi", "Diğer – Sergi"],
+    ["Girişimcilik Eğitimi", "Diğer – Eğitim"], ["Kısa Film Gösterimi", "Diğer – Film"],
+    ["Açık Hava Sineması", "Diğer – Film"], ["Örgü Kursu", "Diğer – Eğitim"],
+    ["Enerji Semineri", "Diğer – Seminer/Panel"], ["Gençlik Paneli", "Diğer – Seminer/Panel"],
+    ["Design Workshop", "Diğer – Atölye"]]) {
+    assert.equal(eventGenre("", t), want, t);
   }
+  assert.equal(eventGenre("Atölye", "Çocuk Etkinliği"), "Atölye"); // stated category wins
   assert.equal(eventGenre("Söyleşi", "X"), "Söyleşi");
   assert.equal(eventGenre("", "Satır Arası Ebeveynlik"), "");
   assert.equal(eventGenre("Tiyatro", "Atölye Gösterisi"), "");

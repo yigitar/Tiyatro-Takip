@@ -91,7 +91,7 @@ def test_fixture_covers_every_branch_it_claims_to():
     assert {r.audience for r in rows.values()} == {"Çocuk", "Yetişkin"}
     assert "" in {r.genre for r in rows.values()}            # theatre event without a genre word
     other = rows["bk:20261126-1500-atolye"]                  # wave 10: clearly not theatre
-    assert other.genre == "Diğer etkinlik" and "genre" in other.derived
+    assert other.genre == "Diğer – Atölye" and "genre" in other.derived
     assert rows["bk:20261126-1700-tiyatro-atolyesi"].genre == ""   # "Tiyatro" vetoes it
     assert rows["bk:20261120-1100-satir-arasi-ebeveynlik"].genre == ""  # unknown theatre keeps "—"
     assert {"Müzikal", "Komedi", "Stand-up", "Dram"} <= {r.genre for r in rows.values()}
@@ -131,10 +131,10 @@ def test_known_gap_fixed_worker_no_longer_blanks_kitle_for_plays_without_age():
     assert items["yetiskin-oyunu-sadece-kitle"]["tur"] == "Dram"   # genre word found in the summary
 
 
-def test_non_theatre_event_gets_diger_etkinlik_on_both_sides():
+def test_non_theatre_event_gets_diger_tur_on_both_sides():
     config, state = _fixture()
     items = {i["id"]: i for i in worker_items(config, state, [NOW])[0]}
-    assert items["bk:20261126-1500-atolye"]["tur"] == "Diğer etkinlik"
+    assert items["bk:20261126-1500-atolye"]["tur"] == "Diğer – Atölye"
     assert "genre" in items["bk:20261126-1500-atolye"]["derived"]
     assert items["bk:20261126-1700-tiyatro-atolyesi"]["tur"] == ""
     assert items["bk:20261120-1100-satir-arasi-ebeveynlik"]["tur"] == ""

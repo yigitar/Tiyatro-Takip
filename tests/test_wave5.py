@@ -282,11 +282,14 @@ def test_divider_does_not_jump_while_clicking_through_rows(mixed, monkeypatch):
 
 
 def test_wave10_genre_of_non_theatre_only_when_certain():
-    from tiyatro.tags import OTHER_EVENT_LABEL
-    assert OTHER_EVENT_LABEL == "Diğer etkinlik"
-    for kind, title in (("", "Seramik Atölyesi"), ("", "Yazar Söyleşisi"), ("", "Konser: Bahar"),
-                        ("", "Resim Sergisi"), ("", "Girişimcilik Eğitimi"), ("", "Kısa Film Gösterimi")):
-        assert S.genre_of(kind, title) == OTHER_EVENT_LABEL, (kind, title)
+    for kind, title, want in (
+            ("", "Seramik Atölyesi", "Diğer – Atölye"), ("", "Yazar Söyleşisi", "Diğer – Söyleşi"),
+            ("", "Konser: Bahar", "Diğer – Konser"), ("", "Resim Sergisi", "Diğer – Sergi"),
+            ("", "Girişimcilik Eğitimi", "Diğer – Eğitim"), ("", "Kısa Film Gösterimi", "Diğer – Film"),
+            ("", "Açık Hava Sineması", "Diğer – Film"), ("", "Örgü Kursu", "Diğer – Eğitim"),
+            ("", "Enerji Semineri", "Diğer – Seminer/Panel"), ("", "Gençlik Paneli", "Diğer – Seminer/Panel"),
+            ("", "Design Workshop", "Diğer – Atölye")):
+        assert S.genre_of(kind, title) == want, (kind, title)
     assert S.genre_of("Söyleşi", "X") == "Söyleşi"                       # stated kind wins
     assert S.genre_of("", "Satır Arası Ebeveynlik") == ""                # unknown theatre keeps "—"
     assert S.genre_of("Tiyatro", "Atölye Gösterisi") == ""               # theatre veto
