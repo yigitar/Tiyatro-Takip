@@ -31,8 +31,8 @@ gün, saat ve kişi sayısına göre daraltmak istersen hedef eklersin.
 
 - **Başiskele:** Belediyenin haber RSS'inden (`https://www.basiskele.bel.tr/rss`) aylık
   "Kültür-Sanat" program haberi bulunur; haberdeki her tarihli satır bir etkinliktir
-  (tarih, saat, ad, tür, mekân). Yeni bir etkinlik görülünce bir kez "yeni etkinlik
-  duyuruldu" bildirimi gelir. Haber açıkça bir rezervasyon/bilet açılış saati söylüyorsa
+  (tarih, saat, ad, tür, mekân). Yeni bir etkinlik görülünce bir kez "🆕 Yeni etkinlik bulundu"
+  bildirimi gelir (takipte olsun olmasın; bkz. "Yeni oyun/etkinlik bildirimi"). Haber açıkça bir rezervasyon/bilet açılış saati söylüyorsa
   açılıştan 1 gün ve 10 dk önce hatırlatma gelir; haberde böyle bir saat yoksa hatırlatma
   gönderilmez. İlk okuma sessiz başlangıçtır. Instagram izlenmez.
 - **VKV Ford Otosan Gölcük:** `https://www.vkvfordkultur.org.tr/Etkinlikler` sayfasından
@@ -56,15 +56,19 @@ gün, saat ve kişi sayısına göre daraltmak istersen hedef eklersin.
   yaş 13+ ise ya da hiçbir çocuk işareti yoksa **Yetişkin**. Tür: sayfadaki tür alanı
   (kitle sözcükleri atılır); yalnızca kitle yazıyorsa başlık/açıklamadaki açık tür
   sözcüğü (müzikal, komedi, dram, trajedi, monolog, stand-up, operet, kabare); o da
-  yoksa tiyatro etkinliği için "Tiyatro". "—" yalnızca tiyatro olmayan ve türü hiç
-  belli olmayan kayıtlarda kalır.
+  yoksa Tür **"—"** kalır: "Tiyatro" tür değildir, hiçbir yerde doldurulmaz (dalga 9).
 - **Takip kutusu (varsayılan: KAPALI):** Yeni görünen her oyun ve her etkinlik (Biletinial,
   Başiskele, VKV) **takipsiz** başlar; istediklerini sen açarsın. Listede ilk sütun
   "Takip" bir kutudur (☑ / ☐): hücreye tıklamak oyunlar ve Başiskele/VKV etkinlikleri için
   takibi açıp kapatır (ayrıntıyı açmaya gerek yok; ayrıntıdaki "Aktif" kutusu aynı
   anahtardır). Telegram: aynı tek liste ("Oyunlar ve etkinlikler"), her satırda ☑/☐ düğmesi.
-  Takipsiz etkinlik listede kalır, bildirim
-  göndermez (yeni-etkinlik bildirimi dahil). Seçimler `config.json` içindeki `event_follow`
+  Takipsiz etkinlik listede kalır; satış/rezervasyon bildirimi göndermez (yalnızca "yeni
+  bulundu" bildirimi takipten bağımsız gelir). **Hedef eklemek takibe alır:** takipte olmayan
+  bir oyuna "Yetişkin/Çocuk hedef ekle" (PC) ya da `tg` (Telegram) ile hedef eklenince oyun
+  otomatik takibe girer (kayıtta `active=false` ise `true` olur; hedefi silmek takibi değiştirmez).
+  **Varsayılan sıra** (PC ve Telegram aynı): en yakın seans/etkinlik, başlık; takip durumuna
+  bağlı değildir, bu yüzden kutuyu işaretleyince satır yerinden oynamaz (seçili satır ve kaydırma
+  korunur). İstersen "Takip" başlığına tıklayarak takipte olanları öne alabilirsin. Seçimler `config.json` içindeki `event_follow`
   (etkinlik) ve `plays` (oyun) anahtarlarında tutulur. **Önceden takipte olanlar
   değişmez:** eski sürümde varsayılanla (tiyatro/müzikal) takipte sayılan etkinliklerin
   kaydındaki varsayılan korunur, açık seçimler olduğu gibi kalır.
@@ -90,7 +94,7 @@ gün, saat ve kişi sayısına göre daraltmak istersen hedef eklersin.
   altında "normal = kaynaktan alınan, italik = türetilmiş/varsayım" açıklaması durur.
   Türetilmiş sayılanlar: Kitle (sayfa/kategori kitleyi açıkça yazmıyorsa; yaş/etiket/başlık
   kuralı ya da "çocuk işareti yok → Yetişkin"), Tür (tür alanı boşsa; başlık/açıklamadan
-  bulunan sözcük ya da "Tiyatro"), Zaman (her zaman hesaplanır), Hedef "yok → tüm seanslar",
+  bulunan sözcük; yoksa "—"), Zaman (her zaman hesaplanır), Hedef "yok → tüm seanslar",
   "—" ve "duyuru bekleniyor" gibi boşluk göstergeleri, etkinliklerde "açık"/"açılmış olabilir".
   Alan bazlı bayrak `pc/viewmodel.py` içindeki `Row.derived` kümesinde tutulur (arayüz tahmin
   etmez).
@@ -114,17 +118,22 @@ gün, saat ve kişi sayısına göre daraltmak istersen hedef eklersin.
   "yok → tüm seanslar"), Rez. açılış. Türetme kuralları PC ile aynıdır (`worker/src/derive.js`,
   `tests/test_wave7_parity.py` aynı state.json'u iki tarafa da verip değerleri karşılaştırır).
   Türetilmiş değer *italik* yazılır; listede bir açıklama satırı vardır ("italik = türetilmiş").
-  Sıra PC ile aynıdır (takipte olanlar, en yakın seans/etkinlik, başlık); sayfa başına 6 öğe.
+  Sıra PC ile aynıdır (en yakın seans/etkinlik, başlık, kimlik; takip durumuna bakılmaz, böylece takip kutusu satırı oynatmaz); sayfa başına 6 öğe.
   Satırdaki ☑/☐ düğmesi `ta:`/`ef:` (idempotent) rotalarıyla takibi değiştirir; "Ayrıntı ›"
   oyun veya etkinlik ekranını açar: "Oyun sayfası" / "Etkinlik sayfası" ve çok seanslı oyunlarda
   her seans için bir "Seans" bağlantı düğmesi (sayfa başına 8 seans, sayfalanır). "Kaynaklar"
   ekranında her kaynak için "aç" bağlantı düğmesi vardır.
-- **Yeni (🆕) işareti, Telegram:** Takipte olmayan yeni gelen oyun/etkinlik, ayrıntı ekranı bir kez
-  açılana kadar 🆕 ile işaretlenir. KV yoktur: açılmış öğelerin kimlikleri `config.json` içindeki
-  `seen` listesinde tutulur (Worker'ın mevcut config yazma yolu; en çok 500 kimlik, durumda
-  artık olmayan kimlikler bir yazma sırasında silinir; zaten görülmüşse yazma olmaz). `seen`
-  anahtarı yoksa (ilk kullanım) listedeki her şey görülmüş sayılır. Python tarafı bu anahtarı
-  yok sayar, PC kendi `seen` kümesini `ui.json`'da tutar.
+- **Yeni oyun/etkinlik bildirimi (dalga 9; eski 🆕 işareti ve Worker `seen` listesi kaldırıldı):**
+  Herhangi bir kaynakta (Biletinial, Başiskele, VKV) yeni bir oyun/etkinlik bulunursa Telegram'a
+  "🆕 Yeni oyun bulundu: <ad> · <kaynak> · <en yakın tarih> · <bağlantı>" gelir ve altında
+  "Takipte DEĞİL — menüden takibe al" notu yer alır (öğe zaten takipteyse "🟢 Takipte.").
+  Öğe başına bir kez gönderilir (`emitted` anahtarı + claim, diğer bildirimler gibi). Bu bildirim
+  tek istisnadır: satış/rezervasyon bildirimleri hâlâ yalnızca takipteki öğeler içindir.
+  **Sel koruması:** bir kaynağın ilk taraması ve ilk çalıştırma sessiz başlangıçtır (eski
+  "SETUP" özet mesajı kalktı); yayına alındığında `state.json` içinde zaten kayıtlı olan hiçbir
+  öğe "yeni" sayılmaz (yenilik, durumdaki kaydın yokluğuyla belirlenir); bir taramada 3'ten çok
+  yeni öğe bulunursa tek bir özet mesajı (`NEWFOLD:`) gider. Worker'ın `config.json` içindeki eski
+  `seen` anahtarı artık yok sayılır (zararsız); PC'nin yerel mor vurgusu (`ui.json`) PC'ye özeldir.
 - **Kaynak durumu:** Her kaynak (Biletinial, Başiskele, VKV) için ✅ güncel / ⚠️ 30 dakikadan
   eski / ❌ son kontrol başarısız simgesi, "Son kontrol" ve "Son güncelleme" (kaynağın kendi
   içeriğinin değişme zamanı) gösterilir: PC'de Oyunlar sekmesinin üstünde, Telegram'da
