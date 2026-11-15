@@ -478,3 +478,54 @@ test("play screen shows Kitle and Tür, never the audience as the genre", () => 
   assert.ok(text.includes("Kitle: Yetişkin"), text);
   assert.ok(!text.includes("Tür:"), text);
 });
+
+// ---- wave 4 B: Kaynaklar screen ----
+import { sourceViews } from "../src/menu.js";
+
+function srcState(extra = {}) {
+  const s = makeState();
+  const now = Date.now();
+  const iso = (msAgo) => new Date(now - msAgo).toISOString();
+  s.sources = {
+    biletinial: { name: "Biletinial", ok: true, last_check_at: iso(2 * 60e3), last_ok_at: iso(2 * 60e3), last_change_at: iso(3600e3), items_count: 6, error: null },
+    basiskele: { name: "Başiskele Belediyesi", ok: true, last_check_at: iso(45 * 60e3), last_ok_at: iso(45 * 60e3), last_change_at: iso(86400e3), items_count: 4, error: null },
+    vkv: { name: "VKV Ford Otosan Gölcük", ok: false, last_check_at: iso(60e3), last_ok_at: iso(7200e3), last_change_at: null, items_count: 3, error: "Timeout" },
+    ...extra,
+  };
+  return s;
+}
+
+test("sourceViews: ok / stale (>30 min) / failed icons", () => {
+  const v = sourceViews(srcState());
+  assert.deepEqual(v.map((x) => [x.id, x.icon]), [["biletinial", "✅"], ["basiskele", "⚠️"], ["vkv", "❌"]]);
+  assert.equal(v[2].error, "Timeout");
+  assert.deepEqual(sourceViews(makeState()), []);
+  assert.deepEqual(sourceViews({ sources: "x" }), []);
+});
+
+test("src screen shows icons, last check/update, counts, legend, explanation", () => {
+  const r = render("src", cfg, srcState());
+  for (const t of ["✅ <b>Biletinial</b>", "⚠️ <b>Başiskele Belediyesi</b>", "❌ <b>VKV Ford Otosan Gölcük</b>",
+    "Son kontrol:", "Son güncelleme:", "6 öğe", "Hata: Timeout", "30 dakikadan eski"]) {
+    assert.ok(r.text.includes(t), `${t}\n${r.text}`);
+  }
+  assert.ok(labels(r).includes("‹ Ana menü") || r.keyboard.flat().length > 0);
+  assert.ok(flat(r.keyboard).some((b) => b.callback_data === "src"));
+});
+
+test("rf screen reports per-source results and says the scan was requested", () => {
+  const r = render("rf", cfg, srcState());
+  assert.ok(r.text.includes("Tarama istendi") && r.text.includes("✅ <b>Biletinial</b>"), r.text);
+  assert.ok(render("rf", cfg, makeState()).text.includes("Henüz kaynak bilgisi yok"));
+});
+
+test("src screen escapes HTML in names/errors and stays under 4096 chars", () => {
+  const s = srcState({ evil: { name: "<b>x</b>&", ok: false, last_check_at: new Date().toISOString(), error: "<script>" } });
+  const r = render("src", cfg, s);
+  assert.ok(!r.text.includes("<script>") && r.text.includes("&lt;script&gt;"));
+  assert.ok(r.text.length <= 4096);
+});
+
+test("main menu has the Kaynaklar button", () => {
+  assert.ok(flat(render("m", cfg, st).keyboard).some((b) => b.callback_data === "src"));
+});

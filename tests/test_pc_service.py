@@ -386,7 +386,7 @@ def test_refresh_now_failure_keeps_previous_list(monkeypatch, tmp_path, breakage
     e.web.set(mkplay("r"))
     e.clock.set(NOW + timedelta(minutes=1))
     first = e.svc.refresh_now()
-    state_before = (tmp_path / "state.json").read_text(encoding="utf-8")
+    state_before = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
     if breakage == "venue_error":
         e.web.venue_error = FetchError("HTTP 403: blocked")
     else:
@@ -396,7 +396,13 @@ def test_refresh_now_failure_keeps_previous_list(monkeypatch, tmp_path, breakage
         e.svc.refresh_now()
     assert e.svc.plays == first
     assert e.svc.new_slugs == {"r"} and e.svc.removed_slugs == set()
-    assert (tmp_path / "state.json").read_text(encoding="utf-8") == state_before
+    # wave 4 B: the only change is the source status (❌ + short reason), no play data
+    after = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    rec = after["sources"].pop("biletinial")
+    assert rec["ok"] is False and rec["error"]
+    assert rec["last_ok_at"] == state_before["sources"]["biletinial"]["last_ok_at"]
+    state_before["sources"].pop("biletinial")
+    assert after == state_before
 
 
 # ---- config editing ---------------------------------------------------------------------

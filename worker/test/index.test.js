@@ -412,3 +412,16 @@ test("scheduled: dispatch failure -> warning in the bucket; never throws, no sec
   const tgDown = await scheduledAt(IN_BUCKET, { ghFail: true, tgFail: { method: "sendMessage", description: "x" } });
   assert.equal(tgDown.warnings.length, 1); // attempted; the failure is only logged
 });
+
+test("wave 4 B: rf also shows the per-source status screen (no config write)", async () => {
+  const state = makeState();
+  state.sources = { biletinial: { name: "Biletinial", ok: true, last_check_at: new Date().toISOString(),
+    last_change_at: new Date().toISOString(), items_count: 3, error: null } };
+  const { fake, calls } = makeFake({ state });
+  await handle(req(cb("rf")), ENV, fake);
+  const edits = tgCalls(calls, "editMessageText");
+  assert.equal(edits.length, 1);
+  assert.ok(edits[0].body.text.includes("Tarama istendi") && edits[0].body.text.includes("✅ <b>Biletinial</b>"));
+  assert.equal(ghWrites(calls).length, 0);
+  assert.equal(tgCalls(calls, "answerCallbackQuery")[0].body.text, "Tarama tetiklendi");
+});

@@ -59,6 +59,7 @@ from tiyatro.config import config_from_dict, config_to_dict, default_config
 from tiyatro.fetcher import fetch
 from tiyatro.heartbeat import github_run_status, write_heartbeat
 from tiyatro.models import ISTANBUL, Config, Event, Play
+from tiyatro import sources as srcmod
 from tiyatro.notify import portal_label
 from tiyatro.runner import (BURST_INTERVAL_S, BURST_JITTER_S, BURST_LEAD, CONFIG_PATH,
                             PC_WINDOW, _burst_targets, _entry_events, _prepare,
@@ -852,6 +853,7 @@ class Service:
             if venue_error or not plays:
                 reason = venue_error or ("oyun sayfaları okunamadı" if unscanned
                                          else "oyun bulunamadı")
+                self._record_source_failure("biletinial", now, reason)
                 raise RefreshError(f"Liste güncellenemedi: Biletinial okunamadı "
                                    f"({reason}); önceki liste korunuyor")
 
@@ -908,6 +910,22 @@ class Service:
         return Play(slug, str(entry.get("title") or slug), str(entry.get("url") or ""),
                     entry.get("genre"), entry.get("duration_min"), entry.get("age_limit"),
                     entry.get("price_from"), [], set(entry.get("tags") or []))
+
+    def _record_source_failure(self, source_id: str, now: datetime, reason: str) -> None:
+        """A refresh that failed before ``run_once``: the strip must still show ❌."""
+        try:
+            srcmod.record_check(self._state, source_id, now, False, error=reason)
+            self._write_json("state.json", self._state)
+        except Exception:  # bookkeeping only
+            pass
+
+    def sources(self, now: datetime | None = None) -> list[dict]:
+        """Per-source status for the "Kaynaklar" strip (``tiyatro.sources.describe``)."""
+        return srcmod.describe(self.state, now or self._clock())
+
+    def sources_report(self, now: datetime | None = None) -> str:
+        """One line for the result of "Listeyi güncelle": ``✅ Biletinial · ❌ VKV``."""
+        return " · ".join(f"{v['icon']} {v['name']}" for v in self.sources(now))
 
     def portals(self, now: datetime | None = None) -> list[PortalView]:
         """The "Portallar" strip: one view per enabled reservation portal."""

@@ -93,6 +93,7 @@ from tiyatro.notify import MONTHS, Telegram, default_transport, format_message
 from tiyatro.parser import ParseError, parse_play, parse_venue
 from tiyatro.portals import item_key, parse_portal
 from tiyatro.rules import matching_targets
+from tiyatro.sources import TIME_KEYS, record_check
 from tiyatro.state import (ON_SALE_GAP, clean_emitted, cleanup, diff, empty_state,
                            next_opening, valid_session_record)
 from tiyatro.store import Store
@@ -189,6 +190,10 @@ def _prepare(state) -> dict:
     state["portals"] = ({k: v for k, v in portals.items()
                          if isinstance(k, str) and isinstance(v, dict)}
                         if isinstance(portals, dict) else {})
+    sources = state.get("sources")
+    state["sources"] = ({k: v for k, v in sources.items()
+                         if isinstance(k, str) and isinstance(v, dict)}
+                        if isinstance(sources, dict) else {})
     state["emitted"] = clean_emitted(state.get("emitted"))
     box = state.get("outbox")
     state["outbox"] = [e for e in (box if isinstance(box, list) else [])
@@ -227,6 +232,10 @@ def _fingerprint(state: dict) -> str:
     for rec in (st.get("portals") or {}).values():
         if isinstance(rec, dict):
             rec.pop("last_check", None)
+    for rec in (st.get("sources") or {}).values():
+        if isinstance(rec, dict):
+            for key in TIME_KEYS:
+                rec.pop(key, None)
     for entry in (st.get("plays") or {}).values():
         if isinstance(entry, dict):
             entry.pop("last_seen", None)
@@ -615,6 +624,33 @@ def _scan(config: Config, state: dict, fetch_fn: Callable, sleep: Callable,
     return plays, unscanned, failures, venue_error
 
 
+def _plays_signature(plays: list[Play]) -> list:
+    """Normalized parsed content of the Biletinial scan (for the source's change time)."""
+    return sorted(
+        [p.slug, p.title, sorted([s.id, s.start.isoformat(), s.status.value]
+                                 for s in p.sessions)]
+        for p in plays)
+
+
+def _record_biletinial(state: dict, plays: list[Play], scan_error: str | None,
+                       burst: bool, now: datetime) -> None:
+    """``state["sources"]["biletinial"]``: normal scans record success or failure; a burst
+    tick only proves the play pages were readable (its partial list says nothing about
+    the source's content)."""
+    try:
+        if burst:
+            if plays:
+                record_check(state, "biletinial", now, True, items_count=None)
+            return
+        if scan_error:
+            record_check(state, "biletinial", now, False, error=scan_error)
+        else:
+            record_check(state, "biletinial", now, True, items=_plays_signature(plays),
+                         items_count=len(plays))
+    except Exception:  # bookkeeping must never reach the scan result
+        pass
+
+
 def _play_pages_error(scanned: int, failed: int) -> str | None:
     total = scanned + failed
     if total and (scanned == 0 or failed >= max(2, total / 2)):
@@ -746,6 +782,8 @@ def run_once(store, tg, claims, now: datetime, who: str = "github",
         else:
             meta["fetch_fail_streak"] = 0
             meta["fetch_fail_since"] = None
+
+    _record_biletinial(state, plays, scan_error, burst, now)
 
     # A failed venue scan never reaches diff (it would look like every play vanished).
     # With several sources, plays from the venues that did load are diffed as a subset.

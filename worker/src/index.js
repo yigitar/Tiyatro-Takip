@@ -73,6 +73,11 @@ async function onCallback(cq, env, tg, gh) {
   if (route === "rf") {
     await gh.dispatchWorkflow("scan.yml", "main");
     toast = "Tarama tetiklendi";
+    // Show the per-source status (last known results; the new scan finishes in minutes).
+    try {
+      const [config, state] = await Promise.all([loadConfig(gh), loadState(gh)]);
+      screen = render("rf", config, state);
+    } catch { /* the toast alone is enough */ }
   } else if (isMutating(route)) {
     const state = await loadState(gh);
     const config = await gh.updateConfig(route, state);

@@ -7,7 +7,7 @@
 // Routes (callback_data, each <= 64 bytes):
 //   m | pl:<page> | p:<h> | ts:<h>:<id> (target screen) | ta:<h>:<0|1> | tg:<h>:<y|c>
 //   hp:<h>:<id>:<n> | hd:<h>:<id>:<wd|we|all|d0..d6>[:<0|1>] | hf:<h>:<id>:<HH|none>
-//   ht:<h>:<id>:<HH|none> | hx:<h>:<id>:<yymmdd>:<0|1> (date, stateless) | hs:<h>:<id>:rm | tl | up | rf | pz:<0|1>
+//   ht:<h>:<id>:<HH|none> | hx:<h>:<id>:<yymmdd>:<0|1> (date, stateless) | hs:<h>:<id>:rm | tl | up | rf | src | pz:<0|1>
 
 const PAGE_SIZE = 6;
 const MAX_CALLBACK_BYTES = 64;
@@ -321,6 +321,55 @@ function portalLines(state) {
   return out;
 }
 
+const SOURCE_ORDER = ["biletinial", "basiskele", "vkv"];
+const SOURCE_NAMES = { biletinial: "Biletinial", basiskele: "Başiskele Belediyesi", vkv: "VKV Ford Otosan Gölcük" };
+const STALE_MS = 30 * 60 * 1000;
+const SOURCE_LEGEND = "✅ güncel · ⚠️ 30 dakikadan eski (kontrol gecikti) · ❌ son kontrol başarısız\n"
+  + "Son kontrol = kaynağa en son bakılma zamanı; Son güncelleme = kaynağın kendi içeriğinin en son değişme zamanı.";
+
+/** Per-source health from state.sources (tiyatro/sources.py); sources without a record are skipped. */
+export function sourceViews(state, now = Date.now()) {
+  const recs = isObj(state) && isObj(state.sources) ? state.sources : {};
+  const ids = [...SOURCE_ORDER.filter((i) => isObj(recs[i])),
+    ...Object.keys(recs).filter((i) => !SOURCE_ORDER.includes(i) && isObj(recs[i])).sort()];
+  return ids.map((id) => {
+    const rec = recs[id];
+    const checked = Date.parse(rec.last_check_at);
+    const status = !Number.isFinite(checked) ? "unknown"
+      : rec.ok === false ? "failed" : now - checked > STALE_MS ? "stale" : "ok";
+    const icon = { ok: "✅", stale: "⚠️", failed: "❌", unknown: "⚪" }[status];
+    return {
+      id, status, icon, name: String(rec.name || SOURCE_NAMES[id] || id),
+      lastCheck: rec.last_check_at ? fmtShort(rec.last_check_at) : "—",
+      lastChange: rec.last_change_at ? fmtShort(rec.last_change_at) : "—",
+      count: Number.isInteger(rec.items_count) ? rec.items_count : null,
+      error: typeof rec.error === "string" && rec.error ? rec.error : null,
+    };
+  });
+}
+
+function sourceLines(state, now) {
+  const out = [];
+  for (const v of sourceViews(state, now)) {
+    out.push(`${v.icon} <b>${esc(trunc(v.name, 40))}</b>`);
+    const parts = [`Son kontrol: ${esc(v.lastCheck)}`, `Son güncelleme: ${esc(v.lastChange)}`];
+    if (v.count !== null) parts.push(`${v.count} öğe`);
+    out.push(parts.join(" · "));
+    if (v.status === "failed" && v.error) out.push(`Hata: ${esc(trunc(v.error, 80))}`);
+  }
+  return out;
+}
+
+/** "Kaynaklar" screen; ``refreshed`` adds the note shown right after the 🔄 Yenile button. */
+function sourcesScreen(state, refreshed) {
+  const lines = ["📡 <b>Kaynaklar</b>"];
+  if (refreshed) lines.push("🔄 Tarama istendi: tüm kaynaklar birkaç dakika içinde yeniden taranır. Aşağıdaki sonuçlar son taramadan; yenisi için “Durumu göster”e bas.");
+  const body = sourceLines(state);
+  if (body.length === 0) lines.push("Henüz kaynak bilgisi yok.");
+  lines.push("", ...body, "", SOURCE_LEGEND);
+  return { text: lines.join("\n"), keyboard: rows([btn("🔄 Durumu göster", "src")], [BACK_MAIN()]) };
+}
+
 function mainScreen(config, state) {
   const watched = allSlugs(config, state).filter((s) => isWatched(config, state, s)).length;
   const paused = isObj(config) && config.paused === true;
@@ -339,7 +388,7 @@ function mainScreen(config, state) {
       [btn("🎭 Oyunlar", "pl:0")],
       [btn("📋 Takip listem", "tl")],
       [btn("⏳ Yaklaşan açılışlar", "up")],
-      [btn("🔄 Yenile", "rf")],
+      [btn("🔄 Yenile", "rf"), btn("📡 Kaynaklar", "src")],
       [paused ? btn("▶️ Devam", "pz:0") : btn("⏸ Duraklat", "pz:1")],
     ),
   };
@@ -600,9 +649,8 @@ function renderRoute(route, config, state) {
     if (op === "m" || op === "pz") return mainScreen(config, state);
     if (op === "tl") return watchlistScreen(config, state, indexFor(config, state), parts[1]);
     if (op === "up") return upcomingScreen(config, state);
-    if (op === "rf") {
-      return { text: "🔄 Tarama istendi. Sonuçlar birkaç dakika içinde güncellenir.", keyboard: rows([BACK_MAIN()]) };
-    }
+    if (op === "rf") return sourcesScreen(state, true);
+    if (op === "src") return sourcesScreen(state, false);
     const idx = indexFor(config, state);
     if (op === "pl") return listScreen(config, state, parts[1], idx);
 

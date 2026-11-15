@@ -220,3 +220,21 @@ def test_worker_renders_python_produced_portal_state():
                 "renders": ["m", "up"]})
     for screen in res["rendered"]:
         assert "🏛️ Başiskele portalı: açık (2)" in screen["text"]
+
+
+def test_worker_renders_python_produced_source_state():  # wave 4 B
+    from datetime import datetime
+    from tiyatro import sources as S
+    from tiyatro.models import ISTANBUL
+    from tiyatro.runner import _prepare
+    state, raw_cfg, _plays = _python_state()
+    state = _prepare(state)
+    now = datetime.now(ISTANBUL)
+    S.record_check(state, "biletinial", now, True, items=[["a", "A", []]])
+    S.record_check(state, "vkv", now, False, error="Timeout")
+    res = node({"config": raw_cfg, "state": json.loads(json.dumps(state)), "applies": [],
+                "renders": ["src", "rf"]})
+    for screen in res["rendered"]:
+        assert "✅ <b>Biletinial</b>" in screen["text"]
+        assert "❌ <b>VKV Ford Otosan Gölcük</b>" in screen["text"]
+        assert "Hata: Timeout" in screen["text"] and len(screen["text"]) <= 4096

@@ -31,6 +31,7 @@ from pc.activity_ui import ActivityTab, default_reveal
 from pc.service import RefreshError
 from pc.settings import DEFAULT_LOCAL_DIR, SettingsError, load_settings
 from pc.viewmodel import APP_TITLE, DAY_SHORT, credit_lines
+from tiyatro import sources as S
 from tiyatro.config import config_to_dict
 from tiyatro.models import ISTANBUL
 
@@ -402,6 +403,9 @@ class App:
             self.save_ui, self.mb, self.reveal)
         self.notebook.add(self.activity_tab, text="Etkinlik günlüğü")
 
+        self.source_bar = ttk.Frame(games)  # "Kaynaklar" strip (wave 4 B)
+        self.source_labels: list = []
+        self._source_sig = None
         self.portal_bar = ttk.Frame(games)  # "Portallar" strip, packed only when there is one
         self.portal_labels: list = []
         self.portal_buttons: list = []
@@ -538,6 +542,35 @@ class App:
         self._default_rows = rows
         self._render_rows()
         self._render_portals()
+        self._render_sources()
+
+    def _render_sources(self) -> None:
+        """"Kaynaklar" strip: ✅/⚠️/❌, last check, last content change, item count per source."""
+        fn = getattr(self.service, "sources", None)
+        try:
+            views = fn() if fn is not None else []
+        except Exception:
+            log.exception("sources() failed")
+            return
+        sig = tuple(S.line(v) for v in views)
+        if sig == self._source_sig:
+            return
+        self._source_sig = sig
+        for child in self.source_bar.winfo_children():
+            child.destroy()
+        self.source_labels = []
+        if not views:
+            self.source_bar.pack_forget()
+            return
+        colors = {"ok": L.GREEN, "stale": L.AMBER, "failed": L.RED, "unknown": L.GRAY}
+        for v in views:
+            label = ttk.Label(self.source_bar, text=S.line(v),
+                              foreground=colors.get(v["status"], L.GRAY))
+            label.pack(anchor="w")
+            self.source_labels.append(label)
+        ttk.Label(self.source_bar, text=S.LEGEND, foreground=L.GRAY, wraplength=900,
+                  justify="left").pack(anchor="w")
+        self.source_bar.pack(fill="x", pady=(0, 4), before=self.pane)
 
     def _render_portals(self) -> None:
         """One line per reservation portal under the toolbar; rebuilt only on a change."""
@@ -825,8 +858,9 @@ class App:
             self.mb.showwarning(APP_TITLE, f"{text}\n\nÖnceki liste korunuyor.")
         else:
             new, gone = len(self.service.new_slugs), len(self.service.removed_slugs)
+            report = getattr(self.service, "sources_report", lambda: "")()
             self.set_message(f"Liste güncellendi · {len(plays)} oyun · {new} yeni · "
-                             f"{gone} kalktı")
+                             f"{gone} kalktı" + (f" · Kaynaklar: {report}" if report else ""))
         self.refresh_rows()
         self.update_status()
         if self.worker is not None:
@@ -867,6 +901,7 @@ class App:
         if self.closing:
             return
         self.update_status()
+        self._render_sources()
         self.root.after(STATUS_MS, self._status_timer)
 
     def _activity_timer(self) -> None:
