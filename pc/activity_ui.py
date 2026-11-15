@@ -14,6 +14,7 @@ from tkinter import ttk
 
 from pc import activity as A
 from pc.viewmodel import APP_TITLE
+from pc.widgets import AutoScrollbar
 from tiyatro.models import ISTANBUL
 
 LEVEL_CHOICES = {"Hepsi": "all", "Uyarı ve hata": "warn"}
@@ -48,7 +49,7 @@ class DetailDialog(tk.Toplevel):
         box.pack(fill="both", expand=True, padx=10, pady=(10, 4))
         self.body = tk.Text(box, width=70, height=12, wrap="word", font="TkDefaultFont",
                             borderwidth=1, relief="solid")
-        sb = ttk.Scrollbar(box, orient="vertical", command=self.body.yview)
+        sb = AutoScrollbar(box, orient="vertical", command=self.body.yview)
         self.body.configure(yscrollcommand=sb.set)
         self.body.insert("1.0", "\n".join(lines))
         self.body.configure(state="disabled")
@@ -110,7 +111,7 @@ class ActivityTab(ttk.Frame):
         for key, label, width in COLUMNS:
             self.tree.heading(key, text=label)
             self.tree.column(key, width=width, anchor="w", stretch=key in ("title", "result"))
-        vsb = ttk.Scrollbar(body, orient="vertical", command=self.tree.yview)
+        vsb = AutoScrollbar(body, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")

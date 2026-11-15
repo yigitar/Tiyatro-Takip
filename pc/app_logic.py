@@ -29,6 +29,24 @@ BEEP_INTERVAL_S = 20
 BEEP_MAX = 5
 DEFAULT_PORT = 47615
 MIN_WINDOW = (400, 300)
+DEFAULT_WINDOW = (1280, 820)
+ROW_PX, HEADING_PX = 22, 26   # Treeview row / heading height (default theme)
+
+
+def default_geometry(screen_w: int, screen_h: int) -> str:
+    """"1280x820", clamped so the window fits the screen (taskbar + title bar margin)."""
+    w = min(DEFAULT_WINDOW[0], max(MIN_WINDOW[0], screen_w - 40))
+    h = min(DEFAULT_WINDOW[1], max(MIN_WINDOW[1], screen_h - 100))
+    return f"{w}x{h}"
+
+
+def list_pane_px(row_count: int, pane_px: int) -> int:
+    """Height for the play list so it fits its rows (not the whole pane): at most 60 % of
+    the pane (the detail keeps the rest), at least 35 % or the height of 3 rows."""
+    wanted = HEADING_PX + max(row_count, 3) * ROW_PX + 6
+    low = max(HEADING_PX + 3 * ROW_PX + 6, int(pane_px * 0.35))
+    return int(min(max(wanted, low), pane_px * 0.6))
+
 
 QUICK_DAYS = {"Hafta içi": [0, 1, 2, 3, 4], "Hafta sonu": [5, 6],
               "Hepsi": [0, 1, 2, 3, 4, 5, 6]}

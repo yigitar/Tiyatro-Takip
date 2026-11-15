@@ -31,6 +31,8 @@ from pc.activity_ui import ActivityTab, default_reveal
 from pc.service import RefreshError
 from pc.settings import DEFAULT_LOCAL_DIR, SettingsError, load_settings
 from pc.viewmodel import APP_TITLE, DAY_SHORT, credit_lines
+from pc.events_ui import EventsTab
+from pc.widgets import AutoScrollbar
 from tiyatro import sources as S
 from tiyatro.config import config_to_dict
 from tiyatro.models import ISTANBUL
@@ -245,7 +247,7 @@ class TargetEditor(tk.Toplevel):
         self.dates = L.editor_dates(app.entry(slug), rule.exclude_dates, app.now())
         self.excl_vars: dict[str, tk.BooleanVar] = {}
         canvas = tk.Canvas(excl, height=110, highlightthickness=0)
-        scroll = ttk.Scrollbar(excl, orient="vertical", command=canvas.yview)
+        scroll = AutoScrollbar(excl, orient="vertical", command=canvas.yview)
         inner = ttk.Frame(canvas)
         inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.create_window((0, 0), window=inner, anchor="nw")
@@ -363,7 +365,8 @@ class App:
         root.title(APP_TITLE)
         geom = L.sanitize_geometry(ui["geometry"], root.winfo_screenwidth(),
                                    root.winfo_screenheight())
-        root.geometry(geom or "1100x720")
+        root.geometry(geom or L.default_geometry(root.winfo_screenwidth(),
+                                                 root.winfo_screenheight()))
         root.minsize(*L.MIN_WINDOW)
         root.report_callback_exception = self._ui_exception
         self._build()
@@ -398,6 +401,8 @@ class App:
         self.notebook.pack(fill="both", expand=True, padx=8)
         games = ttk.Frame(self.notebook)
         self.notebook.add(games, text="Oyunlar")
+        self.events_tab = EventsTab(self.notebook, self.service, self.edit, self.open_url)
+        self.notebook.add(self.events_tab, text="Diğer kaynaklar")
         self.activity_tab = ActivityTab(
             self.notebook, self.activity, A.load_filters(self.local_dir / "ui.json"),
             self.save_ui, self.mb, self.reveal)
@@ -412,6 +417,8 @@ class App:
         self._portal_sig = None
         pane = ttk.PanedWindow(games, orient="vertical")
         self.pane = pane
+        self._sash_user, self._fit_key = False, None
+        pane.bind("<B1-Motion>", lambda _e: setattr(self, "_sash_user", True), add="+")
         pane.pack(fill="both", expand=True)
         top = ttk.Frame(pane)
         pane.add(top, weight=3)
@@ -421,7 +428,7 @@ class App:
             self.tree.heading(key, text=L.heading_text(label, key, self.sort),
                               command=lambda k=key: self.sort_by(k))
             self.tree.column(key, width=width, anchor="w", stretch=key in ("title", "summary"))
-        vsb = ttk.Scrollbar(top, orient="vertical", command=self.tree.yview)
+        vsb = AutoScrollbar(top, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
@@ -543,6 +550,26 @@ class App:
         self._render_rows()
         self._render_portals()
         self._render_sources()
+        self.events_tab.refresh()
+        self._fit_panes()
+
+    def _fit_panes(self) -> None:
+        """Size the list pane to its rows once per row-count/window-height change, unless
+        the user dragged the divider (then it stays where they put it)."""
+        if self._sash_user:
+            return
+        pane_px = self.pane.winfo_height()
+        if pane_px < 100:  # not laid out yet (first call): retry when idle
+            self.root.after(150, self._fit_panes)
+            return
+        key = (len(self.rows), pane_px)
+        if key == self._fit_key:
+            return
+        self._fit_key = key
+        try:
+            self.pane.sashpos(0, L.list_pane_px(len(self.rows), pane_px))
+        except tk.TclError:
+            pass
 
     def _render_sources(self) -> None:
         """"Kaynaklar" strip: ✅/⚠️/❌, last check, last content change, item count per source."""
@@ -731,7 +758,7 @@ class App:
         for child in self.detail.winfo_children():
             child.destroy()
         canvas = tk.Canvas(self.detail, highlightthickness=0, borderwidth=0)
-        vsb = ttk.Scrollbar(self.detail, orient="vertical", command=canvas.yview)
+        vsb = AutoScrollbar(self.detail, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=vsb.set)
         vsb.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
@@ -766,7 +793,7 @@ class App:
         box.pack(fill="x")
         self.summary_text = tk.Text(box, height=6, wrap="word", borderwidth=1, relief="solid",
                                     font="TkDefaultFont")
-        sb = ttk.Scrollbar(box, orient="vertical", command=self.summary_text.yview)
+        sb = AutoScrollbar(box, orient="vertical", command=self.summary_text.yview)
         self.summary_text.configure(yscrollcommand=sb.set)
         self.summary_text.insert("1.0", row.summary or NO_INFO)
         self.summary_text.configure(state="disabled")
