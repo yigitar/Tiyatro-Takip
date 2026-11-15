@@ -9,7 +9,7 @@ Parity with the Telegram menu: ``ta`` -> set_active (no default target is create
 active play without targets watches every session), ``tg`` -> ensure_target,
 ``hp`` -> set_people, ``hd wd/we/all`` -> set_days_group, ``hd d<n>`` -> set_day,
 ``hf``/``ht`` -> set_hours, ``hx`` -> set_excluded_date, ``hs rm`` -> remove_target,
-``pz`` -> set_paused. ``set_days`` and ``set_day_override`` are PC-only (rule
+``pz`` -> set_paused, ``ef`` -> set_event_follow. ``set_days`` and ``set_day_override`` are PC-only (rule
 ``overrides``); seven selected days normalise to ``null`` (= every day) as in the menu.
 """
 from __future__ import annotations
@@ -195,6 +195,18 @@ def remove_target(cfg: dict, slug: str, tid: str) -> None:
         kept = [t for t in watch["targets"] if not (isinstance(t, dict) and t.get("id") == tid)]
         if len(kept) != len(watch["targets"]):
             watch["targets"] = kept
+
+
+def set_event_follow(cfg: dict, event_id: str, on: bool) -> None:
+    """Follow switch of one Başiskele/VKV event (``ef`` in the menu): an explicit choice
+    that wins over the per-event default; applying it twice equals applying it once."""
+    _text(event_id, "etkinlik")
+    if len(event_id) > 120:
+        raise ValueError("etkinlik kimliği çok uzun")
+    follow = cfg.get("event_follow")
+    if not isinstance(follow, dict):
+        follow = cfg["event_follow"] = {}
+    follow[event_id] = bool(on)
 
 
 def set_paused(cfg: dict, paused: bool) -> None:

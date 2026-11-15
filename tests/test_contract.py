@@ -238,3 +238,25 @@ def test_worker_renders_python_produced_source_state():  # wave 4 B
         assert "✅ <b>Biletinial</b>" in screen["text"]
         assert "❌ <b>VKV Ford Otosan Gölcük</b>" in screen["text"]
         assert "Hata: Timeout" in screen["text"] and len(screen["text"]) <= 4096
+
+
+def test_worker_follow_route_matches_python_and_renders_python_events():  # wave 4 D+E
+    from tests.test_wave4d_vkv import D541, LIST, T0, Web
+    from tiyatro import srcevents as S
+    from tiyatro.runner import _prepare
+    state, raw_cfg, _plays = _python_state()
+    state = _prepare(state)
+    scan = S.scan_vkv(Web().fetch, T0)
+    S.fold_listings(state, config_from_dict(raw_cfg), "vkv", scan.listings, T0)
+    state = json.loads(json.dumps(state))
+    eid = "vkv:541"
+    route = "ef:{h:%s}:0:0" % eid
+    res = node({"config": raw_cfg, "state": state, "applies": [route, route],
+                "renders": ["eo:0", "ef:{h:%s}:1:0" % eid]})
+    py = copy.deepcopy(raw_cfg)
+    configedit.set_event_follow(py, eid, False)
+    assert res["applied"][0] == py == res["applied"][1]
+    config_from_dict(res["applied"][0])  # a valid Python config
+    text = res["rendered"][0]["text"]
+    assert "Ceviz Adam Müzikali" in text and "Kitle: Çocuk" in text and "Tür: Müzikal" in text
+    assert "19 Kasım 12:00'da açılacak" in text and len(text) <= 4096

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { h, render, apply, buildIndex, guardLength, audienceOf, genreLabel } from "../src/menu.js";
+import { h, render, apply, buildIndex, guardLength, audienceOf, genreLabel, isMutating, viewOf } from "../src/menu.js";
 import { makeConfig, makeState } from "./_fixtures.js";
 
 const cfg = makeConfig();
@@ -480,7 +480,7 @@ test("play screen shows Kitle and Tür, never the audience as the genre", () => 
 });
 
 // ---- wave 4 B: Kaynaklar screen ----
-import { sourceViews } from "../src/menu.js";
+import { sourceViews, eventViews } from "../src/menu.js";
 
 function srcState(extra = {}) {
   const s = makeState();
@@ -528,4 +528,77 @@ test("src screen escapes HTML in names/errors and stays under 4096 chars", () =>
 
 test("main menu has the Kaynaklar button", () => {
   assert.ok(flat(render("m", cfg, st).keyboard).some((b) => b.callback_data === "src"));
+});
+
+// ---- wave 4 E: Diğer kaynaklar + per-event follow switch ----
+function evState() {
+  const s = makeState();
+  const fut = (days, hh = 20) => new Date(Date.now() + days * 86400e3 + hh * 0).toISOString();
+  s.source_events = {
+    "vkv:541": { id: "vkv:541", source: "vkv", title: "Ceviz Adam <Müzikali>", kind: "Çocuk Tiyatrosu", start: fut(10),
+      opens_at: fut(2), opens_pending: true, full: false, audience: "Çocuk", genre: "Müzikal", follow_default: true },
+    "bk:20301104-1400-cop-atlas": { id: "bk:20301104-1400-cop-atlas", source: "basiskele", title: "Çöp Atlas",
+      kind: "Çocuk Tiyatrosu", start: fut(5), opens_at: null, full: null, audience: "Çocuk", genre: "", follow_default: true },
+    "bk:old": { id: "bk:old", source: "basiskele", title: "Geçmiş", start: fut(-3), follow_default: true },
+    "bk:ws": { id: "bk:ws", source: "basiskele", title: "Atölye", kind: "", start: fut(7), follow_default: false },
+  };
+  return s;
+}
+const EVID = h; // route hashes are h() of the event id (collisions are probed like play slugs)
+
+test("eventViews: future events by start, explicit choice beats the default", () => {
+  const s = evState();
+  const v = eventViews({ event_follow: { "bk:ws": true, "vkv:541": false } }, s);
+  assert.deepEqual(v.map((x) => [x.id, x.followed]),
+    [["bk:20301104-1400-cop-atlas", true], ["bk:ws", true], ["vkv:541", false]]);
+  assert.deepEqual(eventViews({}, s).map((x) => x.followed), [true, false, true]);
+  assert.deepEqual(eventViews({}, makeState()), []);
+});
+
+test("eo screen lists events with Kitle/Tür, reservation text and toggle buttons", () => {
+  const s = evState();
+  const r = render("eo:0", { ...cfg, event_follow: { "bk:ws": true } }, s);
+  assert.ok(r.text.includes("Diğer kaynaklar") && r.text.includes("Ceviz Adam &lt;Müzikali&gt;"), r.text);
+  assert.ok(r.text.includes("Kitle: Çocuk") && r.text.includes("Tür: Müzikal"));
+  assert.ok(r.text.includes("Rezervasyon: Duyuru bekleniyor") && r.text.includes("'da açılacak"));
+  assert.ok(!r.text.includes("Geçmiş"));
+  const cds = flat(r.keyboard).map((b) => b.callback_data);
+  const toggle = cds.filter((c) => c.startsWith("ef:"));
+  assert.equal(toggle.length, 3);
+  // already followed -> the button switches it off (0); not followed -> on (1)
+  assert.ok(toggle.some((c) => c.startsWith(`ef:${EVID("vkv:541")}:0:`)));
+  assert.ok(flat(r.keyboard).some((b) => b.text.startsWith("🟢")));
+  assert.ok(render("m", cfg, s).text.length > 0 && flat(render("m", cfg, s).keyboard).some((b) => b.callback_data === "eo:0"));
+});
+
+test("ef route sets the follow flag idempotently and renders the list again", () => {
+  const s = evState();
+  const route = `ef:${EVID("vkv:541")}:0:0`;
+  const c1 = apply(route, cfg, s);
+  assert.equal(c1.event_follow["vkv:541"], false);
+  assert.deepEqual(apply(route, c1, s), c1);                 // idempotent
+  const c2 = apply(`ef:${EVID("vkv:541")}:1:0`, c1, s);
+  assert.equal(c2.event_follow["vkv:541"], true);
+  assert.deepEqual(c2.plays, cfg.plays);                     // nothing else touched
+  assert.deepEqual(apply("ef:deadbeef:1:0", cfg, s), cfg);   // unknown event -> unchanged
+  assert.deepEqual(apply(`ef:${EVID("vkv:541")}:2:0`, cfg, s), cfg);
+  assert.equal(isMutating(route), true);
+  assert.equal(viewOf(route), "eo:0");
+  const r = render(viewOf(route), c1, s);
+  assert.ok(r.text.includes("⚪ <b>Ceviz Adam"), r.text);
+});
+
+test("eo screen paginates, stays under 4096 chars and every callback fits 64 bytes", () => {
+  const s = makeState();
+  s.source_events = {};
+  for (let i = 0; i < 40; i++) {
+    const id = `bk:2030110${i}-1400-uzun-etkinlik-adi-${i}`;
+    s.source_events[id] = { id, source: "basiskele", title: "Çok uzun bir etkinlik adı ".repeat(8), kind: "Yetişkin Tiyatrosu",
+      start: new Date(Date.now() + (i + 1) * 86400e3).toISOString(), follow_default: true };
+  }
+  const r = render("eo:1", cfg, s);
+  assert.ok(r.text.includes("sayfa 2/7") && r.text.length <= 4096);
+  for (const b of flat(r.keyboard)) assert.ok(bytes(b.callback_data) <= 64, b.callback_data);
+  assert.ok(labels(r).includes("‹ Önceki") && labels(r).includes("Sonraki ›"));
+  assert.ok(render("eo:99", cfg, s).text.includes("sayfa 7/7"));
 });

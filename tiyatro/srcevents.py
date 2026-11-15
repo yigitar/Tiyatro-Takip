@@ -508,9 +508,10 @@ def fold_listings(state: dict, config: Config, source: str, listings: list[Listi
         if ls.opens_at is not None:
             rec["opens_at"] = _iso(ls.opens_at)
             rec["opens_pending"] = ls.opens_pending
-        elif ls.detail_ok:  # the page was read and states no opening any more
-            rec["opens_at"] = None
-            rec["opens_pending"] = None
+        elif ls.detail_ok and rec.get("opens_at"):
+            # The page was read and no longer announces the opening: the time is kept (the
+            # alert key depends on it) and the event counts as opened.
+            rec["opens_pending"] = False
         prev_full = rec.get("full")
         if ls.full is not None:
             rec["full"] = bool(ls.full)
@@ -538,7 +539,11 @@ def _due_events(state: dict, rec: dict, opens: datetime | None, prev_full, now: 
     eid = rec["id"]
     if opens is not None:
         tag = _iso(opens)
-        if now < opens:
+        if now < opens and rec.get("opens_pending") is False:
+            out.append(_emit(state, "SRC_OPENED", f"SRC_OPENED:{eid}:{tag}", rec, now,
+                             {"detail": "Sayfadaki açılış duyurusu kalktı: rezervasyon "
+                                        "açılmış olabilir."}))
+        elif now < opens:
             if opens - DAY_LEAD <= now < opens - DAY_CUTOFF:
                 out.append(_emit(state, "SRC_DAY_BEFORE", f"SRC_DAY:{eid}:{tag}", rec, now))
             if opens - SOON_LEAD <= now < opens:

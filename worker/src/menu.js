@@ -4,7 +4,7 @@
 // Rule semantics mirror tiyatro/rules.py: days 0=Monday..6=Sunday (null = every day),
 // from_time and to_time both inclusive ("≤20:00" keeps 20:00 sessions), exclude_dates are
 // Europe/Istanbul ISO dates.
-// Routes (callback_data, each <= 64 bytes):
+// Routes (callback_data, each <= 64 bytes; ef/eo = follow switch + list of Başiskele/VKV events):
 //   m | pl:<page> | p:<h> | ts:<h>:<id> (target screen) | ta:<h>:<0|1> | tg:<h>:<y|c>
 //   hp:<h>:<id>:<n> | hd:<h>:<id>:<wd|we|all|d0..d6>[:<0|1>] | hf:<h>:<id>:<HH|none>
 //   ht:<h>:<id>:<HH|none> | hx:<h>:<id>:<yymmdd>:<0|1> (date, stateless) | hs:<h>:<id>:rm | tl | up | rf | src | pz:<0|1>
@@ -175,7 +175,7 @@ function notFound(what, backExtra) {
 
 // ---------------------------------------------------------------- apply
 
-const MUTATING = new Set(["ta", "tg", "hp", "hd", "hf", "ht", "hx", "hs", "pz"]);
+const MUTATING = new Set(["ta", "tg", "hp", "hd", "hf", "ht", "hx", "hs", "pz", "ef"]);
 
 function validHour(s) {
   if (s === "none") return null;
@@ -232,6 +232,16 @@ export function apply(route, config, state) {
 
     if (op === "pz") {
       if (parts[1] === "0" || parts[1] === "1") out.paused = parts[1] === "1";
+      return out;
+    }
+
+    if (op === "ef") {
+      // Per-event follow of Başiskele/VKV events: set semantics (ef:<h>:<0|1>[:<page>]).
+      const eid = eventIndex(state).slugOf.get(parts[1]);
+      if (eid !== undefined && (parts[2] === "0" || parts[2] === "1")) {
+        if (!isObj(out.event_follow)) out.event_follow = {};
+        out.event_follow[eid] = parts[2] === "1";
+      }
       return out;
     }
 
@@ -370,6 +380,81 @@ function sourcesScreen(state, refreshed) {
   return { text: lines.join("\n"), keyboard: rows([btn("🔄 Durumu göster", "src")], [BACK_MAIN()]) };
 }
 
+const EVENT_PAGE = 6;
+const MONTHS_TR = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
+
+function sourceEvents(state) {
+  return isObj(state) && isObj(state.source_events) ? state.source_events : {};
+}
+function eventIndex(state) {
+  return buildIndex(Object.keys(sourceEvents(state)));
+}
+
+/** "Rezervasyon durumu" text; mirrors tiyatro/srcevents.py reservation_text. */
+function reservationText(rec, now) {
+  if (rec.full) return "Doldu";
+  const opens = Date.parse(rec.opens_at);
+  if (!Number.isFinite(opens)) return "Duyuru bekleniyor";
+  if (now < opens) {
+    const d = istanbul(rec.opens_at).toISOString();
+    return `${Number(d.slice(8, 10))} ${MONTHS_TR[Number(d.slice(5, 7)) - 1]} ${d.slice(11, 16)}'da açılacak`;
+  }
+  return rec.opens_pending === false ? "Açık" : "Açılmış olabilir";
+}
+
+/** Future Başiskele/VKV events by start; ``followed`` = explicit choice, else the stored default. */
+export function eventViews(config, state, now = Date.now()) {
+  const follow = isObj(config) && isObj(config.event_follow) ? config.event_follow : {};
+  const out = [];
+  for (const [id, rec] of Object.entries(sourceEvents(state))) {
+    if (!isObj(rec)) continue;
+    const start = Date.parse(rec.start);
+    if (Number.isFinite(start) && start < now - 3 * 3600e3) continue;
+    const followed = typeof follow[id] === "boolean" ? follow[id] : rec.follow_default !== false;
+    out.push({ id, rec, start: Number.isFinite(start) ? start : Infinity, followed });
+  }
+  out.sort((a, b) => a.start - b.start || (a.id < b.id ? -1 : 1));
+  return out;
+}
+
+const SOURCE_SHORT = { basiskele: "Başiskele", vkv: "VKV Gölcük" };
+
+/** "Diğer kaynaklar": events of Başiskele and VKV with a per-event follow switch. */
+function eventsScreen(config, state, pageArg) {
+  const idx = eventIndex(state);
+  const all = eventViews(config, state);
+  const pages = Math.max(1, Math.ceil(all.length / EVENT_PAGE));
+  const page = Math.min(/^\d+$/.test(pageArg ?? "") ? Number(pageArg) : 0, pages - 1);
+  const shown = all.slice(page * EVENT_PAGE, (page + 1) * EVENT_PAGE);
+  const now = Date.now();
+  const lines = [`📅 <b>Diğer kaynaklar</b>${pages > 1 ? ` (sayfa ${page + 1}/${pages})` : ""}`,
+    "Başiskele Belediyesi ve VKV Gölcük etkinlikleri. Bir etkinliğe dokununca takibi açılır/kapanır: 🟢 takipte (bildirim gelir) · ⚪ takipte değil."];
+  if (all.length === 0) lines.push("", "Henüz etkinlik bilgisi yok.");
+  for (const { rec, followed } of shown) {
+    const bits = [esc(SOURCE_SHORT[rec.source] ?? rec.source ?? "")];
+    if (rec.start) bits.push(esc(fmtShort(rec.start)));
+    const kitle = audienceOf(rec.kind, [], null) || rec.audience;
+    if (kitle) bits.push(`Kitle: ${esc(kitle)}`);
+    if (rec.genre) bits.push(`Tür: ${esc(rec.genre)}`);
+    lines.push("", `${followed ? "🟢" : "⚪"} <b>${esc(trunc(rec.title ?? rec.id, 60))}</b>`,
+      bits.filter(Boolean).join(" · "), `Rezervasyon: ${esc(reservationText(rec, now))}`);
+  }
+  const nav = [
+    page > 0 ? btn("‹ Önceki", `eo:${page - 1}`) : null,
+    page < pages - 1 ? btn("Sonraki ›", `eo:${page + 1}`) : null,
+  ];
+  return {
+    text: lines.join("\n"),
+    keyboard: rows(
+      ...shown.map(({ id, rec, followed }) => [btn(
+        `${followed ? "🟢" : "⚪"} ${trunc(rec.title ?? id, 30)}`,
+        `ef:${idx.hashOf.get(id)}:${followed ? 0 : 1}:${page}`)]),
+      nav,
+      [BACK_MAIN()],
+    ),
+  };
+}
+
 function mainScreen(config, state) {
   const watched = allSlugs(config, state).filter((s) => isWatched(config, state, s)).length;
   const paused = isObj(config) && config.paused === true;
@@ -389,6 +474,7 @@ function mainScreen(config, state) {
       [btn("📋 Takip listem", "tl")],
       [btn("⏳ Yaklaşan açılışlar", "up")],
       [btn("🔄 Yenile", "rf"), btn("📡 Kaynaklar", "src")],
+      [btn("📅 Diğer kaynaklar", "eo:0")],
       [paused ? btn("▶️ Devam", "pz:0") : btn("⏸ Duraklat", "pz:1")],
     ),
   };
@@ -651,6 +737,8 @@ function renderRoute(route, config, state) {
     if (op === "up") return upcomingScreen(config, state);
     if (op === "rf") return sourcesScreen(state, true);
     if (op === "src") return sourcesScreen(state, false);
+    if (op === "eo") return eventsScreen(config, state, parts[1]);
+    if (op === "ef") return eventsScreen(config, state, parts[3]);
     const idx = indexFor(config, state);
     if (op === "pl") return listScreen(config, state, parts[1], idx);
 
@@ -680,6 +768,7 @@ export function isMutating(route) {
 export function viewOf(route) {
   const parts = String(route ?? "").split(":");
   if (parts[0] === "hs") return `p:${parts[1]}`;
+  if (parts[0] === "ef") return `eo:${parts[3] ?? 0}`;
   if (parts[0] === "pz") return "m";
   if (["hp", "hd", "hf", "ht", "hx"].includes(parts[0])) return `ts:${parts[1]}:${parts[2]}`;
   return route;

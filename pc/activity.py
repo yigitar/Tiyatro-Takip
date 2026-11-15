@@ -374,6 +374,13 @@ def _describe(old: dict, new: dict, titles: dict) -> list[str]:
         if bool(old.get("paused")) != bool(new.get("paused")):
             out.append("Tüm bildirimler duraklatıldı" if new.get("paused")
                        else "Tüm bildirimler yeniden açıldı")
+    o_ef, n_ef = old.get("event_follow"), new.get("event_follow")
+    o_ef = o_ef if isinstance(o_ef, dict) else {}
+    n_ef = n_ef if isinstance(n_ef, dict) else {}
+    for eid in sorted(set(o_ef) | set(n_ef)):
+        if o_ef.get(eid) != n_ef.get(eid) and isinstance(n_ef.get(eid), bool):
+            out.append(f"{titles.get(eid) or eid}: etkinlik takibi "
+                       f"{'açıldı' if n_ef[eid] else 'kapatıldı'}")
     o_plays, n_plays = old.get("plays"), new.get("plays")
     o_plays = o_plays if isinstance(o_plays, dict) else {}
     n_plays = n_plays if isinstance(n_plays, dict) else {}

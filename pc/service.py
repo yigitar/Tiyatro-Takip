@@ -239,8 +239,12 @@ class Service:
     @_quiet(dict)
     def _titles(self) -> dict[str, str]:
         plays = (self._state or {}).get("plays") or {}
-        return {slug: e.get("title") for slug, e in plays.items()
-                if isinstance(e, dict) and e.get("title")}
+        out = {slug: e.get("title") for slug, e in plays.items()
+               if isinstance(e, dict) and e.get("title")}
+        for eid, e in ((self._state or {}).get("source_events") or {}).items():
+            if isinstance(e, dict) and e.get("title"):
+                out.setdefault(eid, e["title"])
+        return out
 
     def log_startup(self) -> None:
         self._log(act.CAT_APP, "Uygulama başlatıldı")
@@ -1042,6 +1046,14 @@ class Service:
         tags = entry.get("tags") if isinstance(entry, dict) else None
         tags = [t for t in tags if isinstance(t, str)] if isinstance(tags, list) else []
         return self._edit(configedit.set_active, slug, active, tags)
+
+    def set_event_follow(self, event_id: str, on: bool) -> dict:
+        return self._edit(configedit.set_event_follow, event_id, on)
+
+    def event_views(self, now: datetime | None = None) -> list[dict]:
+        """Rows of the "Diğer kaynaklar" tab (Başiskele + VKV events)."""
+        return srcmod_events.event_views(self.state, self._config or default_config(),
+                                         now or self._clock())
 
     def ensure_target(self, slug: str, kind: str) -> dict:
         return self._edit(configedit.ensure_target, slug, kind)
