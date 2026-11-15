@@ -51,6 +51,15 @@ PORTAL_TEXT = {
     "PORTAL_CHANGED": "güncellendi",
     "PORTAL_FAILING": "okunamıyor",
 }
+SOURCE_LABELS = {"basiskele": "Başiskele Belediyesi", "vkv": "VKV Gölcük"}
+SRC_TEXT = {
+    "SRC_NEW": "🆕 yeni etkinlik duyuruldu",
+    "SRC_OPENS": "🗓️ rezervasyon açılış saati duyuruldu",
+    "SRC_DAY_BEFORE": "🔔 yarın rezervasyon açılıyor",
+    "SRC_SOON": "⏰ 10 dk sonra rezervasyon açılıyor",
+    "SRC_OPENED": "🎟️ rezervasyon açıldı!",
+    "SRC_REOPENED": "🎟️ rezervasyon yeniden açıldı!",
+}
 PORTAL_NOTE_ITEMS = 5
 PORTAL_LABELS = {"basiskele": "Başiskele rezervasyon portalı"}
 DAY_BEFORE_TEXT = "\U0001f514 Satış açılış hatırlatması: "
@@ -124,6 +133,36 @@ def portal_headline(ev: Event) -> str:
     return f"🏛️ {label}{sep}{PORTAL_TEXT.get(ev.kind, ev.kind)}"
 
 
+def source_headline(ev: Event) -> str:
+    """First line of a source-event notification (also the desktop notification title)."""
+    p = ev.payload if isinstance(ev.payload, dict) else {}
+    label = SOURCE_LABELS.get(p.get("source")) or str(p.get("source") or "Kaynak")
+    return f"🎭 {label}: {SRC_TEXT.get(ev.kind, ev.kind)}"
+
+
+def _source_entry(ev: Event) -> str:
+    p = ev.payload if isinstance(ev.payload, dict) else {}
+    lines = [html.escape(source_headline(ev))]
+    if p.get("title"):
+        lines.append(f"<b>{_esc(p['title'], TITLE_MAX)}</b>")
+    start = _dt(p.get("start"))
+    if start:
+        lines.append(f"📅 {_when(start)}")
+    place = " · ".join(x for x in (str(p.get("kind") or ""), str(p.get("venue") or "")) if x)
+    if place:
+        lines.append(f"📍 {_esc(place, TITLE_MAX)}")
+    opens = _dt(p.get("opens_at"))
+    if opens and ev.kind != "SRC_OPENED":
+        lines.append(f"📝 Rezervasyon: {_when(opens)}")
+    if p.get("detail"):
+        lines.append(_esc(p["detail"], DETAIL_MAX))
+    for extra in p.get("contact") or []:
+        lines.append(_esc(extra, TITLE_MAX))
+    if p.get("url"):
+        lines.append(f"🔗 {_esc(p['url'], URL_MAX)}")
+    return chr(10).join(lines)
+
+
 def _portal_entry(ev: Event) -> str:
     p = ev.payload if isinstance(ev.payload, dict) else {}
     lines = [html.escape(portal_headline(ev))]
@@ -155,6 +194,8 @@ KIND_FIRST = ("ON_SALE", "OPENING_SOON")  # lock-screen preview shows the first 
 def _entry(ev: Event, plays: dict[str, Play], config: Config, ids: list[str]) -> str:
     if ev.kind in PORTAL_TEXT:
         return _portal_entry(ev)
+    if ev.kind in SRC_TEXT:
+        return _source_entry(ev)
     lines = []
     if ev.kind in KIND_FIRST:
         lines.append(_kind_line(ev))

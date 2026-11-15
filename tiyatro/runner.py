@@ -93,6 +93,7 @@ from tiyatro.notify import MONTHS, Telegram, default_transport, format_message
 from tiyatro.parser import ParseError, parse_play, parse_venue
 from tiyatro.portals import item_key, parse_portal
 from tiyatro.rules import matching_targets
+from tiyatro import srcevents
 from tiyatro.sources import TIME_KEYS, record_check
 from tiyatro.state import (ON_SALE_GAP, clean_emitted, cleanup, diff, empty_state,
                            next_opening, valid_session_record)
@@ -106,6 +107,7 @@ BURST_GAP_S = 0.5
 FETCH_FAIL_ALERT_AT = 3
 PLAY_FAIL_ALERT_AT = 3
 PORTAL_FAIL_ALERT_AT = 3
+SOURCE_WAIT_S = 25  # sources (Başiskele RSS, VKV) overlap the Biletinial scan this long
 PORTAL_WAIT_S = 5  # how long after the Biletinial work the portal result may still take
 PORTAL_LINES_KEPT, PORTAL_ITEMS_KEPT, PORTAL_NOTE_MAX = 40, 20, 5
 PORTAL_CHANGED_COOLDOWN = timedelta(hours=6)  # at most one PORTAL_CHANGED per portal
@@ -194,6 +196,10 @@ def _prepare(state) -> dict:
     state["sources"] = ({k: v for k, v in sources.items()
                          if isinstance(k, str) and isinstance(v, dict)}
                         if isinstance(sources, dict) else {})
+    for key in ("source_events", "src_cache"):
+        raw = state.get(key)
+        state[key] = ({k: v for k, v in raw.items() if isinstance(k, str) and isinstance(v, dict)}
+                      if isinstance(raw, dict) else {})
     state["emitted"] = clean_emitted(state.get("emitted"))
     box = state.get("outbox")
     state["outbox"] = [e for e in (box if isinstance(box, list) else [])
@@ -236,6 +242,10 @@ def _fingerprint(state: dict) -> str:
         if isinstance(rec, dict):
             for key in TIME_KEYS:
                 rec.pop(key, None)
+    for rec in (st.get("source_events") or {}).values():
+        if isinstance(rec, dict):
+            rec.pop("last_seen", None)
+            rec.pop("last_detail_at", None)
     for entry in (st.get("plays") or {}).values():
         if isinstance(entry, dict):
             entry.pop("last_seen", None)
@@ -468,6 +478,71 @@ class _PortalFetch:
         for t in self._threads:
             t.join(max(0.0, deadline - time.monotonic()))
         return dict(self.results)
+
+
+class _SourceFetch:
+    """Başiskele and VKV reads on daemon threads (like ``_PortalFetch``): they overlap the
+    Biletinial scan and a hanging site can only ever be abandoned."""
+
+    def __init__(self, jobs: dict[str, Callable]):
+        self.results: dict[str, object] = {}  # id -> SourceScan | exception type name
+        self._threads = []
+        for sid, fn in jobs.items():
+            t = threading.Thread(target=self._work, args=(sid, fn), daemon=True)
+            self._threads.append(t)
+            t.start()
+
+    def _work(self, sid: str, fn: Callable) -> None:
+        try:
+            self.results[sid] = fn()
+        except Exception as exc:
+            self.results[sid] = type(exc).__name__
+
+    def wait(self, timeout: float) -> dict[str, object]:
+        deadline = time.monotonic() + max(0.0, timeout)
+        for t in self._threads:
+            t.join(max(0.0, deadline - time.monotonic()))
+        return dict(self.results)
+
+
+def _start_sources(state: dict, fetch_fn: Callable | None, sleep: Callable,
+                   now: datetime) -> _SourceFetch | None:
+    if fetch_fn is None:
+        return None
+    cache = copy.deepcopy(((state.get("src_cache") or {}).get("basiskele") or {})
+                          .get("articles") or {})
+    return _SourceFetch({
+        srcevents.BASISKELE: lambda: srcevents.scan_basiskele(fetch_fn, cache, now),
+        srcevents.VKV: lambda: srcevents.scan_vkv(fetch_fn, now, sleep),
+    })
+
+
+def _apply_sources(state: dict, config: Config, results: dict, now: datetime,
+                   only: tuple[str, ...] | None = None) -> list[Event]:
+    """Fold the source scans into the state (status + events); one source's bug never
+    reaches another's result or the Biletinial scan."""
+    events: list[Event] = []
+    for sid in (only or (srcevents.BASISKELE, srcevents.VKV)):
+        scan = results.get(sid, "Timeout")
+        try:
+            if not isinstance(scan, srcevents.SourceScan):
+                record_check(state, sid, now, False, error=scan)
+                continue
+            if not scan.ok:
+                record_check(state, sid, now, False, error=scan.error)
+                continue
+            events.extend(srcevents.fold_listings(state, config, sid, scan.listings, now,
+                                                  complete=scan.complete))
+            if scan.complete:
+                record_check(state, sid, now, True, items=scan.content(),
+                             items_count=len(scan.listings))
+            else:  # burst re-read of a few detail pages: proves reachability only
+                record_check(state, sid, now, True)
+            if sid == srcevents.BASISKELE:
+                state.setdefault("src_cache", {}).setdefault(sid, {})["articles"] = scan.articles
+        except Exception:
+            continue
+    return events
 
 
 def _start_portals(config: Config, fetch_fn: Callable | None) -> _PortalFetch | None:
@@ -757,6 +832,12 @@ def run_once(store, tg, claims, now: datetime, who: str = "github",
             portal_job = _start_portals(config, portal_fetch_fn)
         except Exception:
             portal_job = None
+    source_job = None
+    if only_slugs is None:
+        try:
+            source_job = _start_sources(state, portal_fetch_fn, sleep, now)
+        except Exception:
+            source_job = None
     plays, unscanned, play_failures, venue_error = _scan(config, state, fetch_fn, sleep,
                                                          only_slugs)
     failures += play_failures
@@ -813,6 +894,30 @@ def run_once(store, tg, claims, now: datetime, who: str = "github",
                 events.extend(portal_events)
                 failures += _dispatch(state, portal_events, False, store, tg, claims, now,
                                       {}, config, who)
+        except Exception:
+            pass
+
+    if source_job is not None:  # also after the Biletinial dispatch
+        try:
+            src_events = _apply_sources(state, config, source_job.wait(SOURCE_WAIT_S), now)
+            if src_events:
+                events.extend(src_events)
+                failures += _dispatch(state, src_events, False, store, tg, claims, now,
+                                      {}, config, who)
+        except Exception:
+            pass
+    elif burst and portal_fetch_fn is not None:
+        try:
+            ids = [i for i in srcevents.burst_ids(state, config, now)
+                   if srcevents.due_for_burst_check(state["source_events"][i], now)]
+            if ids:
+                scan = srcevents.scan_vkv_burst(portal_fetch_fn, state, ids, now)
+                src_events = _apply_sources(state, config, {srcevents.VKV: scan}, now,
+                                            (srcevents.VKV,))
+                if src_events:
+                    events.extend(src_events)
+                    failures += _dispatch(state, src_events, False, store, tg, claims, now,
+                                          {}, config, who)
         except Exception:
             pass
 
@@ -879,9 +984,12 @@ def plan_mode(state: dict, config: Config, now: datetime) -> tuple[str, datetime
     ``max_seconds`` and the next scheduled run re-enters burst mode. Cadence: every 15 s +-3 s for the whole window.
     """
     found = _burst_targets(state, config, now)
-    if not found:
+    src = srcevents.burst_ids(state, config, now)
+    if not found and not src:
         return "normal", None
-    return "burst", max(end for _, end, _opens in found)
+    ends = [end for _, end, _opens in found]
+    ends.extend(srcevents.source_burst_end(state, i) for i in src)
+    return "burst", max(ends)
 
 
 def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callable,
@@ -890,7 +998,8 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
                who: str = "github", persist_state: bool = True,
                state: dict | None = None,
                rand: Callable[[float, float], float] = random.uniform,
-               config: Config | None = None) -> RunResult:
+               config: Config | None = None,
+               source_fetch_fn: Callable | None = None) -> RunResult:
     """Re-scan only the plays inside a burst window.
 
     ``config``: the last good config, used while ``config.json`` cannot be read or is
@@ -936,14 +1045,17 @@ def burst_loop(store, tg, claims, now_fn: Callable[[], datetime], sleep: Callabl
                     raise
                 errors.append(type(exc).__name__)
             targets = _burst_targets(state, config, now)
-            if not targets:
+            if not targets and not (source_fetch_fn is not None
+                                    and srcevents.burst_ids(state, config, now)):
                 break
             slugs = sorted({slug for slug, _end, _opens in targets})
             result = run_once(store, tg, claims, now, who=who, fetch_fn=fetch_fn,
                               sleep=sleep, persist_state=False, state=state,
-                              only_slugs=slugs, config=config)
+                              only_slugs=slugs, config=config,
+                              portal_fetch_fn=source_fetch_fn)
             state = result.state
-            fail_ticks = fail_ticks + 1 if result.scanned == 0 else 0
+            if targets:  # a source-only tick fetches no play page: nothing to count
+                fail_ticks = fail_ticks + 1 if result.scanned == 0 else 0
             if fail_ticks == BURST_FAIL_ALERT_AT:
                 opens = [o for *_x, o in targets if o is not None]
                 # stable across runs of one outage: the earliest opens_at, else the
@@ -1172,7 +1284,8 @@ def main() -> int:
         if mode == "burst":
             try:
                 br = burst_loop(store, tg, claims, now_fn, time.sleep, until,
-                                fetch_fn=fetch, state=state, config=config)
+                                fetch_fn=fetch, state=state, config=config,
+                                source_fetch_fn=fetch)
                 state = br.state
                 errors.append(br.save_error)
                 if br.dirty:  # retry the final burst state once more below

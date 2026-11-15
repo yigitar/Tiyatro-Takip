@@ -73,6 +73,7 @@ class Config:
     paused: bool
     version: int
     portals: list[dict] = field(default_factory=list)
+    event_follow: dict[str, bool] = field(default_factory=dict)  # per source event
 
 
 EVENT_KINDS = (
@@ -94,6 +95,12 @@ EVENT_KINDS = (
     "PORTAL_OPENED",
     "PORTAL_CHANGED",
     "PORTAL_FAILING",
+    "SRC_NEW",
+    "SRC_OPENS",
+    "SRC_DAY_BEFORE",
+    "SRC_SOON",
+    "SRC_OPENED",
+    "SRC_REOPENED",
 )
 
 

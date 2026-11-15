@@ -11,6 +11,7 @@ DEFAULT_SOURCE = (
 )
 MIN_PEOPLE, MAX_PEOPLE = 1, 4
 MAX_PORTALS = 5
+MAX_EVENT_FOLLOW = 500
 DEFAULT_PORTALS = [{"id": "basiskele", "name": "Başiskele Belediyesi rezervasyon",
                     "url": "https://rezervasyon.basiskele.bel.tr/etkinlikler",
                     "enabled": True}]
@@ -105,6 +106,20 @@ def _portals_from(raw) -> list[dict]:
     return out
 
 
+def _event_follow_from(raw) -> dict[str, bool]:
+    """Validated copy of ``config.event_follow`` (explicit per-event choices); absent = {}."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or len(raw) > MAX_EVENT_FOLLOW:
+        raise ValueError("event_follow gecersiz")
+    out = {}
+    for k, v in raw.items():
+        if not isinstance(k, str) or not k or len(k) > 120 or not isinstance(v, bool):
+            raise ValueError("event_follow girdisi gecersiz")
+        out[k] = v
+    return out
+
+
 def config_from_dict(d: dict) -> Config:
     plays: dict[str, PlayWatch] = {}
     for slug, w in (d.get("plays") or {}).items():
@@ -119,6 +134,7 @@ def config_from_dict(d: dict) -> Config:
         paused=bool(d.get("paused", False)),
         version=int(d.get("version", 1)),
         portals=_portals_from(d.get("portals")),
+        event_follow=_event_follow_from(d.get("event_follow")),
     )
 
 
@@ -144,6 +160,7 @@ def config_to_dict(c: Config) -> dict:
         "paused": c.paused,
         "version": c.version,
         "portals": [dict(p) for p in c.portals],
+        "event_follow": dict(c.event_follow),
     }
 
 

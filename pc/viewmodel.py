@@ -11,8 +11,8 @@ from datetime import datetime
 
 from tiyatro.config import default_config
 from tiyatro.models import ISTANBUL, Config, Event, Play, Target
-from tiyatro.notify import (DAY_BEFORE_TEXT, DAYS, KIND_TEXT, MONTHS, format_message,
-                            portal_headline, portal_label)
+from tiyatro.notify import (DAY_BEFORE_TEXT, DAYS, KIND_TEXT, MONTHS, SRC_TEXT, format_message,
+                            portal_headline, portal_label, source_headline)
 from tiyatro.tags import apply_overrides, audience_of, genre_label
 from tiyatro.timeutil import parse_iso
 
@@ -272,6 +272,8 @@ def headline(event: Event) -> str:
         return "Bildirim iletilemedi"
     if event.kind.startswith("PORTAL_"):
         return portal_headline(event)
+    if event.kind in SRC_TEXT:
+        return source_headline(event)
     return KIND_TEXT.get(event.kind, event.kind)
 
 

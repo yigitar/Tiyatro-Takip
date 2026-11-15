@@ -60,6 +60,7 @@ from tiyatro.fetcher import fetch
 from tiyatro.heartbeat import github_run_status, write_heartbeat
 from tiyatro.models import ISTANBUL, Config, Event, Play
 from tiyatro import sources as srcmod
+from tiyatro import srcevents as srcmod_events
 from tiyatro.notify import portal_label
 from tiyatro.runner import (BURST_INTERVAL_S, BURST_JITTER_S, BURST_LEAD, CONFIG_PATH,
                             PC_WINDOW, _burst_targets, _entry_events, _prepare,
@@ -343,6 +344,24 @@ class Service:
                 result = f"değişiklik var: {'boş' if old.get('empty') else 'açık'} → {now_text}"
             self._log(act.CAT_SCAN, f"{label}: {now_text}", result + "\nPC (otomatik)")
 
+    @_quiet()
+    def _log_sources(self, before: dict, new_state: dict) -> None:
+        """One "Liste kontrolü" line per Başiskele/VKV check of the run; failures go to
+        "Hata/Uyarı". Biletinial has its own scan line."""
+        for sid in (srcmod_events.BASISKELE, srcmod_events.VKV):
+            rec = (new_state.get("sources") or {}).get(sid)
+            old = before.get(sid) if isinstance(before.get(sid), dict) else {}
+            if not isinstance(rec, dict) or rec.get("last_check_at") == old.get("last_check_at"):
+                continue
+            name = srcmod.source_name(sid)
+            if rec.get("ok") is False:
+                self._log(act.CAT_ERROR, f"{name} okunamadı", f"{rec.get('error') or 'hata'}\n"
+                          "Biletinial taramasını etkilemez", "warn")
+                continue
+            changed = rec.get("last_change_at") != old.get("last_change_at")
+            self._log(act.CAT_SCAN, f"{name}: {rec.get('items_count')} etkinlik",
+                      ("değişiklik var" if changed else "değişiklik yok") + "\nPC (otomatik)")
+
     @_quiet(lambda: ({}, {}, {}))
     def _log_prepare(self, state: dict) -> tuple[dict, dict, dict]:
         """Snapshot of the state before a run (for the log comparison afterwards)."""
@@ -604,7 +623,8 @@ class Service:
         state, config = self.state, self._config
         if state is None or config is None:
             return float(NORMAL_INTERVAL_S)
-        if not _burst_targets(state, config, now):
+        if not _burst_targets(state, config, now) and not (
+                self._portal_fetch is not None and srcmod_events.burst_ids(state, config, now)):
             return float(NORMAL_INTERVAL_S)
         return max(1.0, BURST_INTERVAL_S + self._rand(-BURST_JITTER_S, BURST_JITTER_S))
 
@@ -706,6 +726,7 @@ class Service:
         discarded = int(state["meta"].get("paused_discarded", 0) or 0)
         snap_before, attempts, by_key = self._log_prepare(state)
         portals_before = copy.deepcopy(state.get("portals") or {})
+        sources_before = copy.deepcopy(state.get("sources") or {})
         sent_before = self._tg.sent
         res = run_once(self._store, self._tg, self._claims, now, who="pc",
                        fetch_fn=fetch_fn, sleep=sleep, persist_state=False, state=state,
@@ -724,6 +745,7 @@ class Service:
         if not delivery_only and not manual:  # "Listeyi güncelle" logs itself
             self._log_scan(now, snap_before, new, res, only, mode)
         self._log_portals(portals_before, new, config)
+        self._log_sources(sources_before, new)
         self._log_delivery(attempts, new, res, self._tg.sent - sent_before, by_key)
         if int(new["meta"].get("paused_discarded", 0) or 0) == discarded:
             after = [ev for entry in new["outbox"] for ev in _entry_events(entry)]

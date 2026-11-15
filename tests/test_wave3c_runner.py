@@ -35,9 +35,13 @@ class PortalWeb:
         self.html = html if html is not None else real_empty()
         self.error: Exception | None = None
         self.calls: list[str] = []
+        self.other_calls: list[str] = []
         self.block: threading.Event | None = None
 
     def fetch(self, url):
+        if url != PORTAL_URL:  # wave 4: the other sources share this injected fetcher
+            self.other_calls.append(url)
+            raise FetchError(f"HTTP 404: {url}")
         self.calls.append(url)
         if self.block is not None:
             self.block.wait(30)
