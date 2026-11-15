@@ -290,8 +290,8 @@ def test_play_provenance_flags():
     comedy = row_of(play({"a": sess(5, 20)}))   # genre says Komedi, audience by the age rule
     assert comedy.derived == {"audience", "zaman", "target", "rez"}
     child = row_of(play({"a": sess(5, 15, "on_sale")}, genre="Çocuk Oyunu"))
-    assert child.derived == {"genre", "zaman", "target"}   # audience stated, genre = Tiyatro
-    assert child.genre == "Tiyatro" and child.audience == "Çocuk"
+    assert child.derived == {"genre", "zaman", "target"}   # audience stated, genre blank
+    assert child.genre == "" and child.audience == "Çocuk"
     cells = dict(zip(L.SORT_COLUMNS, L.row_cells(comedy)))
     assert cells["genre"].derived is False and cells["audience"].derived is True
     assert cells["zaman"].derived and cells["target"].derived and cells["rez"].derived
@@ -309,7 +309,7 @@ def test_event_provenance_per_source():
     assert "audience" not in vkv_child.derived and "genre" in vkv_child.derived
     assert vkv_child.genre == "Müzikal"                       # from the title word: derived
     vkv_plain = event_row(_view(eid="vkv:540", kind="Tiyatro", title="Tek Kişilik Gösteri"), NOW)
-    assert {"audience", "genre", "zaman"} <= vkv_plain.derived and vkv_plain.genre == "Tiyatro"
+    assert {"audience", "genre", "zaman"} <= vkv_plain.derived and vkv_plain.genre == ""
     bk_kind = event_row(_view("basiskele", "bk:1", "Yetişkin Tiyatrosu", "Hiç Kimsenin Öyküsü"), NOW)
     assert bk_kind.audience == "Yetişkin" and "audience" not in bk_kind.derived
     bk_none = event_row(_view("basiskele", "bk:2", "", "Satır Arası Ebeveynlik"), NOW)

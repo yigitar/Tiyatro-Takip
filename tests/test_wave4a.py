@@ -35,7 +35,7 @@ def test_row_has_separate_kitle_and_tur():
     now = datetime(2026, 11, 15, tzinfo=ISTANBUL)
     cfg = default_config()
     r = _row("p", _entry("Yetişkin Oyunu", age=16), cfg, set(), set(), now)
-    assert (r.audience, r.genre) == ("Yetişkin", "Tiyatro")  # genre blank -> stated fallback
+    assert (r.audience, r.genre) == ("Yetişkin", "")  # genre blank stays blank ("—"), no "Tiyatro" filler
     r = _row("p", _entry("Komedi", tags=["çocuk"], age=7), cfg, set(), set(), now)
     assert (r.audience, r.genre) == ("Çocuk", "Komedi")
     values = dict(zip(L.SORT_COLUMNS, L.row_values(r)))

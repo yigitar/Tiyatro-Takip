@@ -90,7 +90,7 @@ def test_fixture_covers_every_branch_it_claims_to():
     assert {r.zaman for r in rows.values()} >= {"gündüz", "gece", "gündüz+gece", ""}
     assert {r.audience for r in rows.values()} == {"Çocuk", "Yetişkin"}
     assert "" in {r.genre for r in rows.values()}            # non-theatre event without a genre word
-    assert {"Müzikal", "Komedi", "Stand-up", "Tiyatro", "Dram"} <= {r.genre for r in rows.values()}
+    assert {"Müzikal", "Komedi", "Stand-up", "Dram"} <= {r.genre for r in rows.values()}
     assert "arsivlenmis" not in rows and "arsivlenmis-takipte" in rows  # archived rule
     assert rows["kalkti"].is_removed is True  # shown with the KALKTI marker on both sides
     assert "vkv:548" not in rows and "vkv:547" in rows       # 3 h window
@@ -123,5 +123,5 @@ def test_known_gap_fixed_worker_no_longer_blanks_kitle_for_plays_without_age():
     config, state = _fixture()
     items = {i["id"]: i for i in worker_items(config, state, [NOW])[0]}
     assert items["genre-yok-yas-yok"]["kitle"] == "Yetişkin"
-    assert items["genre-yok-yas-yok"]["tur"] == "Tiyatro"
+    assert items["genre-yok-yas-yok"]["tur"] == ""   # no "Tiyatro" filler (wave 9)
     assert items["yetiskin-oyunu-sadece-kitle"]["tur"] == "Dram"   # genre word found in the summary

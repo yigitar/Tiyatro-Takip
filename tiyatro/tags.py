@@ -78,10 +78,9 @@ def genre_label(genre) -> str:
 # so (genre or kind wording, derived "çocuk" tag, age limit <= 12); otherwise "Yetişkin" --
 # either because the page says so, the age limit is 13+, or there is no child marker at
 # all. Tür is the genre proper; when the genre field holds only the audience, the title /
-# description is searched for a genre keyword; a theatre event with no further hint is
-# plain "Tiyatro". Only a non-theatre source item without any hint stays unknown ("").
+# description is searched for a genre keyword. With no genre word at all Tür stays blank
+# ("—"): "Tiyatro" is never filled in (everything listed is theatre; it is not a genre).
 
-GENERIC_GENRE = "Tiyatro"
 _GENRE_KEYWORDS = (
     ("Müzikal", r"m[uü]zikal\w*"), ("Komedi", r"komedi\w*"), ("Dram", r"dram(?:a|atik|ı)?"),
     ("Trajedi", r"trajedi\w*"), ("Monolog", r"monolog\w*"), ("Stand-up", r"stand[\s-]?up"),
@@ -114,10 +113,10 @@ def resolve_audience(genre="", tags=(), age_limit=None, text="") -> str:
     return CHILD_LABEL if "çocuk" in _tr_lower(str(text or "")) else ADULT_LABEL
 
 
-def resolve_genre(genre="", *texts, theatre: bool = True) -> str:
-    """Tür: the genre field, else a keyword from ``texts``, else "Tiyatro" (``theatre``)."""
-    found = genre_label(genre) or genre_from_text(*texts)
-    return found or (GENERIC_GENRE if theatre else "")
+def resolve_genre(genre="", *texts) -> str:
+    """Tür: the genre field, else an unambiguous keyword from ``texts``, else "" (shown
+    as "—"); never the generic "Tiyatro"."""
+    return genre_label(genre) or genre_from_text(*texts)
 
 
 def derived_tags(tags, audience: str, start_hour: int | None = None) -> list[str]:
@@ -148,8 +147,7 @@ def audience_is_stated(genre) -> bool:
 
 def genre_is_stated(genre) -> bool:
     """True when the genre field itself holds a genre word after the audience/generic
-    words are removed. A keyword found in the title/description and the "Tiyatro"
-    fallback are derived."""
+    words are removed. A keyword found in the title/description is derived."""
     return bool(genre_label(genre))
 
 

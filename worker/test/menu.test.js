@@ -478,7 +478,7 @@ test("play screen shows Kitle and Tür, never the audience as the genre", () => 
   e.genre = "Yetişkin Oyunu"; e.tags = []; e.age_limit = 16;
   text = render(`p:${KB}`, cfg, s).text;
   assert.ok(text.includes("Kitle: Yetişkin"), text); // stated by the page: not italic
-  assert.ok(text.includes("Tür: <i>Tiyatro</i>"), text); // wave 7: the same fallback as the PC list
+  assert.ok(text.includes("Tür: <i>—</i>"), text); // wave 9: no "Tiyatro" filler, as the PC list
 });
 
 // ---- wave 4 B: Kaynaklar screen ----

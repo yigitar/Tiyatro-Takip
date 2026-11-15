@@ -12,7 +12,6 @@ const MONTHS_SHORT = ["Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", 
 const DAY_SHORT = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
 
 export const NO_TARGET_SHORT = "yok → tüm seanslar"; // pc/viewmodel.py NO_TARGET_SHORT
-export const GENERIC_GENRE = "Tiyatro";
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
@@ -82,9 +81,9 @@ export function resolveAudience(genre = "", tags = [], age = null, text = "") {
   return audienceOf(genre, tags, age) || (trLower(text).includes("çocuk") ? "Çocuk" : "Yetişkin");
 }
 
-/** Tür: the genre field, else a keyword from `texts`, else "Tiyatro" (`theatre`). */
-export function resolveGenre(genre, texts = [], theatre = true) {
-  return genreLabel(genre) || genreFromText(...texts) || (theatre ? GENERIC_GENRE : "");
+/** Tür: the genre field, else an unambiguous keyword from `texts`, else "" (shown "—"; never "Tiyatro"). */
+export function resolveGenre(genre, texts = []) {
+  return genreLabel(genre) || genreFromText(...texts);
 }
 
 /** "gündüz" (a session before 17:00), "gece" (17:00 or later), both joined, "" without sessions. */
@@ -205,7 +204,7 @@ export function eventFields(rec, id, now) {
   if (rez.derived) derived.push("rez");
   return {
     kitle: resolveAudience(kind, [], null, `${kind} ${title}`),
-    tur: resolveGenre(kind, [title], isTheatre(kind, title)),
+    tur: resolveGenre(kind, [title]),
     zaman: Number.isFinite(start) ? timeOfDay([local(start).getUTCHours()]) : "",
     hedef: "—",
     rez: rez.text,

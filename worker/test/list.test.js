@@ -51,7 +51,7 @@ test("rows carry Kitle / Tür / Zaman / Hedef / Rez. açılış; derived values 
     ["Yetişkin", "Komedi", "gündüz+gece", "var (1)", "20 Şub Çar 10:00 (19 gün sonra)"]);
   assert.deepEqual(kb.derived, ["audience", "zaman"]);
   const kp = by("kucuk-prens");
-  assert.deepEqual([kp.tur, kp.zaman, kp.hedef], ["Tiyatro", "gündüz", "yok → tüm seanslar"]);
+  assert.deepEqual([kp.tur, kp.zaman, kp.hedef], ["", "gündüz", "yok → tüm seanslar"]);
   assert.deepEqual(kp.derived, ["audience", "genre", "rez", "target", "zaman"].filter((k) => kp.derived.includes(k)));
   assert.ok(kp.derived.includes("target") && kp.derived.includes("genre"));
   const cz = by("vkv:541");
@@ -80,9 +80,10 @@ test("derivation rules (port of tiyatro/tags.py)", () => {
   assert.equal(resolveAudience("Komedi", [], null), "Yetişkin"); // no child marker -> Yetişkin
   assert.equal(resolveAudience("Komedi", [], 7), "Çocuk");
   assert.equal(resolveAudience("", [], null, "Çocuk Tiyatrosu Ceviz"), "Çocuk");
-  assert.equal(resolveGenre("Yetişkin Oyunu", ["X", ""]), "Tiyatro");
+  assert.equal(resolveGenre("Yetişkin Oyunu", ["X", ""]), ""); // no "Tiyatro" filler (wave 9)
+  assert.equal(resolveGenre("Tiyatro", ["X"]), "");
   assert.equal(resolveGenre("Çocuk Oyunu", ["Ceviz Adam Müzikali"]), "Müzikal");
-  assert.equal(resolveGenre("", ["Söyleşi"], false), "");
+  assert.equal(resolveGenre("", ["Söyleşi"]), "");
   assert.equal(genreFromText("Dramaturji ve program"), ""); // no substring accidents
   assert.equal(genreFromText("Bir komedi ve dram"), "Komedi"); // earliest keyword
   assert.equal(genreFromText("STAND-UP gecesi"), "Stand-up");

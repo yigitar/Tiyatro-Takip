@@ -220,9 +220,9 @@ class Listing:
 
 def genre_of(kind: str, title: str) -> str:
     """Tür: the genre word(s) of the kind ("Animasyon Filmi", "Söyleşi"), else a genre
-    keyword of kind/title ("Müzikal"), else "Tiyatro" for a theatre item (the audience
-    word is never the genre); "" only for a non-theatre item with no hint."""
-    return resolve_genre(kind, title, theatre=is_theatre(kind, title))
+    keyword of kind/title ("Müzikal"), else "" (shown "—"; neither the audience word nor
+    the generic "Tiyatro" is ever the genre)."""
+    return resolve_genre(kind, title)
 
 
 def audience_for(kind: str, title: str) -> str:

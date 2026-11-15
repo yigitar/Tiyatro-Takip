@@ -39,12 +39,12 @@ def test_row_without_age_and_child_marker_is_yetiskin():
     assert r.tags                                                   # Etiketler not blank
 
 
-def test_genre_that_is_only_the_audience_falls_back_to_description_then_tiyatro():
+def test_genre_that_is_only_the_audience_falls_back_to_description_then_blank():
     """"Hiç Kimsenin Öyküsü": 'Yetişkin Oyunu' held only the audience -> Tür was blank."""
     e = play_entry("play_hic_kimsenin.html")
     assert e["genre"] == "Yetişkin Oyunu"
     r = _row("p", e, default_config(), set(), set(), NOW)
-    assert r.audience == "Yetişkin" and r.genre == "Tiyatro"       # no genre word in the text
+    assert r.audience == "Yetişkin" and r.genre == ""             # no genre word: "—", never "Tiyatro"
     assert r.tags == ["yetişkin"]                                    # no tag at all before
     e["summary"] = "Hüzünlü bir dram."
     assert _row("p", e, default_config(), set(), set(), NOW).genre == "Dram"
@@ -62,8 +62,9 @@ def test_resolver_rules():
     assert resolve_audience("Yetişkin Oyunu", ["çocuk"]) == "Yetişkin"   # the page wins
     assert resolve_genre("Komedi") == "Komedi"
     assert resolve_genre("Çocuk Oyunu", "Ceviz Adam Müzikali") == "Müzikal"
-    assert resolve_genre("Çocuk Oyunu", "X") == "Tiyatro"
-    assert resolve_genre("", "Söyleşi", theatre=False) == ""        # only truly unknown stays blank
+    assert resolve_genre("Çocuk Oyunu", "X") == ""                 # wave 9: no "Tiyatro" filler
+    assert resolve_genre("Tiyatro", "X") == ""                      # the generic word is not a genre
+    assert resolve_genre("", "Söyleşi") == ""
     assert genre_from_text("Dramaturji ve program") == ""           # no substring accidents
     assert genre_from_text("Bir komedi ve dram") == "Komedi"        # earliest keyword
     assert derived_tags([], "Yetişkin") == ["yetişkin"]
@@ -76,7 +77,7 @@ def test_vkv_and_basiskele_events_always_get_kitle_and_tur():
     assert listings
     for ls in listings:
         assert S.audience_for(ls.kind, ls.title) in ("Çocuk", "Yetişkin")
-        assert S.genre_of(ls.kind, ls.title)
+        assert S.genre_of(ls.kind, ls.title) in ("", "Müzikal", "Komedi", "Dram", "Stand-up")
     by_kind = {ls.kind: S.audience_for(ls.kind, ls.title) for ls in listings}
     assert by_kind["Çocuk Tiyatrosu"] == "Çocuk" and by_kind["Tiyatro"] == "Yetişkin"
     raw = (FX / "bk_art.html").read_bytes().decode("iso-8859-9")
@@ -84,10 +85,7 @@ def test_vkv_and_basiskele_events_always_get_kitle_and_tur():
     assert found
     for ls in found:
         assert S.audience_for(ls.kind, ls.title)
-        if S.is_theatre(ls.kind, ls.title) or ls.kind:
-            assert S.genre_of(ls.kind, ls.title)
-        else:                       # no category at all ("Evlilik Okulu"): truly unknown -> "—"
-            assert S.genre_of(ls.kind, ls.title) == ""
+        assert S.genre_of(ls.kind, ls.title) != "Tiyatro"      # genre word or "" ("—"), never the filler
     kids = [ls for ls in found if "çocuk" in ls.kind.lower()]
     assert kids and all(S.audience_for(ls.kind, ls.title) == "Çocuk" for ls in kids)
 
@@ -97,7 +95,7 @@ def test_stored_event_records_are_recomputed_so_old_state_is_filled_too():
         "id": "vkv:1", "source": "vkv", "title": "Unutmak", "kind": "Tiyatro",
         "start": (NOW + timedelta(days=3)).isoformat(), "audience": "", "genre": ""}}}
     (v,) = S.event_views(state, default_config(), NOW)
-    assert (v["audience"], v["genre"]) == ("Yetişkin", "Tiyatro")
+    assert (v["audience"], v["genre"]) == ("Yetişkin", "")
 
 
 # ---- unified list rows --------------------------------------------------------------------------
