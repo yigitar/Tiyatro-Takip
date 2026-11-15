@@ -455,7 +455,9 @@ class App:
         pane.add(top, weight=3)
         self.tree = GridTable(top, COLUMNS, stretch=("title", "sessions", "summary"),
                               on_sort=self.sort_by, on_cell=self._cell_click,
-                              row_px=L.ROW_PX, head_px=L.HEADING_PX)
+                              row_px=L.ROW_PX, head_px=L.HEADING_PX, customizable=True,
+                              on_layout=self.save_ui)
+        self.tree.set_layout_state(L.load_columns(self.local_dir / "ui.json"))
         for key, label, _width in COLUMNS:
             self.tree.heading(key, text=L.heading_text(label, key, self.sort))
         vsb = AutoScrollbar(top, orient="vertical", command=self.tree.yview)
@@ -1571,6 +1573,8 @@ class App:
                        "beep": self.beep_enabled,
                        "keep_awake": self.keep_awake,
                        "sort": list(self.sort) if self.sort else None,
+                       "columns": (self.tree.layout_state() if hasattr(self, "tree")
+                                   else L.load_columns(self.local_dir / "ui.json")),
                        "seen": self.seen.to_json(),
                        "activity": self.activity_tab.filters()})
         except Exception:

@@ -755,6 +755,28 @@ def load_sort(path):
     return None
 
 
+def load_columns(path) -> dict:
+    """Saved list-column layout ``{"order": [key], "hidden": [key], "widths": {key: px}}``
+    (all keys strings, widths positive numbers); anything else is dropped. Unknown column
+    keys are filtered later against the real columns (``pc.table.reconcile_layout``)."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    saved = data.get("columns") if isinstance(data, dict) else None
+    if not isinstance(saved, dict):
+        return {}
+    out = {}
+    for name in ("order", "hidden"):
+        if isinstance(saved.get(name), list):
+            out[name] = [k for k in saved[name] if isinstance(k, str)][:200]
+    if isinstance(saved.get("widths"), dict):
+        out["widths"] = {k: w for k, w in saved["widths"].items()
+                         if isinstance(k, str) and isinstance(w, (int, float))
+                         and not isinstance(w, bool) and w > 0}
+    return out
+
+
 def save_ui(path, ui: dict) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
