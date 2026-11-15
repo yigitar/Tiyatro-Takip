@@ -38,7 +38,7 @@ const fill = (r) => r.replace(/\\{h:([^}]+)\\}/g, (_, s) => h(s));
 const applied = [];
 let cfg = job.config;
 for (const route of job.applies) { cfg = apply(fill(route), cfg, job.state); applied.push(cfg); }
-const rendered = job.renders.map((r) => render(fill(r), job.config, job.state));
+const rendered = job.renders.map((r) => render(fill(r), job.config, job.state, job.now ?? Date.now()));
 process.stdout.write(JSON.stringify({ applied, rendered }));
 """ % json.dumps(MENU)
 
@@ -251,12 +251,58 @@ def test_worker_follow_route_matches_python_and_renders_python_events():  # wave
     state = json.loads(json.dumps(state))
     eid = "vkv:541"
     route = "ef:{h:%s}:0:0" % eid
-    res = node({"config": raw_cfg, "state": state, "applies": [route, route],
-                "renders": ["eo:0", "ef:{h:%s}:1:0" % eid]})
+    res = node({"config": raw_cfg, "state": state, "applies": [route, route], "now": int(T0.timestamp() * 1000),
+                "renders": ["pl:0", "ef:{h:%s}:1:0" % eid]})
     py = copy.deepcopy(raw_cfg)
     configedit.set_event_follow(py, eid, False)
     assert res["applied"][0] == py == res["applied"][1]
     config_from_dict(res["applied"][0])  # a valid Python config
     text = res["rendered"][0]["text"]
-    assert "Ceviz Adam Müzikali" in text and "Kitle: Çocuk" in text and "Tür: Müzikal" in text
-    assert "19 Kasım 12:00'da açılacak" in text and len(text) <= 4096
+    # wave 7: one unified list; Tür is derived (kind holds no genre word) -> italic
+    assert "Ceviz Adam Müzikali" in text and "Kitle: Çocuk" in text and "Tür: <i>Müzikal</i>" in text
+    assert "Rez. açılış: 19 Kas Per 12:00 (4 gün sonra)" in text and len(text) <= 4096
+    assert "Diğer kaynaklar" not in text and "VKV" in text  # source label, no separate screen
+
+
+# ---- wave 7: unified list, seen list, link buttons -------------------------------------------
+
+def test_worker_seen_list_is_ignored_by_python_and_survives_pc_edits():
+    state, raw_cfg, plays = _python_state()
+    slug = plays[0].slug
+    res = node({"config": raw_cfg, "state": state, "applies": [f"p:{{h:{slug}}}:0:0", "pl:0"],
+                "renders": []})
+    cfg = res["applied"][0]
+    assert sorted(cfg["seen"]) == sorted(p.slug for p in plays)      # first use: all seen
+    config_from_dict(cfg)                                              # a valid Python config
+    assert res["applied"][1] == cfg                                    # idempotent
+    py = copy.deepcopy(cfg)
+    configedit.set_active(py, slug, False)
+    configedit.set_event_follow(py, "vkv:1", True)
+    assert py["seen"] == cfg["seen"]                                   # PC edits keep it
+
+
+@pytest.mark.parametrize("ret", ["", ":0", ":3", ":i2"])
+def test_ta_and_ef_routes_with_return_hint_equal_the_pc_edit(ret):
+    res = node({"config": START_CONFIG, "state": START_STATE,
+                "applies": [f"ta:{KP}:1{ret}"], "renders": []})
+    py = copy.deepcopy(START_CONFIG)
+    configedit.set_active(py, "kucuk-prens", True)
+    assert res["applied"][0] == py
+
+
+def test_worker_renders_python_state_lists_and_item_screens():
+    state, raw_cfg, plays = _python_state()
+    now = int(NOW.timestamp() * 1000)
+    routes = ["pl:0", "m"] + [f"p:{{h:{p.slug}}}:0:0" for p in plays] + ["src"]
+    raw_cfg = {**raw_cfg, "sources": ["https://biletinial.com/tr-tr/mekan/ornek-mekan"]}
+    res = node({"config": raw_cfg, "state": state, "applies": [], "renders": routes, "now": now})
+    lst, main = res["rendered"][:2]
+    assert all(p.title.split()[0] in lst["text"] for p in plays) and len(lst["text"]) <= 4096
+    assert any("Oyunlar ve etkinlikler" in b["text"] for row in main["keyboard"] for b in row)
+    for p, screen in zip(plays, res["rendered"][2:-1]):
+        urls = [b["url"] for row in screen["keyboard"] for b in row if "url" in b]
+        assert p.url in urls                                            # Oyun sayfası
+        session_urls = {s.url for s in p.sessions if s.url}
+        assert set(urls) - {p.url} and set(urls) - {p.url} <= session_urls  # Seans buttons (page 1)
+    src = res["rendered"][-1]
+    assert len([b for row in src["keyboard"] for b in row if "url" in b]) == 3

@@ -62,7 +62,8 @@ gün, saat ve kişi sayısına göre daraltmak istersen hedef eklersin.
   Başiskele, VKV) **takipsiz** başlar; istediklerini sen açarsın. Listede ilk sütun
   "Takip" bir kutudur (☑ / ☐): hücreye tıklamak oyunlar ve Başiskele/VKV etkinlikleri için
   takibi açıp kapatır (ayrıntıyı açmaya gerek yok; ayrıntıdaki "Aktif" kutusu aynı
-  anahtardır). Telegram: "Diğer kaynaklar" ekranı. Takipsiz etkinlik listede kalır, bildirim
+  anahtardır). Telegram: aynı tek liste ("Oyunlar ve etkinlikler"), her satırda ☑/☐ düğmesi.
+  Takipsiz etkinlik listede kalır, bildirim
   göndermez (yeni-etkinlik bildirimi dahil). Seçimler `config.json` içindeki `event_follow`
   (etkinlik) ve `plays` (oyun) anahtarlarında tutulur. **Önceden takipte olanlar
   değişmez:** eski sürümde varsayılanla (tiyatro/müzikal) takipte sayılan etkinliklerin
@@ -107,6 +108,23 @@ gün, saat ve kişi sayısına göre daraltmak istersen hedef eklersin.
   kendisi bulunur. Kaynaklar şeridinde her kaynağın yanında "Kaynağı aç" düğmesi vardır
   (Biletinial mekân sayfası, Başiskele en yeni program haberi — bilinmiyorsa belediye ana
   sayfası, VKV Etkinlikler listesi); Başiskele satırında ayrıca "Portalı aç" durur.
+- **Telegram listesi (dalga 7):** "Oyunlar ve etkinlikler" tek listedir (ayrı "Diğer kaynaklar"
+  ekranı yoktur); her satır kaynağını (Biletinial / Başiskele / VKV), takip durumunu (☑/☐) ve PC ile
+  aynı türetilmiş alanları gösterir: Kitle, Tür, Zaman (gündüz/gece), Hedef ("var (N)" /
+  "yok → tüm seanslar"), Rez. açılış. Türetme kuralları PC ile aynıdır (`worker/src/derive.js`,
+  `tests/test_wave7_parity.py` aynı state.json'u iki tarafa da verip değerleri karşılaştırır).
+  Türetilmiş değer *italik* yazılır; listede bir açıklama satırı vardır ("italik = türetilmiş").
+  Sıra PC ile aynıdır (takipte olanlar, en yakın seans/etkinlik, başlık); sayfa başına 6 öğe.
+  Satırdaki ☑/☐ düğmesi `ta:`/`ef:` (idempotent) rotalarıyla takibi değiştirir; "Ayrıntı ›"
+  oyun veya etkinlik ekranını açar: "Oyun sayfası" / "Etkinlik sayfası" ve çok seanslı oyunlarda
+  her seans için bir "Seans" bağlantı düğmesi (sayfa başına 8 seans, sayfalanır). "Kaynaklar"
+  ekranında her kaynak için "aç" bağlantı düğmesi vardır.
+- **Yeni (🆕) işareti, Telegram:** Takipte olmayan yeni gelen oyun/etkinlik, ayrıntı ekranı bir kez
+  açılana kadar 🆕 ile işaretlenir. KV yoktur: açılmış öğelerin kimlikleri `config.json` içindeki
+  `seen` listesinde tutulur (Worker'ın mevcut config yazma yolu; en çok 500 kimlik, durumda
+  artık olmayan kimlikler bir yazma sırasında silinir; zaten görülmüşse yazma olmaz). `seen`
+  anahtarı yoksa (ilk kullanım) listedeki her şey görülmüş sayılır. Python tarafı bu anahtarı
+  yok sayar, PC kendi `seen` kümesini `ui.json`'da tutar.
 - **Kaynak durumu:** Her kaynak (Biletinial, Başiskele, VKV) için ✅ güncel / ⚠️ 30 dakikadan
   eski / ❌ son kontrol başarısız simgesi, "Son kontrol" ve "Son güncelleme" (kaynağın kendi
   içeriğinin değişme zamanı) gösterilir: PC'de Oyunlar sekmesinin üstünde, Telegram'da

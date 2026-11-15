@@ -53,11 +53,13 @@ test("render p: play screen has tags, statuses, active toggle, link, escaped tit
   assert.ok(r.text.includes("komedi"));
   assert.ok(r.text.includes("105"));
   assert.ok(r.text.includes("✅") && r.text.includes("⏳") && r.text.includes("❌"));
-  assert.ok(r.text.includes("biletinial.com/tr-tr/tiyatro/kusursuz-bir-aile"));
-  assert.ok(flat(r.keyboard).some((b) => b.callback_data === `ta:${KB}:0`));
+  // wave 7: the page link is a URL button (Oyun sayfası), not an inline text link
+  assert.ok(flat(r.keyboard).some((b) => b.text.includes("Oyun sayfası") && b.url === "https://biletinial.com/tr-tr/tiyatro/kusursuz-bir-aile"));
+  assert.ok(flat(r.keyboard).some((b) => b.callback_data === `ta:${KB}:0:i0`));
   assert.ok(labels(r).includes("Pasif yap"));
   const r2 = render(`p:${KP}`, cfg, st);
-  assert.ok(flat(r2.keyboard).some((b) => b.callback_data === `ta:${KP}:1`));
+  assert.ok(flat(r2.keyboard).some((b) => b.callback_data === `ta:${KP}:1:i0`));
+  assert.ok(r2.text.includes("yeni oyunlar varsayılan olarak takipte değildir"));
   assert.ok(flat(r2.keyboard).some((b) => b.callback_data === `tg:${KP}:y`));
   assert.ok(flat(r2.keyboard).some((b) => b.callback_data === `tg:${KP}:c`));
 });
@@ -110,7 +112,7 @@ test("render tl / up / pl", () => {
   assert.ok(!up.text.includes("Küçük Prens"));
   assert.ok(up.text.includes("20.02.2030 10:00"));
   const pl = render("pl:0", cfg, st);
-  assert.ok(flat(pl.keyboard).some((b) => b.callback_data === `p:${KP}`));
+  assert.ok(flat(pl.keyboard).some((b) => b.callback_data === `p:${KP}:0:0`));
   assert.ok(flat(pl.keyboard).some((b) => b.callback_data === "m"));
 });
 
@@ -472,11 +474,11 @@ test("play screen shows Kitle and Tür, never the audience as the genre", () => 
   const e = s.plays["kusursuz-bir-aile"];
   e.genre = "Komedi"; e.tags = ["çocuk"]; e.age_limit = 7;
   let text = render(`p:${KB}`, cfg, s).text;
-  assert.ok(text.includes("Kitle: Çocuk · Tür: Komedi"), text);
+  assert.ok(text.includes("Kitle: <i>Çocuk</i> · Tür: Komedi"), text); // Kitle derived (tag/age), Tür stated
   e.genre = "Yetişkin Oyunu"; e.tags = []; e.age_limit = 16;
   text = render(`p:${KB}`, cfg, s).text;
-  assert.ok(text.includes("Kitle: Yetişkin"), text);
-  assert.ok(!text.includes("Tür:"), text);
+  assert.ok(text.includes("Kitle: Yetişkin"), text); // stated by the page: not italic
+  assert.ok(text.includes("Tür: <i>Tiyatro</i>"), text); // wave 7: the same fallback as the PC list
 });
 
 // ---- wave 4 B: Kaynaklar screen ----
@@ -555,69 +557,22 @@ test("eventViews: future events by start, explicit choice beats the default", ()
   assert.deepEqual(eventViews({}, makeState()), []);
 });
 
-test("eo screen lists events with Kitle/Tür, reservation text and toggle buttons", () => {
-  const s = evState();
-  const r = render("eo:0", { ...cfg, event_follow: { "bk:ws": true } }, s);
-  assert.ok(r.text.includes("Diğer kaynaklar") && r.text.includes("Ceviz Adam &lt;Müzikali&gt;"), r.text);
-  assert.ok(r.text.includes("Kitle: Çocuk") && r.text.includes("Tür: Müzikal"));
-  assert.ok(r.text.includes("Rezervasyon: Duyuru bekleniyor") && r.text.includes("'da açılacak"));
-  assert.ok(!r.text.includes("Geçmiş"));
-  const cds = flat(r.keyboard).map((b) => b.callback_data);
-  const toggle = cds.filter((c) => c.startsWith("ef:"));
-  assert.equal(toggle.length, 3);
-  // already followed -> the button switches it off (0); not followed -> on (1)
-  assert.ok(toggle.some((c) => c.startsWith(`ef:${EVID("vkv:541")}:0:`)));
-  assert.ok(flat(r.keyboard).some((b) => b.text.startsWith("🟢")));
-  assert.ok(render("m", cfg, s).text.length > 0 && flat(render("m", cfg, s).keyboard).some((b) => b.callback_data === "eo:0"));
-});
-
-test("ef route sets the follow flag idempotently and renders the list again", () => {
-  const s = evState();
-  const route = `ef:${EVID("vkv:541")}:0:0`;
-  const c1 = apply(route, cfg, s);
-  assert.equal(c1.event_follow["vkv:541"], false);
-  assert.deepEqual(apply(route, c1, s), c1);                 // idempotent
-  const c2 = apply(`ef:${EVID("vkv:541")}:1:0`, c1, s);
-  assert.equal(c2.event_follow["vkv:541"], true);
-  assert.deepEqual(c2.plays, cfg.plays);                     // nothing else touched
-  assert.deepEqual(apply("ef:deadbeef:1:0", cfg, s), cfg);   // unknown event -> unchanged
-  assert.deepEqual(apply(`ef:${EVID("vkv:541")}:2:0`, cfg, s), cfg);
-  assert.equal(isMutating(route), true);
-  assert.equal(viewOf(route), "eo:0");
-  const r = render(viewOf(route), c1, s);
-  assert.ok(r.text.includes("⚪ <b>Ceviz Adam"), r.text);
-});
-
-test("eo screen paginates, stays under 4096 chars and every callback fits 64 bytes", () => {
-  const s = makeState();
-  s.source_events = {};
-  for (let i = 0; i < 40; i++) {
-    const id = `bk:2030110${i}-1400-uzun-etkinlik-adi-${i}`;
-    s.source_events[id] = { id, source: "basiskele", title: "Çok uzun bir etkinlik adı ".repeat(8), kind: "Yetişkin Tiyatrosu",
-      start: new Date(Date.now() + (i + 1) * 86400e3).toISOString(), follow_default: true };
-  }
-  const r = render("eo:1", cfg, s);
-  assert.ok(r.text.includes("sayfa 2/7") && r.text.length <= 4096);
-  for (const b of flat(r.keyboard)) assert.ok(bytes(b.callback_data) <= 64, b.callback_data);
-  assert.ok(labels(r).includes("‹ Önceki") && labels(r).includes("Sonraki ›"));
-  assert.ok(render("eo:99", cfg, s).text.includes("sayfa 7/7"));
-});
-
 // ---- wave 4 G: every screen explains its buttons in 1-2 plain lines ----
-test("every screen carries 1-2 italic explanation lines right under its title", () => {
+test("every screen carries 1-2 plain explanation lines right under its title (italic is reserved for derived values)", () => {
   const s = srcState();
   Object.assign(s, evState());
   s.sources = srcState().sources;
-  const routes = { m: HELP.main, "pl:0": [HELP.list[0]], [`p:${KB}`]: HELP.play, [`ts:${KB}:y`]: HELP.target,
-    tl: HELP.watchlist, up: HELP.upcoming, src: HELP.sources, rf: HELP.sources, "eo:0": HELP.events };
+  const routes = { m: HELP.main, "pl:0": HELP.list, [`p:${KB}`]: HELP.play, [`ts:${KB}:y`]: HELP.target,
+    tl: HELP.watchlist, up: HELP.upcoming, src: HELP.sources, rf: HELP.sources, [`e:${h("vkv:541")}`]: HELP.event };
   for (const [route, lines] of Object.entries(routes)) {
     const text = render(route, cfg, s).text;
     assert.ok(lines.length >= 1 && lines.length <= 2, route);
     const split = text.split("\n");
     for (const l of lines) {
-      assert.ok(split.includes(`<i>${l}</i>`), `${route} lacks: ${l}`);
+      assert.ok(split.includes(l), `${route} lacks: ${l}`);
+      assert.ok(!l.includes("<i>"), l);
     }
-    const pos = split.indexOf(`<i>${lines[0]}</i>`);
+    const pos = split.indexOf(lines[0]);
     assert.ok(pos >= 1 && pos <= 4, `${route}: help should sit under the title (line ${pos})`);
     assert.ok(text.length <= 4096, route);
   }

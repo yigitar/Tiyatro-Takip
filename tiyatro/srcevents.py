@@ -620,7 +620,7 @@ def due_for_burst_check(rec: dict, now: datetime) -> bool:
 
 
 def event_views(state: dict | None, config: Config | None, now: datetime) -> list[dict]:
-    """Rows for the "Diğer kaynaklar" tab / Worker screen: future events by start."""
+    """Rows for the unified list (PC) / Worker list: future events by start."""
     cfg_follow = getattr(config, "event_follow", {}) if config is not None else {}
     rows = []
     for eid, rec in ((state or {}).get("source_events") or {}).items():

@@ -142,7 +142,7 @@ test("callback ta: config written once with the new value, message edited, callb
   assert.equal(edits[0].body.message_id, 77);
   assert.equal(edits[0].body.chat_id, 4242);
   assert.ok(edits[0].body.text.includes("Kusursuz"));
-  assert.ok(edits[0].body.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === `ta:${KB}:1`));
+  assert.ok(edits[0].body.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === `ta:${KB}:1:i0`));
   assert.equal(tgCalls(calls, "answerCallbackQuery").length, 1);
   assert.equal(tgCalls(calls, "answerCallbackQuery")[0].body.callback_query_id, "q1");
 });
@@ -166,9 +166,47 @@ test("a no-op (already applied) route does not write again", async () => {
 
 test("non-mutating callback renders without writing", async () => {
   const { fake, calls } = makeFake();
-  await handle(req(cb(`p:${KB}`)), ENV, fake);
+  await handle(req(cb("tl")), ENV, fake);
   assert.equal(ghWrites(calls).length, 0);
   assert.equal(tgCalls(calls, "editMessageText").length, 1);
+});
+
+// wave 7: the 🆕 `seen` list lives in config.json and is written through the config edit path
+test("first use of the list baselines `seen` once (everything seen), then nothing is written", async () => {
+  const { fake, calls, files } = makeFake();
+  await handle(req(cb("pl:0")), ENV, fake);
+  assert.equal(ghWrites(calls).length, 1);
+  assert.deepEqual(files["config.json"].data.seen, ["kucuk-prens", "kusursuz-bir-aile", "yeni-oyun"]);
+  const text = tgCalls(calls, "editMessageText")[0].body.text;
+  assert.ok(!text.includes("🆕 <b>"), text);
+  await handle(req(cb("pl:0")), ENV, fake);
+  await handle(req(cb(`p:${KB}:0:0`)), ENV, fake);
+  assert.equal(ghWrites(calls).length, 1); // idempotent: already seen -> no second commit
+});
+
+test("opening a new item adds it to `seen` and clears its 🆕 marker; the list shows it before", async () => {
+  const config = makeConfig();
+  config.seen = ["kusursuz-bir-aile", "kucuk-prens"];
+  const { fake, calls, files } = makeFake({ config });
+  await handle(req(cb("pl:0")), ENV, fake);
+  assert.equal(ghWrites(calls).length, 0);
+  const list = tgCalls(calls, "editMessageText")[0].body;
+  assert.ok(list.text.includes("🆕 <b>Yeni Oyun</b>"), list.text);
+  const open = list.reply_markup.inline_keyboard.flat().find((b) => b.text.startsWith("🆕"));
+  assert.ok(open.callback_data.startsWith("p:"));
+  await handle(req(cb(open.callback_data)), ENV, fake);
+  assert.equal(ghWrites(calls).length, 1);
+  assert.deepEqual(files["config.json"].data.seen, ["kusursuz-bir-aile", "kucuk-prens", "yeni-oyun"]);
+  await handle(req(cb("pl:0")), ENV, fake);
+  assert.ok(!tgCalls(calls, "editMessageText").at(-1).body.text.includes("🆕 <b>"));
+});
+
+test("URL buttons survive the Telegram payload (url, no callback_data)", async () => {
+  const { fake, calls } = makeFake();
+  await handle(req(cb(`p:${KB}:0:0`)), ENV, fake);
+  const kb = tgCalls(calls, "editMessageText")[0].body.reply_markup.inline_keyboard.flat();
+  const urls = kb.filter((b) => b.url);
+  assert.ok(urls.length >= 3 && urls.every((b) => !b.callback_data && b.url.startsWith("https://")));
 });
 
 test("write conflict -> re-read and re-apply keeps the concurrent unrelated change", async () => {

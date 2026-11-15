@@ -4,12 +4,23 @@
 // Rule semantics mirror tiyatro/rules.py: days 0=Monday..6=Sunday (null = every day),
 // from_time and to_time both inclusive ("≤20:00" keeps 20:00 sessions), exclude_dates are
 // Europe/Istanbul ISO dates.
-// Routes (callback_data, each <= 64 bytes; ef/eo = follow switch + list of Başiskele/VKV events):
-//   m | pl:<page> | p:<h> | ts:<h>:<id> (target screen) | ta:<h>:<0|1> | tg:<h>:<y|c>
-//   hp:<h>:<id>:<n> | hd:<h>:<id>:<wd|we|all|d0..d6>[:<0|1>] | hf:<h>:<id>:<HH|none>
-//   ht:<h>:<id>:<HH|none> | hx:<h>:<id>:<yymmdd>:<0|1> (date, stateless) | hs:<h>:<id>:rm | tl | up | rf | src | pz:<0|1>
+// Routes (callback_data, each <= 64 bytes). One unified list of Biletinial plays and
+// Başiskele/VKV events (wave 7); the follow switches are idempotent set routes.
+//   m | pl:<page> | p:<h>[:<sessionPage>[:<listPage>]] | e:<h>[:<listPage>] (event screen)
+//   ta:<h>:<0|1>[:<ret>] (play follow) | ef:<h>:<0|1>[:<ret>] (event follow); ret = <listPage> |
+//   i<listPage> (back to the item screen) | none (item screen of a play / the list for an event)
+//   ts:<h>:<id> (target screen) | tg:<h>:<y|c> | hp:<h>:<id>:<n> | hd:<h>:<id>:<wd|we|all|d0..d6>[:<0|1>]
+//   hf:<h>:<id>:<HH|none> | ht:<h>:<id>:<HH|none> | hx:<h>:<id>:<yymmdd>:<0|1> (date, stateless)
+//   hs:<h>:<id>:rm | tl | up | rf | src | pz:<0|1>      (eo:<n> = legacy alias of pl:0)
+// pl / p / e also write config.json: the bounded `seen` id list behind the 🆕 marker (markSeen).
+
+import { audienceOf, genreLabel, playFields, eventFields } from "./derive.js";
+
+export { audienceOf, genreLabel };
 
 const PAGE_SIZE = 6;
+const SESSION_PAGE = 8;
+const MAX_SEEN = 500;
 const MAX_CALLBACK_BYTES = 64;
 const ISTANBUL_OFFSET_MS = 3 * 3600 * 1000; // Turkey has no DST (fixed UTC+3)
 const DAY_NAMES = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
@@ -167,21 +178,30 @@ function rows(...rs) {
   return rs.map((r) => r.filter(Boolean)).filter((r) => r.length > 0);
 }
 
-/** 1-2 plain-language lines under a screen title: what the buttons below do. */
-const help = (...lines) => lines.map((l) => `<i>${l}</i>`);
+/**
+ * 1-2 plain-language lines under a screen title: what the buttons below do. Plain text on
+ * purpose: italic is reserved for derived values (see LEGEND).
+ */
+const help = (...lines) => lines;
 export const HELP = {
   main: [
-    "ℹ️ Oyunlar: oyun seç, takibi aç/kapat · Takip listem: takip ettiklerin ve hedefleri · Yaklaşan açılışlar: bilet satışı açılacak seanslar.",
-    "🔄 Yenile: tüm kaynakları (Biletinial, Başiskele, VKV) şimdi tarar ve listeyi günceller · Kaynaklar: son kontrol zamanları · Diğer kaynaklar: Başiskele/VKV etkinlikleri · Duraklat: bildirimleri geçici durdurur.",
+    "ℹ️ Oyunlar: Biletinial oyunları ile Başiskele/VKV etkinlikleri tek listede; takibi aç/kapat · Takip listem: takip ettiklerin ve hedefleri · Yaklaşan açılışlar: bilet satışı açılacak seanslar.",
+    "🔄 Yenile: tüm kaynakları (Biletinial, Başiskele, VKV) şimdi tarar ve listeyi günceller · Kaynaklar: son kontrol zamanları ve kaynak sayfaları · Duraklat: bildirimleri geçici durdurur.",
   ],
-  list: ["ℹ️ Bir oyuna dokun: ayrıntısını, seanslarını ve takip ayarlarını açar.", "🟢 takipte olan oyunlarda bilet satışı açılınca bildirim alırsın."],
-  play: ["ℹ️ Aktif yap: bu oyunda satış açılınca bildirim gelir (hedef yoksa tüm seanslar için).", "Hedef: hangi gün/saat ve kaç kişilik biletle ilgilendiğini sınırlar; ✏️ ile düzenlenir."],
+  list: [
+    "ℹ️ ☑/☐ düğmesi o öğenin takibini açar/kapatır; adı yazan düğme ayrıntıyı, oyun ve seans bağlantılarını açar.",
+    "Yeni gelen oyun ve etkinlikler takipte DEĞİL başlar; 🆕 işareti, ayrıntısını bir kez açana kadar durur.",
+  ],
+  play: ["ℹ️ Aktif yap: bu oyunda satış açılınca bildirim gelir (hedef yoksa tüm seanslar için).", "Hedef: hangi gün/saat ve kaç kişilik biletle ilgilendiğini sınırlar; ✏️ ile düzenlenir. Oyun sayfası / Seans düğmeleri Biletinial'ı açar."],
+  event: ["ℹ️ Takibi aç: rezervasyon açılışı duyurulunca ve açılınca bildirim gelir; açılış saati duyurulmadıysa bildirim gelmez.", "Yeni etkinlikler takipte DEĞİL başlar. Etkinlik sayfası kaynağın kendi sayfasını açar (seans bazlı sayfa yoktur)."],
   target: ["ℹ️ Kişi sayısı, gün ve saat seç: yalnızca bunlara uyan seanslar bildirilir.", "Tarih düğmesi (🚫) o günü atlar; Hedefi sil bu kısıtı kaldırır."],
   watchlist: ["ℹ️ Takip ettiğin oyunlar ve her birinin hedefleri.", "Bir oyuna dokununca hedeflerini değiştirebilir veya takibi kapatabilirsin."],
   upcoming: ["ℹ️ Takip ettiğin oyunlarda bilet satışının açılacağı zamanlar.", "Açılıştan 1 gün ve 10 dk önce ayrıca hatırlatma gelir."],
-  sources: ["ℹ️ Yenile: tüm kaynakları şimdi tarar ve listeyi günceller; sonuç burada kaynak başına simgeyle görünür.", "Durumu göster: bu ekranı son sonuçlarla tazeler."],
-  events: ["ℹ️ Başiskele Belediyesi ve VKV Gölcük etkinlikleri. Bir etkinliğe dokununca takibi açılır/kapanır:", "🟢 takipte (bildirim gelir) · ⚪ takipte değil."],
+  sources: ["ℹ️ Yenile: tüm kaynakları şimdi tarar ve listeyi günceller; sonuç burada kaynak başına simgeyle görünür.", "Durumu göster: bu ekranı son sonuçlarla tazeler. 'aç' düğmeleri kaynağın kendi sayfasını açar."],
 };
+
+/** One legend line for the list and item screens: ☑/☐/🆕 and the italic marker of derived values. */
+export const LEGEND = "☑ takipte · ☐ takipte değil · 🆕 yeni · <i>italik = türetilmiş</i> (kural/varsayım), normal = kaynaktan alınan";
 
 const BACK_MAIN = () => btn("🏠 Ana menü", "m");
 
@@ -191,7 +211,7 @@ function notFound(what, backExtra) {
 
 // ---------------------------------------------------------------- apply
 
-const MUTATING = new Set(["ta", "tg", "hp", "hd", "hf", "ht", "hx", "hs", "pz", "ef"]);
+const MUTATING = new Set(["ta", "tg", "hp", "hd", "hf", "ht", "hx", "hs", "pz", "ef", "pl", "p", "e"]);
 
 function validHour(s) {
   if (s === "none") return null;
@@ -232,6 +252,32 @@ function ruleOf(t) {
   return t.rule;
 }
 
+/**
+ * 🆕 bookkeeping: `config.seen` is the list of play slugs / event ids whose screen the user
+ * opened (or that existed when the list was first used). Without KV the list lives in
+ * config.json and is written through the normal GitHub config edit path. Rules:
+ * - no `seen` key (first use): every id currently in state counts as seen (no flood of 🆕);
+ * - opening an item adds its id; ids no longer in state are dropped whenever we write;
+ * - at most MAX_SEEN ids are kept (newest last). A no-op (already seen) changes nothing, so
+ *   nothing is written. The Python side ignores the key (config_from_dict), the PC keeps its
+ *   own `seen` set in ui.json.
+ */
+function stateIds(state) {
+  return new Set([...Object.keys(statePlays(state)), ...Object.keys(sourceEvents(state))]);
+}
+
+function markSeen(out, state, add) {
+  const cur = stateIds(state);
+  if (!Array.isArray(out.seen)) {
+    out.seen = [...cur].sort().slice(-MAX_SEEN);
+    return;
+  }
+  const have = new Set(out.seen);
+  const fresh = [...new Set(add)].filter((id) => cur.has(id) && !have.has(id));
+  if (fresh.length === 0) return;
+  out.seen = [...out.seen.filter((id) => typeof id === "string" && cur.has(id)), ...fresh].slice(-MAX_SEEN);
+}
+
 /** Pure: returns a new config (deep copy) with the route applied; unchanged copy on any problem. */
 export function apply(route, config, state) {
   let out;
@@ -251,6 +297,17 @@ export function apply(route, config, state) {
       return out;
     }
 
+    if (op === "pl") {
+      markSeen(out, state, []); // first use of the list: baseline (everything is seen)
+      return out;
+    }
+
+    if (op === "e") {
+      const eid = eventIndex(state).slugOf.get(parts[1]);
+      if (eid !== undefined) markSeen(out, state, [eid]);
+      return out;
+    }
+
     if (op === "ef") {
       // Per-event follow of Başiskele/VKV events: set semantics (ef:<h>:<0|1>[:<page>]).
       const eid = eventIndex(state).slugOf.get(parts[1]);
@@ -264,6 +321,10 @@ export function apply(route, config, state) {
     const slug = indexFor(out, state).slugOf.get(parts[1]);
     if (slug === undefined) return out;
 
+    if (op === "p") {
+      markSeen(out, state, [slug]);
+      return out;
+    }
     if (op === "ta") {
       if (parts[2] === "0" || parts[2] === "1") {
         const w = ensurePlay(out, slug);
@@ -386,18 +447,73 @@ function sourceLines(state, now) {
   return out;
 }
 
+// ---- links
+
+const SOURCE_SHORT = { biletinial: "Biletinial", basiskele: "Başiskele", vkv: "VKV" };
+const BASISKELE_BASE = "https://www.basiskele.bel.tr"; // as tiyatro/srcevents.py
+const VKV_LIST_URL = "https://www.vkvfordkultur.org.tr/Etkinlikler";
+const MAX_URL_BYTES = 2000; // Telegram allows 2048
+
+/** A URL Telegram accepts on a button (http/https, no whitespace, parseable) or null. */
+function safeUrl(raw) {
+  if (typeof raw !== "string") return null;
+  const s = raw.trim();
+  if (!/^https?:\/\//i.test(s) || /[\s\u0000-\u001f]/.test(s)) return null;
+  try {
+    const href = new URL(s).href;
+    return encoder.encode(href).length <= MAX_URL_BYTES ? href : null;
+  } catch {
+    return null;
+  }
+}
+
+/** URL button; null when the URL is unusable (the button is simply left out). */
+function urlBtn(text, raw) {
+  const url = safeUrl(raw);
+  return url ? { text, url } : null;
+}
+
+/**
+ * Page each source's "aç" button opens; mirrors pc/app_logic.source_links: Biletinial = the
+ * venue page of config.sources[0], Başiskele = newest known program article (else the
+ * municipality home page), VKV = the Etkinlikler list.
+ */
+export function sourceLinks(config, state) {
+  const links = {};
+  const first = isObj(config) && Array.isArray(config.sources) ? config.sources[0] : undefined;
+  if (safeUrl(first)) links.biletinial = first.trim();
+  const articles = state?.src_cache?.basiskele?.articles;
+  let newest = "";
+  if (isObj(articles)) {
+    const ranked = Object.entries(articles)
+      .filter(([link, r]) => isObj(r) && safeUrl(link))
+      .map(([link, r]) => [String(r.pub ?? ""), link])
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
+    newest = ranked.length ? ranked[ranked.length - 1][1].trim() : "";
+  }
+  links.basiskele = newest || BASISKELE_BASE;
+  links.vkv = VKV_LIST_URL;
+  return links;
+}
+
 /** "Kaynaklar" screen; ``refreshed`` adds the note shown right after the 🔄 Yenile button. */
-function sourcesScreen(state, refreshed) {
+function sourcesScreen(config, state, refreshed) {
   const lines = ["📡 <b>Kaynaklar</b>", ...help(...HELP.sources)];
   if (refreshed) lines.push("🔄 Tarama istendi: tüm kaynaklar birkaç dakika içinde yeniden taranır. Aşağıdaki sonuçlar son taramadan; yenisi için “Durumu göster”e bas.");
   const body = sourceLines(state);
   if (body.length === 0) lines.push("Henüz kaynak bilgisi yok.");
   lines.push("", ...body, "", SOURCE_LEGEND);
-  return { text: lines.join("\n"), keyboard: rows([btn("🔄 Durumu göster", "src")], [BACK_MAIN()]) };
+  const links = sourceLinks(config, state);
+  const views = sourceViews(state);
+  const ids = views.length ? views.map((v) => v.id) : SOURCE_ORDER;
+  const openers = ids.map((id) => {
+    const name = SOURCE_SHORT[id] ?? trunc(views.find((v) => v.id === id)?.name ?? id, 20);
+    return [urlBtn(`🔗 ${name} aç`, links[id])];
+  });
+  return { text: lines.join("\n"), keyboard: rows(...openers, [btn("🔄 Durumu göster", "src")], [BACK_MAIN()]) };
 }
 
-const EVENT_PAGE = 6;
-const MONTHS_TR = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
+// ---- unified list: Biletinial plays + Başiskele/VKV events
 
 function sourceEvents(state) {
   return isObj(state) && isObj(state.source_events) ? state.source_events : {};
@@ -406,19 +522,10 @@ function eventIndex(state) {
   return buildIndex(Object.keys(sourceEvents(state)));
 }
 
-/** "Rezervasyon durumu" text; mirrors tiyatro/srcevents.py reservation_text. */
-function reservationText(rec, now) {
-  if (rec.full) return "Doldu";
-  const opens = Date.parse(rec.opens_at);
-  if (!Number.isFinite(opens)) return "Duyuru bekleniyor";
-  if (now < opens) {
-    const d = istanbul(rec.opens_at).toISOString();
-    return `${Number(d.slice(8, 10))} ${MONTHS_TR[Number(d.slice(5, 7)) - 1]} ${d.slice(11, 16)}'da açılacak`;
-  }
-  return rec.opens_pending === false ? "Açık" : "Açılmış olabilir";
-}
-
-/** Future Başiskele/VKV events by start; ``followed`` = explicit choice, else the stored default. */
+/**
+ * Future Başiskele/VKV events by start (same window as tiyatro/srcevents.event_views);
+ * ``followed`` = explicit choice, else the stored default (missing field = followed, as there).
+ */
 export function eventViews(config, state, now = Date.now()) {
   const follow = isObj(config) && isObj(config.event_follow) ? config.event_follow : {};
   const out = [];
@@ -426,52 +533,131 @@ export function eventViews(config, state, now = Date.now()) {
     if (!isObj(rec)) continue;
     const start = Date.parse(rec.start);
     if (Number.isFinite(start) && start < now - 3 * 3600e3) continue;
-    const followed = typeof follow[id] === "boolean" ? follow[id] : rec.follow_default !== false;
+    const dflt = rec.follow_default === undefined ? true : Boolean(rec.follow_default);
+    const followed = typeof follow[id] === "boolean" ? follow[id] : dflt;
     out.push({ id, rec, start: Number.isFinite(start) ? start : Infinity, followed });
   }
   out.sort((a, b) => a.start - b.start || (a.id < b.id ? -1 : 1));
   return out;
 }
 
-const SOURCE_SHORT = { basiskele: "Başiskele", vkv: "VKV Gölcük" };
+/**
+ * Every play and event as one list, ordered like the PC list (followed first, then the
+ * nearest upcoming session / event start, then title). `derived` holds the keys of the
+ * values that are our rule (audience, genre, zaman, target, rez), see derive.js.
+ */
+export function listItems(config, state, now = Date.now()) {
+  const seen = isObj(config) && Array.isArray(config.seen) ? new Set(config.seen) : null; // no key = first use
+  const plays = statePlays(state);
+  const items = [];
+  for (const slug of allSlugs(config, state)) {
+    const entry = isObj(plays[slug]) ? plays[slug] : {};
+    const watch = cfgPlays(config)[slug];
+    const followed = watch?.active === true;
+    const watched = followed && !entry.removed;
+    if (entry.archived && !watched && !entry.removed) continue; // as pc/viewmodel.build_rows
+    items.push({
+      kind: "play", id: slug, title: playTitle(state, slug), source: SOURCE_SHORT.biletinial,
+      followed, watched, removed: Boolean(entry.removed), url: entry.url,
+      isNew: seen !== null && Object.hasOwn(plays, slug) && !seen.has(slug),
+      ...playFields(entry, watch, now),
+    });
+  }
+  for (const { id, rec, followed } of eventViews(config, state, now)) {
+    items.push({
+      kind: "event", id, title: String(rec.title || id), source: SOURCE_SHORT[rec.source] ?? String(rec.source ?? ""),
+      followed, watched: followed, removed: false, url: rec.url, venue: rec.venue,
+      isNew: seen !== null && !seen.has(id),
+      ...eventFields(rec, id, now),
+    });
+  }
+  const far = Infinity;
+  items.sort((a, b) => (Number(b.watched) - Number(a.watched))
+    || ((a.nearest ?? far) === (b.nearest ?? far) ? 0 : (a.nearest ?? far) < (b.nearest ?? far) ? -1 : 1)
+    || a.title.localeCompare(b.title, "tr") || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return items;
+}
 
-/** "Diğer kaynaklar": events of Başiskele and VKV with a per-event follow switch. */
-function eventsScreen(config, state, pageArg) {
-  const idx = eventIndex(state);
-  const all = eventViews(config, state);
-  const pages = Math.max(1, Math.ceil(all.length / EVENT_PAGE));
+/** Value text; derived values (our rule) and blanks are italic. */
+function fieldText(item, key, text) {
+  const value = text || "—";
+  return item.derived.includes(key) || !text ? `<i>${esc(value)}</i>` : esc(value);
+}
+
+/** "Kitle · Tür · Zaman" and "Hedef · Rez. açılış" lines of the list rows and the event screen. */
+function fieldLines(item) {
+  return [
+    `Kitle: ${fieldText(item, "audience", item.kitle)} · Tür: ${fieldText(item, "genre", item.tur)} · Zaman: ${fieldText(item, "zaman", item.zaman)}`,
+    `Hedef: ${fieldText(item, "target", item.hedef)} · Rez. açılış: ${fieldText(item, "rez", item.rez)}`,
+  ];
+}
+
+const whenSuffix = (item) => (item.nearest !== null && item.nearest !== undefined
+  ? ` · ${esc(fmtShort(new Date(item.nearest).toISOString()))}` : "");
+
+function listScreen(config, state, pageArg, now) {
+  const idx = indexFor(config, state);
+  const eidx = eventIndex(state);
+  const all = listItems(config, state, now);
+  const pages = Math.max(1, Math.ceil(all.length / PAGE_SIZE));
   const page = Math.min(/^\d+$/.test(pageArg ?? "") ? Number(pageArg) : 0, pages - 1);
-  const shown = all.slice(page * EVENT_PAGE, (page + 1) * EVENT_PAGE);
-  const now = Date.now();
-  const lines = [`📅 <b>Diğer kaynaklar</b>${pages > 1 ? ` (sayfa ${page + 1}/${pages})` : ""}`, ...help(...HELP.events)];
-  if (all.length === 0) lines.push("", "Henüz etkinlik bilgisi yok.");
-  for (const { rec, followed } of shown) {
-    const bits = [esc(SOURCE_SHORT[rec.source] ?? rec.source ?? "")];
-    if (rec.start) bits.push(esc(fmtShort(rec.start)));
-    const kitle = audienceOf(rec.kind, [], null) || rec.audience;
-    if (kitle) bits.push(`Kitle: ${esc(kitle)}`);
-    if (rec.genre) bits.push(`Tür: ${esc(rec.genre)}`);
-    lines.push("", `${followed ? "🟢" : "⚪"} <b>${esc(trunc(rec.title ?? rec.id, 60))}</b>`,
-      bits.filter(Boolean).join(" · "), `Rezervasyon: ${esc(reservationText(rec, now))}`);
+  const shown = all.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const lines = [`🎭 <b>Oyunlar ve etkinlikler</b> (sayfa ${page + 1}/${pages}, ${all.length} öğe)`, ...help(...HELP.list), LEGEND];
+  if (all.length === 0) lines.push("", "Henüz oyun veya etkinlik bilgisi yok.");
+  for (const it of shown) {
+    lines.push("", `${it.followed ? "☑" : "☐"} ${it.isNew ? "🆕 " : ""}<b>${esc(trunc(it.title, 60))}</b>${it.removed ? " (kalktı)" : ""}`,
+      `${esc(it.source)}${whenSuffix(it)}`, ...fieldLines(it));
   }
   const nav = [
-    page > 0 ? btn("‹ Önceki", `eo:${page - 1}`) : null,
-    page < pages - 1 ? btn("Sonraki ›", `eo:${page + 1}`) : null,
+    page > 0 ? btn("‹ Önceki", `pl:${page - 1}`) : null,
+    page < pages - 1 ? btn("Sonraki ›", `pl:${page + 1}`) : null,
   ];
   return {
     text: lines.join("\n"),
     keyboard: rows(
-      ...shown.map(({ id, rec, followed }) => [btn(
-        `${followed ? "🟢" : "⚪"} ${trunc(rec.title ?? id, 30)}`,
-        `ef:${idx.hashOf.get(id)}:${followed ? 0 : 1}:${page}`)]),
+      ...shown.map((it) => {
+        const isPlay = it.kind === "play";
+        const hh = isPlay ? idx.hashOf.get(it.id) : eidx.hashOf.get(it.id);
+        const flag = it.followed ? 0 : 1;
+        return [
+          btn(`${it.followed ? "☑" : "☐"} ${trunc(it.title, 22)}`, `${isPlay ? "ta" : "ef"}:${hh}:${flag}:${page}`),
+          btn(`${it.isNew ? "🆕 " : ""}Ayrıntı ›`, isPlay ? `p:${hh}:0:${page}` : `e:${hh}:${page}`),
+        ];
+      }),
       nav,
       [BACK_MAIN()],
     ),
   };
 }
 
-function mainScreen(config, state) {
+/** Event screen: source, derived fields, follow switch and the page link. */
+function eventScreen(config, state, id, now, pageArg) {
+  const hh = eventIndex(state).hashOf.get(id);
+  const lp = /^\d+$/.test(pageArg ?? "") ? Number(pageArg) : 0;
+  const it = listItems(config, state, now).find((x) => x.kind === "event" && x.id === id);
+  if (!it) return notFound("Etkinlik", btn("‹ Liste", `pl:${lp}`));
+  const rec = sourceEvents(state)[id];
+  const lines = [`📅 <b>${esc(trunc(it.title, 100))}</b>`, ...help(...HELP.event), LEGEND, `Kaynak: ${esc(it.source)}`];
+  if (rec.start) lines.push(`Etkinlik: ${esc(fmt(rec.start))}`);
+  if (it.venue) lines.push(`Mekan: ${esc(trunc(it.venue, 80))}`);
+  lines.push(...fieldLines(it));
+  lines.push(`Takip: ${it.followed ? "☑ takipte" : "☐ takipte değil (yeni etkinlikler varsayılan olarak takipte değildir)"}`);
+  const flag = it.followed ? 0 : 1;
+  return {
+    text: lines.join("\n"),
+    keyboard: rows(
+      [btn(it.followed ? "☐ Takibi kapat" : "☑ Takibi aç", `ef:${hh}:${flag}:i${lp}`)],
+      [urlBtn("🔗 Etkinlik sayfası", it.url)],
+      [btn("‹ Liste", `pl:${lp}`), BACK_MAIN()],
+    ),
+  };
+}
+
+function mainScreen(config, state, now) {
+  const items = listItems(config, state, now);
   const watched = allSlugs(config, state).filter((s) => isWatched(config, state, s)).length;
+  const events = items.filter((i) => i.kind === "event" && i.followed).length;
+  const fresh = items.filter((i) => i.isNew).length;
   const paused = isObj(config) && config.paused === true;
   const lastScan = state?.meta?.last_scan;
   const text = [
@@ -480,41 +666,19 @@ function mainScreen(config, state) {
     `Durum: ${paused ? "⏸ duraklatıldı" : "▶️ çalışıyor"}`,
     ...(paused ? ["Duraklatılmışken oluşan bildirimler atılır; devam edince gönderilmez."] : []),
     `Takip edilen oyun: ${watched}`,
+    `Takip edilen etkinlik: ${events}`,
+    ...(fresh ? [`🆕 Henüz açmadığın yeni öğe: ${fresh}`] : []),
     lastScan ? `Son tarama: ${esc(fmt(lastScan))}` : "Son tarama: bilinmiyor",
     ...portalLines(state),
   ].join("\n");
   return {
     text,
     keyboard: rows(
-      [btn("🎭 Oyunlar", "pl:0")],
+      [btn("🎭 Oyunlar ve etkinlikler", "pl:0")],
       [btn("📋 Takip listem", "tl")],
       [btn("⏳ Yaklaşan açılışlar", "up")],
       [btn("🔄 Yenile", "rf"), btn("📡 Kaynaklar", "src")],
-      [btn("📅 Diğer kaynaklar", "eo:0")],
       [paused ? btn("▶️ Devam", "pz:0") : btn("⏸ Duraklat", "pz:1")],
-    ),
-  };
-}
-
-function listScreen(config, state, pageArg, idx) {
-  const slugs = allSlugs(config, state).sort((a, b) =>
-    playTitle(state, a).localeCompare(playTitle(state, b), "tr"));
-  const pages = Math.max(1, Math.ceil(slugs.length / PAGE_SIZE));
-  let page = /^\d+$/.test(pageArg ?? "") ? Number(pageArg) : 0;
-  page = Math.min(page, pages - 1);
-  const slice = slugs.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-  const nav = [
-    page > 0 ? btn("‹ Önceki", `pl:${page - 1}`) : null,
-    page < pages - 1 ? btn("Sonraki ›", `pl:${page + 1}`) : null,
-  ];
-  return {
-    text: [`🎭 <b>Oyunlar</b> (sayfa ${page + 1}/${pages})`, "🟢 takipte · ⚪ takipte değil", ...help(HELP.list[0])].join("\n"),
-    keyboard: rows(
-      ...slice.map((s) => [btn(
-        `${cfgPlays(config)[s]?.active === true ? "🟢" : "⚪"} ${trunc(playTitle(state, s), 38)}`,
-        `p:${idx.hashOf.get(s)}`)]),
-      nav,
-      [BACK_MAIN()],
     ),
   };
 }
@@ -547,67 +711,63 @@ function castLine(raw) {
   return `Oyuncular: ${shown}${more}`;
 }
 
-// Kitle (audience) vs Tür (genre): mirrors tiyatro/tags.py audience_of / genre_label.
-const trLower = (s) => String(s ?? "").replace(/İ/g, "i").replace(/I/g, "ı").toLowerCase();
-const AUDIENCE_WORDS = new Set(["çocuk", "yetişkin", "yetiskin"]);
-const GENERIC_WORDS = new Set(["oyunu", "oyun", "oyunları", "tiyatro", "tiyatrosu", "etkinlik",
-  "etkinliği", "gösteri", "gösterisi", "ve", "-"]);
-export function audienceOf(genre, tags, age) {
-  const low = trLower(genre);
-  const child = low.includes("çocuk");
-  const adult = low.includes("yetişkin") || low.includes("yetiskin");
-  if (child !== adult) return child ? "Çocuk" : "Yetişkin";
-  if (Array.isArray(tags) && tags.includes("çocuk")) return "Çocuk";
-  if (Number.isInteger(age)) return age <= 12 ? "Çocuk" : "Yetişkin";
-  return "";
-}
-export function genreLabel(genre) {
-  return String(genre ?? "").split(/\s+/).filter((w) => w && !AUDIENCE_WORDS.has(trLower(w)) && !GENERIC_WORDS.has(trLower(w))).join(" ");
-}
+const chunk = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, k) => arr.slice(k * n, k * n + n));
 
-function playScreen(config, state, slug, idx) {
+function playScreen(config, state, slug, idx, now, spArg, lpArg) {
   const hh = idx.hashOf.get(slug);
   const entry = statePlays(state)[slug] ?? {};
   const watch = cfgPlays(config)[slug];
   const active = watch?.active === true;
-  const lines = [`🎭 <b>${esc(playTitle(state, slug))}</b>`, ...help(...HELP.play)];
+  const lp = /^\d+$/.test(lpArg ?? "") ? Number(lpArg) : 0;
+  const f = playFields(entry, watch, now);
+  const lines = [`🎭 <b>${esc(playTitle(state, slug))}</b>`, ...help(...HELP.play), LEGEND, `Kaynak: ${SOURCE_SHORT.biletinial}`];
   if (Array.isArray(entry.tags) && entry.tags.length) lines.push(`🏷 Etiketler: ${esc(entry.tags.join(", "))}`);
-  const meta = [];
-  const kitle = audienceOf(entry.genre, entry.tags, entry.age_limit);
-  if (kitle) meta.push(`Kitle: ${esc(kitle)}`);
-  const tur = genreLabel(entry.genre);
-  if (tur) meta.push(`Tür: ${esc(tur)}`);
+  const meta = [`Kitle: ${fieldText(f, "audience", f.kitle)}`, `Tür: ${fieldText(f, "genre", f.tur)}`,
+    `Zaman: ${fieldText(f, "zaman", f.zaman)}`];
   if (entry.duration_min) meta.push(`Süre: ${esc(entry.duration_min)} dk`);
   if (entry.age_limit != null) meta.push(`Yaş: ${esc(entry.age_limit)}+`);
-  if (meta.length) lines.push(meta.join(" · "));
+  lines.push(meta.join(" · "));
+  lines.push(`Hedef: ${fieldText(f, "target", f.hedef)} · Rez. açılış: ${fieldText(f, "rez", f.rez)}`);
   const summary = shortSummary(entry.summary);
   if (summary) lines.push(`📝 ${esc(summary)}`);
   const cast = castLine(entry.cast);
   if (cast) lines.push(cast);
-  lines.push(`Takip: ${active ? "🟢 aktif" : "⚪ pasif"}`);
+  lines.push(`Takip: ${active ? "🟢 aktif" : "⚪ pasif (yeni oyunlar varsayılan olarak takipte değildir)"}`);
 
-  const sessions = sessionList(state, slug);
-  lines.push("", "<b>Seanslar</b>");
+  const sessions = sessionList(state, slug).filter(([, rec]) => Date.parse(rec.start) >= now);
+  const spages = Math.max(1, Math.ceil(sessions.length / SESSION_PAGE));
+  const sp = Math.min(/^\d+$/.test(spArg ?? "") ? Number(spArg) : 0, spages - 1);
+  const shown = sessions.slice(sp * SESSION_PAGE, (sp + 1) * SESSION_PAGE);
+  lines.push("", `<b>Seanslar</b>${spages > 1 ? ` (sayfa ${sp + 1}/${spages}, ${sessions.length} seans)` : ""}`);
   if (sessions.length === 0) lines.push("Seans bilgisi yok.");
-  for (const [, rec] of sessions.slice(0, 10)) lines.push(sessionLine(rec));
-  if (sessions.length > 10) lines.push(`… +${sessions.length - 10} seans daha`);
+  for (const [, rec] of shown) lines.push(sessionLine(rec));
+  const sessionBtns = shown.map(([, rec]) => urlBtn(`🔗 Seans ${fmtShort(rec.start)}`, rec.url));
+  if (shown.length && sessionBtns.some((b) => !b)) {
+    lines.push("Kendi sayfası olmayan seanslar için “Oyun sayfası” düğmesini kullan.");
+  }
 
   const targets = Array.isArray(watch?.targets) ? watch.targets.filter(isObj) : [];
   lines.push("", "<b>Hedefler</b>");
-  if (targets.length === 0) lines.push(active ? NO_TARGET_TEXT : "Hedef yok.");
+  if (targets.length === 0) lines.push(active ? `<i>${NO_TARGET_TEXT}</i>` : "Hedef yok.");
   for (const t of targets) lines.push(`• ${targetSummary(t)}`);
-  if (entry.url) lines.push("", `<a href="${escAttr(entry.url)}">Biletinial sayfası</a>`);
 
+  const sessionNav = [
+    sp > 0 ? btn("‹ Seanslar", `p:${hh}:${sp - 1}:${lp}`) : null,
+    sp < spages - 1 ? btn("Seanslar ›", `p:${hh}:${sp + 1}:${lp}`) : null,
+  ];
   return {
     text: lines.join("\n"),
     keyboard: rows(
-      [active ? btn("⚪ Pasif yap", `ta:${hh}:0`) : btn("🟢 Aktif yap", `ta:${hh}:1`)],
+      [active ? btn("⚪ Pasif yap", `ta:${hh}:0:i${lp}`) : btn("🟢 Aktif yap", `ta:${hh}:1:i${lp}`)],
       ...targets.map((t) => [btn(`✏️ ${trunc(t.name ?? t.id, 30)}`, `ts:${hh}:${t.id}`)]),
       [
         targets.some((t) => t.id === "y") ? null : btn("➕ Yetişkin ekle", `tg:${hh}:y`),
         targets.some((t) => t.id === "c") ? null : btn("➕ Çocuk ekle", `tg:${hh}:c`),
       ],
-      [btn("‹ Oyunlar", "pl:0"), BACK_MAIN()],
+      [urlBtn("🔗 Oyun sayfası", entry.url)],
+      ...chunk(sessionBtns, 2),
+      sessionNav,
+      [btn("‹ Liste", `pl:${lp}`), BACK_MAIN()],
     ),
   };
 }
@@ -684,7 +844,7 @@ function watchlistScreen(config, state, idx, pageArg) {
   for (const s of shown) {
     const targets = (cfgPlays(config)[s].targets ?? []).filter(isObj);
     lines.push("", `🎭 <b>${esc(playTitle(state, s))}</b>`);
-    if (targets.length === 0) lines.push(`• ${NO_TARGET_TEXT}`);
+    if (targets.length === 0) lines.push(`• <i>${NO_TARGET_TEXT}</i>`);
     for (const t of targets.slice(0, 4)) lines.push(`• ${targetSummary(t)}`);
     if (targets.length > 4) lines.push(`… +${targets.length - 4} hedef daha`);
   }
@@ -724,8 +884,8 @@ function upcomingScreen(config, state) {
 }
 
 /** Renders the screen for a route. Mutating routes render the screen they lead back to. */
-export function render(route, config, state) {
-  return guardLength(renderRoute(route, config, state));
+export function render(route, config, state, now = Date.now()) {
+  return guardLength(renderRoute(route, config, state, now));
 }
 
 const MAX_TEXT = 4096;
@@ -745,26 +905,40 @@ export function guardLength(screen) {
   return { ...screen, text: `${cut}\n…${tail}` };
 }
 
-function renderRoute(route, config, state) {
+function renderRoute(route, config, state, now) {
   try {
     const parts = String(route ?? "").split(":");
     const op = parts[0];
-    if (op === "m" || op === "pz") return mainScreen(config, state);
+    if (op === "m" || op === "pz") return mainScreen(config, state, now);
     if (op === "tl") return watchlistScreen(config, state, indexFor(config, state), parts[1]);
     if (op === "up") return upcomingScreen(config, state);
-    if (op === "rf") return sourcesScreen(state, true);
-    if (op === "src") return sourcesScreen(state, false);
-    if (op === "eo") return eventsScreen(config, state, parts[1]);
-    if (op === "ef") return eventsScreen(config, state, parts[3]);
+    if (op === "rf") return sourcesScreen(config, state, true);
+    if (op === "src") return sourcesScreen(config, state, false);
+    if (op === "eo") return listScreen(config, state, "0", now); // legacy button of an old message
+    if (op === "pl") return listScreen(config, state, parts[1], now);
+    if (op === "e") {
+      const id = eventIndex(state).slugOf.get(parts[1]);
+      if (id === undefined) return notFound("Etkinlik", btn("🎭 Liste", "pl:0"));
+      return eventScreen(config, state, id, now, parts[2]);
+    }
+    if (op === "ef") {
+      // a follow switch renders the screen it leads back to (see viewOf)
+      const back = viewOf(route);
+      return back === route ? notFound("Ekran") : renderRoute(back, config, state, now);
+    }
+    if (op === "ta" && parts[3] !== undefined) {
+      const back = viewOf(route);
+      if (back !== route) return renderRoute(back, config, state, now);
+    }
     const idx = indexFor(config, state);
-    if (op === "pl") return listScreen(config, state, parts[1], idx);
 
     const playOps = new Set(["p", "ta", "tg", "ts", "hp", "hd", "hf", "ht", "hx", "hs"]);
     if (!playOps.has(op)) return notFound("Ekran");
     const slug = idx.slugOf.get(parts[1]);
-    if (slug === undefined) return notFound("Oyun", btn("🎭 Oyunlar", "pl:0"));
+    if (slug === undefined) return notFound("Oyun", btn("🎭 Liste", "pl:0"));
 
-    if (op === "p" || op === "ta" || op === "tg") return playScreen(config, state, slug, idx);
+    if (op === "p") return playScreen(config, state, slug, idx, now, parts[2], parts[3]);
+    if (op === "ta" || op === "tg") return playScreen(config, state, slug, idx, now);
     const t = findTarget(config, slug, parts[2]);
     if (!t) return notFound("Hedef", btn("‹ Oyun", `p:${parts[1]}`));
     return targetScreen(config, state, slug, t, idx);
@@ -780,12 +954,20 @@ export function isMutating(route) {
 /**
  * The route whose screen should be shown after a route was handled: deleting a target
  * (hs) returns to the play screen, target edits return to the target screen, pz to the
- * main menu. Other routes show themselves.
+ * main menu, a follow switch (ta / ef) to the list page or item screen it came from.
+ * Other routes show themselves.
  */
 export function viewOf(route) {
   const parts = String(route ?? "").split(":");
   if (parts[0] === "hs") return `p:${parts[1]}`;
-  if (parts[0] === "ef") return `eo:${parts[3] ?? 0}`;
+  if (parts[0] === "ta" || parts[0] === "ef") {
+    // ret (4th part): <n> = list page n, i<n> = item screen opened from list page n
+    const ret = parts[3] ?? "";
+    if (/^\d+$/.test(ret)) return `pl:${ret}`;
+    const item = /^i(\d+)$/.exec(ret);
+    if (item) return parts[0] === "ta" ? `p:${parts[1]}:0:${item[1]}` : `e:${parts[1]}:${item[1]}`;
+    return parts[0] === "ta" ? route : "pl:0";
+  }
   if (parts[0] === "pz") return "m";
   if (["hp", "hd", "hf", "ht", "hx"].includes(parts[0])) return `ts:${parts[1]}:${parts[2]}`;
   return route;

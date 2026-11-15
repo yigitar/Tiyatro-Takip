@@ -308,7 +308,7 @@ def event_row(view: dict, now: datetime | None = None) -> Row:
         derived.update({"rez", "summary"})
     return Row(
         slug=view["id"], title=view["title"], tags=tags, audience=audience,
-        genre=view["genre"] or resolve_genre(view["kind"], view["title"]),
+        genre=view["genre"],
         session_count=1, status_summary=view["summary"],
         watched=view["followed"], active=view["followed"],
         url=view["url"], nearest=start, source=view["source_name"], is_event=True,

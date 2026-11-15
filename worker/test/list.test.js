@@ -1,0 +1,401 @@
+// Wave 7: unified play/event list, derived fields, 🆕 seen list, link buttons.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { h, render, apply, listItems, sourceLinks, isMutating, viewOf, HELP, LEGEND } from "../src/menu.js";
+import {
+  resolveAudience, resolveGenre, genreFromText, timeOfDay, audienceIsStated, genreIsStated,
+  rezWhen, eventFields, playFields,
+} from "../src/derive.js";
+import { makeConfig, makeState } from "./_fixtures.js";
+
+const NOW = Date.parse("2030-02-01T09:00:00+03:00");
+const KB = h("kusursuz-bir-aile");
+const flat = (r) => r.keyboard.flat();
+const bytes = (s) => new TextEncoder().encode(s).length;
+const iso = (days, hh = 12) => new Date(NOW + days * 86400e3 + (hh - 9) * 3600e3).toISOString();
+
+function evState() {
+  const s = makeState();
+  s.source_events = {
+    "vkv:541": { id: "vkv:541", source: "vkv", title: "Ceviz Adam <Müzikali>", kind: "Çocuk Tiyatrosu", start: iso(10, 11),
+      opens_at: iso(2, 12), opens_pending: true, full: false, url: "https://www.vkvfordkultur.org.tr/Etkinlik/541", follow_default: false },
+    "bk:20300206-1400-cop-atlas": { id: "bk:20300206-1400-cop-atlas", source: "basiskele", title: "Çöp Atlas", kind: "Tiyatro",
+      start: iso(5, 14), opens_at: null, follow_default: false, url: "https://www.basiskele.bel.tr/x" },
+    "bk:old": { id: "bk:old", source: "basiskele", title: "Geçmiş", start: iso(-3), follow_default: false },
+    "bk:evlilik": { id: "bk:evlilik", source: "basiskele", title: "Evlilik Okulu", kind: "", start: iso(7, 19), follow_default: false },
+  };
+  return s;
+}
+
+test("one list: plays and events together, each labelled with its source and a follow box", () => {
+  const r = render("pl:0", makeConfig(), evState(), NOW);
+  for (const t of ["Kusursuz Bir Aile &amp; Şükran", "Küçük Prens", "Ceviz Adam &lt;Müzikali&gt;", "Çöp Atlas"]) {
+    assert.ok(r.text.includes(t), `${t}\n${r.text}`);
+  }
+  assert.ok(!r.text.includes("Geçmiş")); // events more than 3 h in the past are dropped
+  assert.ok(r.text.includes("Biletinial") && r.text.includes("Başiskele") && r.text.includes("VKV"));
+  assert.ok(r.text.includes("☑ <b>Kusursuz") && r.text.includes("☐ <b>Küçük Prens"));
+  assert.ok(r.text.includes("☐ <b>Çöp Atlas"));
+  assert.ok(!/Diğer kaynaklar/.test(r.text));
+  const m = render("m", makeConfig(), evState(), NOW);
+  assert.ok(!/Diğer kaynaklar/.test(m.text) && !flat(m).some((b) => /Diğer kaynaklar/.test(b.text) || /^eo:/.test(b.callback_data ?? "")));
+  assert.ok(!Object.values(HELP).flat().some((l) => /Diğer kaynaklar/.test(l)));
+});
+
+test("rows carry Kitle / Tür / Zaman / Hedef / Rez. açılış; derived values are italic, stated ones are not", () => {
+  const items = listItems(makeConfig(), evState(), NOW);
+  const by = (id) => items.find((i) => i.id === id);
+  const kb = by("kusursuz-bir-aile");
+  assert.deepEqual([kb.kitle, kb.tur, kb.zaman, kb.hedef, kb.rez],
+    ["Yetişkin", "Komedi", "gündüz+gece", "var (1)", "20 Şub Çar 10:00 (19 gün sonra)"]);
+  assert.deepEqual(kb.derived, ["audience", "zaman"]);
+  const kp = by("kucuk-prens");
+  assert.deepEqual([kp.tur, kp.zaman, kp.hedef], ["Tiyatro", "gündüz", "yok → tüm seanslar"]);
+  assert.deepEqual(kp.derived, ["audience", "genre", "rez", "target", "zaman"].filter((k) => kp.derived.includes(k)));
+  assert.ok(kp.derived.includes("target") && kp.derived.includes("genre"));
+  const cz = by("vkv:541");
+  assert.deepEqual([cz.kitle, cz.tur, cz.zaman, cz.hedef], ["Çocuk", "Müzikal", "gündüz", "—"]);
+  assert.equal(cz.rez, "3 Şub Paz 12:00 (2 gün sonra)");
+  assert.ok(!cz.derived.includes("audience") && cz.derived.includes("genre") && cz.derived.includes("target"));
+  const ev = by("bk:evlilik");
+  assert.deepEqual([ev.kitle, ev.tur, ev.zaman, ev.rez], ["Yetişkin", "", "gece", "duyuru bekleniyor"]);
+  const text = render("pl:0", makeConfig(), evState(), NOW).text;
+  assert.ok(text.includes("Kitle: <i>Yetişkin</i> · Tür: Komedi · Zaman: <i>gündüz+gece</i>"), text); // Tür stated, Kitle (age) derived
+  assert.ok(text.includes("Hedef: var (1) · Rez. açılış: 20 Şub Çar 10:00 (19 gün sonra)"), text);
+  assert.ok(text.includes("Hedef: <i>yok → tüm seanslar</i>"), text);
+  assert.ok(text.includes("Tür: <i>—</i>"), text); // blank Tür of a non-theatre event is shown as a derived dash
+  assert.ok(text.includes("Rez. açılış: <i>duyuru bekleniyor</i>"), text);
+});
+
+test("one legend line explains the italic marker (list, play and event screens)", () => {
+  assert.ok(LEGEND.includes("<i>italik = türetilmiş</i>"));
+  for (const route of ["pl:0", `p:${KB}`, `e:${h("vkv:541")}`]) {
+    const t = render(route, makeConfig(), evState(), NOW).text;
+    assert.equal(t.split("\n").filter((l) => l === LEGEND).length, 1, route);
+  }
+});
+
+test("derivation rules (port of tiyatro/tags.py)", () => {
+  assert.equal(resolveAudience("Komedi", [], null), "Yetişkin"); // no child marker -> Yetişkin
+  assert.equal(resolveAudience("Komedi", [], 7), "Çocuk");
+  assert.equal(resolveAudience("", [], null, "Çocuk Tiyatrosu Ceviz"), "Çocuk");
+  assert.equal(resolveGenre("Yetişkin Oyunu", ["X", ""]), "Tiyatro");
+  assert.equal(resolveGenre("Çocuk Oyunu", ["Ceviz Adam Müzikali"]), "Müzikal");
+  assert.equal(resolveGenre("", ["Söyleşi"], false), "");
+  assert.equal(genreFromText("Dramaturji ve program"), ""); // no substring accidents
+  assert.equal(genreFromText("Bir komedi ve dram"), "Komedi"); // earliest keyword
+  assert.equal(genreFromText("STAND-UP gecesi"), "Stand-up");
+  assert.equal(genreFromText("Müzikal"), "Müzikal");
+  assert.equal(timeOfDay([11, 20]), "gündüz+gece");
+  assert.equal(timeOfDay([16]), "gündüz");
+  assert.equal(timeOfDay([17]), "gece"); // 17:00 is the boundary
+  assert.equal(timeOfDay([]), "");
+  assert.ok(audienceIsStated("Çocuk Oyunu") && !audienceIsStated("Komedi") && !audienceIsStated("Çocuk Yetişkin"));
+  assert.ok(genreIsStated("Komedi") && !genreIsStated("Çocuk Oyunu"));
+});
+
+test("Rez. açılış ladder for plays and events", () => {
+  const sess = (status, opens, days = 10) => ({ status, opens_at: opens, start: iso(days, 20) });
+  const f = (sessions) => playFields({ title: "X", sessions }, undefined, NOW);
+  assert.equal(f({ a: sess("upcoming", iso(1, 10)) }).rez, "2 Şub Cmt 10:00 (yarın)");
+  assert.equal(f({ a: sess("upcoming", iso(0, 12)) }).rez, "1 Şub Cum 12:00 (bugün)");
+  // a play with one session on sale and another opening tomorrow shows the opening (ladder order)
+  assert.equal(f({ a: sess("on_sale", null), b: sess("upcoming", iso(1, 10)) }).rez, "2 Şub Cmt 10:00 (yarın)");
+  assert.equal(f({ a: sess("on_sale", null) }).rez, "açık");
+  assert.equal(f({ a: sess("sold_out", null), b: sess("sold_out", null) }).rez, "tükendi");
+  assert.equal(f({ a: sess("sold_out", null), b: sess("unknown", null) }).rez, "—");
+  assert.equal(f({ a: sess("upcoming", iso(-1, 10)) }).rez, "—"); // a past opening time is no opening
+  assert.equal(f({}).rez, "—");
+  assert.ok(f({}).derived.includes("rez"));
+  const e = (rec) => eventFields({ title: "T", kind: "Tiyatro", start: iso(9), ...rec }, "x", NOW);
+  assert.equal(e({ full: true }).rez, "doldu");
+  assert.equal(e({ opens_at: null }).rez, "duyuru bekleniyor");
+  assert.equal(e({ opens_at: iso(1, 10) }).rez, "2 Şub Cmt 10:00 (yarın)");
+  assert.equal(e({ opens_at: iso(-1), opens_pending: false }).rez, "açık");
+  assert.equal(e({ opens_at: iso(-1), opens_pending: true }).rez, "açılmış olabilir");
+  assert.ok(!e({ full: true }).derived.includes("rez") && e({ opens_at: iso(-1) }).derived.includes("rez"));
+  assert.equal(rezWhen(Date.parse("2030-02-01T00:30:00+03:00"), NOW), "1 Şub Cum 00:30 (bugün)");
+});
+
+test("default follow is OFF: new plays and events are unticked and the text says so", () => {
+  const cfg = makeConfig();
+  delete cfg.plays["kucuk-prens"];
+  const items = listItems(cfg, evState(), NOW);
+  assert.equal(items.find((i) => i.id === "kucuk-prens").followed, false);
+  assert.ok(items.filter((i) => i.kind === "event").every((i) => !i.followed));
+  assert.ok(HELP.list.join(" ").includes("takipte DEĞİL başlar"));
+  assert.ok(HELP.event.join(" ").includes("takipte DEĞİL başlar"));
+  assert.ok(render(`p:${h("kucuk-prens")}`, cfg, evState(), NOW).text.includes("varsayılan olarak takipte değildir"));
+  assert.ok(render(`e:${h("vkv:541")}`, cfg, evState(), NOW).text.includes("varsayılan olarak takipte değildir"));
+  // an explicit choice still wins over the stored default
+  const on = listItems({ ...cfg, event_follow: { "vkv:541": true } }, evState(), NOW).find((i) => i.id === "vkv:541");
+  assert.equal(on.followed, true);
+  // a record without the field counts as followed (it was ON then), as tiyatro/srcevents.event_views
+  const old = evState();
+  delete old.source_events["vkv:541"].follow_default;
+  assert.equal(listItems(cfg, old, NOW).find((i) => i.id === "vkv:541").followed, true);
+});
+
+test("toggles use the idempotent ta / ef routes and lead back to the page they came from", () => {
+  const s = evState();
+  const cfg = makeConfig();
+  const evh = h("vkv:541");
+  const r = render("pl:0", cfg, s, NOW);
+  const cds = flat(r).map((b) => b.callback_data).filter(Boolean);
+  assert.ok(cds.includes(`ta:${KB}:0:0`) && cds.includes(`ta:${h("kucuk-prens")}:1:0`));
+  assert.ok(cds.includes(`ef:${evh}:1:0`) && cds.includes(`p:${KB}:0:0`) && cds.includes(`e:${evh}:0`));
+  for (const route of [`ef:${evh}:1:0`, `ef:${evh}:0:3`, `ta:${KB}:0:0`, `ta:${KB}:0`, `ef:${evh}:1:i2`]) {
+    assert.equal(isMutating(route), true);
+    const once = apply(route, cfg, s);
+    assert.deepEqual(apply(route, once, s), once, route);
+  }
+  assert.equal(apply(`ef:${evh}:1:0`, cfg, s).event_follow["vkv:541"], true);
+  assert.equal(apply(`ef:${evh}:0:0`, cfg, s).event_follow["vkv:541"], false);
+  assert.deepEqual(apply("ef:deadbeef:1:0", cfg, s), cfg);
+  assert.equal(viewOf(`ef:${evh}:1:2`), "pl:2");
+  assert.equal(viewOf(`ta:${KB}:0:4`), "pl:4");
+  assert.equal(viewOf(`ef:${evh}:1:i2`), `e:${evh}:2`);
+  assert.equal(viewOf(`ta:${KB}:1:i3`), `p:${KB}:0:3`);
+  assert.equal(viewOf(`ta:${KB}:1`), `ta:${KB}:1`);
+  assert.equal(viewOf(`ef:${evh}:1`), "pl:0");
+  assert.equal(viewOf("eo:2"), "eo:2"); // legacy alias renders the list, never mutates
+  // after the switch the list shows the new state
+  const after = render(viewOf(`ef:${evh}:1:0`), apply(`ef:${evh}:1:0`, cfg, s), s, NOW);
+  assert.ok(after.text.includes("☑ <b>Ceviz Adam"), after.text);
+  assert.ok(render("eo:3", cfg, s, NOW).text.includes("Oyunlar ve etkinlikler")); // old message button still works
+  assert.ok(render(`ef:${evh}:1:0`, cfg, s, NOW).text.includes("Oyunlar ve etkinlikler")); // old ef button too
+});
+
+test("paging: many items -> 6 per page, every page <= 4096 chars and every callback <= 64 bytes", () => {
+  const s = makeState();
+  for (let i = 0; i < 30; i++) {
+    s.plays[`oyun-${i}-${"uzun-slug-".repeat(5)}`] = { title: "Çok uzun oyun adı ".repeat(8), genre: "Dram", tags: [],
+      sessions: { a: { status: "upcoming", opens_at: iso(2), start: iso(9 + i, 20) } } };
+  }
+  s.source_events = {};
+  for (let i = 0; i < 40; i++) {
+    const id = `bk:2030020${i}-1400-uzun-etkinlik-adi-${i}`;
+    s.source_events[id] = { id, source: "basiskele", title: "Çok uzun bir etkinlik adı ".repeat(8), kind: "Yetişkin Tiyatrosu", start: iso(1 + i), follow_default: false };
+  }
+  const cfg = makeConfig();
+  const total = 3 + 30 + 40;
+  const pages = Math.ceil(total / 6);
+  const seen = new Set();
+  for (let p = 0; p < pages; p++) {
+    const r = render(`pl:${p}`, cfg, s, NOW);
+    assert.ok(r.text.length <= 4096, `page ${p}: ${r.text.length}`);
+    assert.ok(r.text.includes(`sayfa ${p + 1}/${pages}`));
+    for (const b of flat(r)) {
+      if (b.callback_data) assert.ok(bytes(b.callback_data) <= 64, b.callback_data);
+      if (b.callback_data?.startsWith("p:") || b.callback_data?.startsWith("e:")) seen.add(b.callback_data.split(":")[1]);
+    }
+    assert.equal(flat(r).some((b) => b.text === "Sonraki ›"), p < pages - 1);
+    assert.equal(flat(r).some((b) => b.text === "‹ Önceki"), p > 0);
+  }
+  assert.equal(seen.size, total); // every item is reachable exactly once
+  assert.ok(render("pl:999", cfg, s, NOW).text.includes(`sayfa ${pages}/${pages}`));
+  assert.ok(render("m", cfg, s, NOW).text.length <= 4096);
+});
+
+test("order: followed first, then nearest start, then title (as the PC list)", () => {
+  const cfg = makeConfig();
+  const ids = listItems(cfg, evState(), NOW).map((i) => i.id);
+  // followed play first; then by nearest upcoming start: Çöp Atlas (5 d), Evlilik (7 d), Ceviz (10 d), Küçük Prens (Apr)
+  assert.deepEqual(ids, ["kusursuz-bir-aile", "bk:20300206-1400-cop-atlas", "bk:evlilik", "vkv:541", "kucuk-prens", "yeni-oyun"]);
+});
+
+test("archived unfollowed plays stay out of the list (as the PC), watched ones stay", () => {
+  const s = makeState();
+  s.plays["kucuk-prens"].archived = true;
+  s.plays["yeni-oyun"].archived = true;
+  const cfg = makeConfig();
+  cfg.plays["yeni-oyun"] = { active: true, targets: [], tag_overrides: {} };
+  const ids = listItems(cfg, s, NOW).map((i) => i.id);
+  assert.ok(!ids.includes("kucuk-prens") && ids.includes("yeni-oyun"));
+});
+
+// ---- 🆕 seen list ----
+
+const seenOf = (cfg, route, s) => apply(route, cfg, s).seen;
+
+test("seen: first use baselines everything; render without a seen key shows no 🆕", () => {
+  const s = evState();
+  const cfg = makeConfig();
+  assert.equal(cfg.seen, undefined);
+  assert.ok(!render("pl:0", cfg, s, NOW).text.includes("🆕 <b>"));
+  assert.ok(!render("m", cfg, s, NOW).text.includes("🆕"));
+  const seen = seenOf(cfg, "pl:0", s);
+  assert.deepEqual([...seen].sort(), [...Object.keys(s.plays), ...Object.keys(s.source_events)].sort());
+  assert.deepEqual(apply("pl:0", { ...cfg, seen }, s).seen, seen); // idempotent
+  assert.deepEqual(seenOf(cfg, `p:${KB}:0:0`, s), seen); // opening an item first = baseline too
+});
+
+test("seen: a new item is 🆕 until its screen is opened once, then never again", () => {
+  const s = evState();
+  const cfg = { ...makeConfig(), seen: ["kusursuz-bir-aile", "kucuk-prens", "yeni-oyun", "bk:old", "bk:evlilik"] };
+  const text = render("pl:0", cfg, s, NOW).text;
+  assert.ok(text.includes("🆕 <b>Ceviz Adam") && text.includes("🆕 <b>Çöp Atlas"), text);
+  assert.ok(!text.includes("🆕 <b>Kusursuz"));
+  assert.ok(render("m", cfg, s, NOW).text.includes("🆕 Henüz açmadığın yeni öğe: 2"));
+  assert.ok(flat(render("pl:0", cfg, s, NOW)).some((b) => b.text === "🆕 Ayrıntı ›"));
+  const c1 = apply(`e:${h("vkv:541")}:0`, cfg, s);
+  assert.ok(c1.seen.includes("vkv:541") && !c1.seen.includes("bk:20300206-1400-cop-atlas"));
+  assert.ok(!render("pl:0", c1, s, NOW).text.includes("🆕 <b>Ceviz Adam"));
+  assert.ok(render("pl:0", c1, s, NOW).text.includes("🆕 <b>Çöp Atlas"));
+  assert.deepEqual(apply(`e:${h("vkv:541")}:0`, c1, s), c1); // second open: nothing to write
+  // the event screen itself does not carry a 🆕 marker and also marks the id seen
+  assert.ok(!render(`e:${h("vkv:541")}:0`, cfg, s, NOW).text.includes("🆕 <b>"));
+  // a play is cleared the same way
+  const s2 = evState();
+  s2.plays["tamamen-yeni"] = { title: "Tamamen Yeni", sessions: {} };
+  const c2 = apply(`p:${h("tamamen-yeni")}`, { ...cfg }, s2);
+  assert.ok(c2.seen.includes("tamamen-yeni"));
+  assert.ok(render("pl:0", cfg, s2, NOW).text.includes("🆕 <b>Tamamen Yeni"));
+});
+
+test("seen: following (toggle) does not clear 🆕; unknown ids and non-item routes never touch it", () => {
+  const s = evState();
+  const cfg = { ...makeConfig(), seen: ["kusursuz-bir-aile"] };
+  const evh = h("vkv:541");
+  assert.deepEqual(apply(`ef:${evh}:1:0`, cfg, s).seen, ["kusursuz-bir-aile"]);
+  assert.deepEqual(apply(`ta:${h("kucuk-prens")}:1:0`, cfg, s).seen, ["kusursuz-bir-aile"]);
+  assert.deepEqual(apply("p:00000000", cfg, s), cfg);
+  assert.deepEqual(apply("e:00000000", cfg, s), cfg);
+  assert.deepEqual(apply("pz:1", cfg, s).seen, ["kusursuz-bir-aile"]);
+});
+
+test("seen stays bounded (<= 500) and drops ids that left the state", () => {
+  const s = makeState();
+  for (let i = 0; i < 700; i++) s.plays[`p${i}`] = { title: `P${i}`, sessions: {} };
+  const base = apply("pl:0", makeConfig(), s).seen;
+  assert.equal(base.length, 500);
+  const stale = { ...makeConfig(), seen: ["gone-1", "gone-2", "kusursuz-bir-aile"] };
+  const c = apply(`p:${h("yeni-oyun")}`, stale, makeState());
+  assert.deepEqual(c.seen, ["kusursuz-bir-aile", "yeni-oyun"]); // stale ids pruned on write
+  // opening more items keeps the cap
+  let cfg = { ...makeConfig(), seen: base };
+  for (let i = 0; i < 20; i++) {
+    cfg = apply(`p:${h(`p${i}`)}`, cfg, s);
+  }
+  assert.ok(cfg.seen.length <= 500);
+  // malformed seen is replaced by a fresh baseline instead of throwing
+  assert.ok(Array.isArray(apply("pl:0", { ...makeConfig(), seen: "x" }, makeState()).seen));
+});
+
+// ---- links ----
+
+function manySessions(n, withUrl = true) {
+  const s = makeState();
+  const sessions = {};
+  for (let i = 0; i < n; i++) {
+    sessions[`s${String(i).padStart(2, "0")}`] = { status: "on_sale", opens_at: null, start: iso(3 + i, 20),
+      ...(withUrl ? { url: `https://biletinial.com/oturum/${i}` } : {}) };
+  }
+  s.plays["kusursuz-bir-aile"].sessions = sessions;
+  return s;
+}
+
+test("play screen: Oyun sayfası + one Seans URL button per session, paged 8 per page", () => {
+  const s = manySessions(19);
+  const cfg = makeConfig();
+  const r0 = render(`p:${KB}:0:2`, cfg, s, NOW);
+  const urls = (r) => flat(r).filter((b) => b.url);
+  assert.equal(urls(r0).length, 1 + 8);
+  assert.ok(urls(r0)[0].text.includes("Oyun sayfası") && urls(r0)[0].url === "https://biletinial.com/tr-tr/tiyatro/kusursuz-bir-aile");
+  assert.ok(urls(r0).slice(1).every((b) => b.text.startsWith("🔗 Seans ") && /biletinial\.com\/oturum\/\d+$/.test(b.url)));
+  assert.ok(r0.text.includes("sayfa 1/3, 19 seans"));
+  const next = flat(r0).find((b) => b.text === "Seanslar ›");
+  assert.equal(next.callback_data, `p:${KB}:1:2`);
+  assert.ok(!flat(r0).some((b) => b.text === "‹ Seanslar"));
+  assert.ok(flat(r0).some((b) => b.callback_data === "pl:2")); // back to the list page we came from
+  const r2 = render(`p:${KB}:2:2`, cfg, s, NOW);
+  assert.equal(urls(r2).length, 1 + 3);
+  assert.ok(flat(r2).some((b) => b.text === "‹ Seanslar") && !flat(r2).some((b) => b.text === "Seanslar ›"));
+  assert.ok(render(`p:${KB}:99`, cfg, s, NOW).text.includes("sayfa 3/3"));
+  const all = new Set([0, 1, 2].flatMap((p) => urls(render(`p:${KB}:${p}`, cfg, s, NOW)).slice(1).map((b) => b.url)));
+  assert.equal(all.size, 19); // every session reachable
+  for (const p of [0, 1, 2]) {
+    const r = render(`p:${KB}:${p}`, cfg, s, NOW);
+    assert.ok(r.text.length <= 4096);
+    assert.ok(flat(r).length <= 100);
+    for (const b of flat(r)) if (b.callback_data) assert.ok(bytes(b.callback_data) <= 64);
+  }
+});
+
+test("play screen: sessions without a page get no button and a hint; unsafe URLs never become buttons", () => {
+  const s = manySessions(3, false);
+  const r = render(`p:${KB}`, makeConfig(), s, NOW);
+  assert.equal(flat(r).filter((b) => b.url).length, 1); // only Oyun sayfası
+  assert.ok(r.text.includes("Kendi sayfası olmayan seanslar"));
+  const bad = manySessions(2);
+  const recs = bad.plays["kusursuz-bir-aile"].sessions;
+  recs.s00.url = "javascript:alert(1)";
+  recs.s01.url = "https://biletinial.com/a b";
+  bad.plays["kusursuz-bir-aile"].url = "ftp://x/y";
+  const rb = render(`p:${KB}`, makeConfig(), bad, NOW);
+  assert.equal(flat(rb).filter((b) => b.url).length, 0);
+  assert.ok(rb.text.length > 0);
+  // a play without any state page / sessions still renders
+  assert.ok(render(`p:${h("yeni-oyun")}`, makeConfig(), makeState(), NOW).text.includes("Seans bilgisi yok."));
+});
+
+test("past sessions are not listed (as the PC detail table)", () => {
+  const s = manySessions(2);
+  s.plays["kusursuz-bir-aile"].sessions.old = { status: "sold_out", start: iso(-5, 20), url: "https://biletinial.com/eski" };
+  const r = render(`p:${KB}`, makeConfig(), s, NOW);
+  assert.ok(!flat(r).some((b) => b.url === "https://biletinial.com/eski"));
+});
+
+test("event screen: fields, follow switch, Etkinlik sayfası button, legend", () => {
+  const s = evState();
+  const evh = h("vkv:541");
+  const r = render(`e:${evh}:2`, makeConfig(), s, NOW);
+  for (const t of ["Ceviz Adam &lt;Müzikali&gt;", "Kaynak: VKV", "Kitle: Çocuk · Tür: <i>Müzikal</i> · Zaman: <i>gündüz</i>",
+    "Hedef: <i>—</i> · Rez. açılış: 3 Şub Paz 12:00 (2 gün sonra)", "Takip: ☐ takipte değil"]) {
+    assert.ok(r.text.includes(t), `${t}\n${r.text}`);
+  }
+  const b = flat(r);
+  assert.ok(b.some((x) => x.callback_data === `ef:${evh}:1:i2`));
+  assert.ok(b.some((x) => x.url === "https://www.vkvfordkultur.org.tr/Etkinlik/541"));
+  assert.ok(b.some((x) => x.callback_data === "pl:2"));
+  const followed = render(`e:${evh}`, { ...makeConfig(), event_follow: { "vkv:541": true } }, s, NOW);
+  assert.ok(flat(followed).some((x) => x.callback_data === `ef:${evh}:0:i0`) && followed.text.includes("Takip: ☑ takipte"));
+  assert.ok(render("e:00000000", makeConfig(), s, NOW).text.includes("Etkinlik bulunamadı"));
+  // an event that disappeared from the state (stale button) -> not found, with a way back
+  assert.ok(render(`e:${evh}`, makeConfig(), makeState(), NOW).text.includes("bulunamadı"));
+});
+
+test("Kaynaklar screen: an 'aç' URL button for each source", () => {
+  const s = makeState();
+  s.sources = {
+    biletinial: { name: "Biletinial", ok: true, last_check_at: new Date().toISOString(), items_count: 3 },
+    basiskele: { name: "Başiskele Belediyesi", ok: true, last_check_at: new Date().toISOString(), items_count: 4 },
+    vkv: { name: "VKV Ford Otosan Gölcük", ok: true, last_check_at: new Date().toISOString(), items_count: 2 },
+  };
+  s.src_cache = { basiskele: { articles: {
+    "https://www.basiskele.bel.tr/a-eski": { pub: "2030-01-05T10:00:00+03:00" },
+    "https://www.basiskele.bel.tr/b-yeni": { pub: "2030-01-25T10:00:00+03:00" },
+    "javascript:x": { pub: "2031-01-01T00:00:00+03:00" },
+  } } };
+  for (const route of ["src", "rf"]) {
+    const r = render(route, makeConfig(), s, NOW);
+    const urls = Object.fromEntries(flat(r).filter((b) => b.url).map((b) => [b.text, b.url]));
+    assert.deepEqual(urls, {
+      "🔗 Biletinial aç": "https://biletinial.com/tr-tr/mekan/ornek-mekan",
+      "🔗 Başiskele aç": "https://www.basiskele.bel.tr/b-yeni",
+      "🔗 VKV aç": "https://www.vkvfordkultur.org.tr/Etkinlikler",
+    });
+    assert.ok(flat(r).some((b) => b.callback_data === "src"));
+  }
+  // same fallbacks as pc/app_logic.source_links
+  assert.deepEqual(sourceLinks({ sources: ["not a url"] }, {}), {
+    basiskele: "https://www.basiskele.bel.tr", vkv: "https://www.vkvfordkultur.org.tr/Etkinlikler" });
+  // without any source record the three known sources still get a button
+  assert.equal(flat(render("src", makeConfig(), makeState(), NOW)).filter((b) => b.url).length, 3);
+});
+
+test("texts no longer mention the old behaviour (default-ON, Diğer kaynaklar)", () => {
+  const all = [...Object.values(HELP).flat(), LEGEND].join("\n");
+  assert.ok(!/Diğer kaynaklar|varsayılan olarak takipte olur|default.?ON/i.test(all));
+  assert.ok(/Yenile: tüm kaynakları/.test(HELP.sources[0]) && /Yenile: tüm kaynakları \(Biletinial, Başiskele, VKV\)/.test(HELP.main[1]));
+});

@@ -1,0 +1,24 @@
+{
+ "plays": {
+  "yetiskin-komedi-hedefli": {"active": true, "targets": [
+   {"id": "y", "name": "Yetişkin", "people": 2, "rule": {"days": [4, 5], "from_time": "18:00", "to_time": null, "overrides": {}, "exclude_dates": []}},
+   {"id": "c", "name": "Çocuk", "people": 3, "rule": {"days": null, "from_time": null, "to_time": null, "overrides": {}, "exclude_dates": []}}],
+   "tag_overrides": {}},
+  "cocuk-oyunu-yok-hedef": {"active": true, "targets": [], "tag_overrides": {}},
+  "yetiskin-oyunu-sadece-kitle": {"active": false, "targets": [
+   {"id": "y", "name": "Yetişkin", "people": 2, "rule": {"days": null, "from_time": null, "to_time": null, "overrides": {}, "exclude_dates": []}}],
+   "tag_overrides": {}},
+  "ozetten-tur": {"active": true, "targets": [], "tag_overrides": {}},
+  "arsivlenmis-takipte": {"active": true, "targets": [], "tag_overrides": {}},
+  "kalkti": {"active": true, "targets": [], "tag_overrides": {}},
+  "sadece-config-oyunu": {"active": true, "targets": [], "tag_overrides": {}}
+ },
+ "sources": ["https://biletinial.com/tr-tr/mekan/ornek-mekan"],
+ "paused": false,
+ "version": 1,
+ "event_follow": {
+  "bk:20261120-1100-satir-arasi-ebeveynlik": true,
+  "vkv:542": false,
+  "vkv:545": true
+ }
+}
