@@ -110,9 +110,14 @@ def test_new_and_removed_flags():
     assert rs["eski-oyun"].is_removed is True
 
 
-def test_order_watched_first_then_nearest_session():
-    assert [r.slug for r in rows()] == ["hic-kimsenin", "kucuk-prens", "yeni-oyun",
+def test_order_is_nearest_session_then_title_and_ignores_follow_state():
+    assert [r.slug for r in rows()] == ["kucuk-prens", "hic-kimsenin", "yeni-oyun",
                                         "eski-oyun"]
+    # wave 9: ticking Takip must never move a row
+    base = [r.slug for r in rows()]
+    cfg = config_from_dict({"plays": {"yeni-oyun": {"active": True, "targets": []}}})
+    after = build_rows(STATE, cfg, set(), set(), NOW)
+    assert [r.slug for r in after] == base
 
 
 def test_watched_play_missing_from_state_still_listed():

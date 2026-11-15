@@ -145,3 +145,42 @@ def test_many_new_events_in_one_scan_go_out_as_one_digest(monkeypatch):
 
 def _state_with(st):
     return runner._prepare({"plays": {}, "meta": {}, "emitted": dict(st["emitted"])})
+
+
+# ---- toggling Takip keeps row position, selection and scroll (Tk) ------------------------------
+
+import pytest  # noqa: E402
+
+tk = pytest.importorskip("tkinter")
+from tests.test_pc_app_smoke import Box, FakeService, tk_root, ui  # noqa: E402,F401
+
+
+def test_toggling_follow_keeps_order_selection_and_scroll(ui):
+    from datetime import datetime
+    from tiyatro.models import ISTANBUL
+    now = datetime.now(ISTANBUL)
+    for i in range(80):
+        ui.svc._state["plays"][f"q{i:02d}"] = {
+            "title": f"Oyun {i:02d}", "url": "https://example.test/q", "tags": [],
+            "sessions": {"s": {"start": (now + timedelta(days=10 + i)).isoformat(),
+                               "status": "on_sale"}}}
+    ui.root.geometry("1400x700")
+    ui.refresh_rows()
+    ui.root.update()
+    order = list(ui.tree.get_children())
+    assert order[:2] == ["p1", "p2"] and ui.svc.config.plays.get("q40") is None
+    ui.select_slug("q40")
+    ui.root.update()
+    ui.tree.yview_moveto(0.4)
+    ui.root.update()
+    top = ui.tree.yview()[0]
+    assert top > 0.2
+    ui._cell_click("q40", "follow")     # follow the selected, far-down play
+    ui.root.update()
+    assert list(ui.tree.get_children()) == order           # no row moved
+    assert ui.tree.selection() == ("q40",) and ui.selected == "q40"
+    assert abs(ui.tree.yview()[0] - top) < 1e-6
+    ui.refresh_rows()                                       # a refresh tick keeps it too
+    ui.root.update()
+    assert list(ui.tree.get_children()) == order and ui.tree.selection() == ("q40",)
+    assert abs(ui.tree.yview()[0] - top) < 1e-6

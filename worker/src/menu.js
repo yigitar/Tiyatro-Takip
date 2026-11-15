@@ -12,7 +12,8 @@
 //   ts:<h>:<id> (target screen) | tg:<h>:<y|c> | hp:<h>:<id>:<n> | hd:<h>:<id>:<wd|we|all|d0..d6>[:<0|1>]
 //   hf:<h>:<id>:<HH|none> | ht:<h>:<id>:<HH|none> | hx:<h>:<id>:<yymmdd>:<0|1> (date, stateless)
 //   hs:<h>:<id>:rm | tl | up | rf | src | pz:<0|1>      (eo:<n> = legacy alias of pl:0)
-// pl / p / e also write config.json: the bounded `seen` id list behind the 🆕 marker (markSeen).
+// Only set routes write config.json; browsing (m, pl, p, e, tl, ...) never does. Newly found plays/events
+// are announced by the scanner ("🆕 Yeni oyun bulundu" Telegram notice), not marked in these lists.
 
 import { audienceOf, genreLabel, playFields, eventFields } from "./derive.js";
 
@@ -20,7 +21,6 @@ export { audienceOf, genreLabel };
 
 const PAGE_SIZE = 6;
 const SESSION_PAGE = 8;
-const MAX_SEEN = 500;
 const MAX_CALLBACK_BYTES = 64;
 const ISTANBUL_OFFSET_MS = 3 * 3600 * 1000; // Turkey has no DST (fixed UTC+3)
 const DAY_NAMES = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
@@ -190,7 +190,7 @@ export const HELP = {
   ],
   list: [
     "ℹ️ ☑/☐ düğmesi o öğenin takibini açar/kapatır; adı yazan düğme ayrıntıyı, oyun ve seans bağlantılarını açar.",
-    "Yeni gelen oyun ve etkinlikler takipte DEĞİL başlar; 🆕 işareti, ayrıntısını bir kez açana kadar durur.",
+    "Yeni gelen oyun ve etkinlikler takipte DEĞİL başlar; bulunduklarında ayrıca “🆕 Yeni oyun bulundu” bildirimi gelir. Hedef eklemek oyunu otomatik takibe alır.",
   ],
   play: ["ℹ️ Aktif yap: bu oyunda satış açılınca bildirim gelir (hedef yoksa tüm seanslar için).", "Hedef: hangi gün/saat ve kaç kişilik biletle ilgilendiğini sınırlar; ✏️ ile düzenlenir. Oyun sayfası / Seans düğmeleri Biletinial'ı açar."],
   event: ["ℹ️ Takibi aç: rezervasyon açılışı duyurulunca ve açılınca bildirim gelir; açılış saati duyurulmadıysa bildirim gelmez.", "Yeni etkinlikler takipte DEĞİL başlar. Etkinlik sayfası kaynağın kendi sayfasını açar (seans bazlı sayfa yoktur)."],
@@ -200,8 +200,8 @@ export const HELP = {
   sources: ["ℹ️ Yenile: tüm kaynakları şimdi tarar ve listeyi günceller; sonuç burada kaynak başına simgeyle görünür.", "Durumu göster: bu ekranı son sonuçlarla tazeler. 'aç' düğmeleri kaynağın kendi sayfasını açar."],
 };
 
-/** One legend line for the list and item screens: ☑/☐/🆕 and the italic marker of derived values. */
-export const LEGEND = "☑ takipte · ☐ takipte değil · 🆕 yeni · <i>italik = türetilmiş</i> (kural/varsayım), normal = kaynaktan alınan";
+/** One legend line for the list and item screens: ☑/☐ and the italic marker of derived values. */
+export const LEGEND = "☑ takipte · ☐ takipte değil · <i>italik = türetilmiş</i> (kural/varsayım), normal = kaynaktan alınan";
 
 const BACK_MAIN = () => btn("🏠 Ana menü", "m");
 
@@ -211,7 +211,7 @@ function notFound(what, backExtra) {
 
 // ---------------------------------------------------------------- apply
 
-const MUTATING = new Set(["ta", "tg", "hp", "hd", "hf", "ht", "hx", "hs", "pz", "ef", "pl", "p", "e"]);
+const MUTATING = new Set(["ta", "tg", "hp", "hd", "hf", "ht", "hx", "hs", "pz", "ef"]);
 
 function validHour(s) {
   if (s === "none") return null;
@@ -254,32 +254,6 @@ function ruleOf(t) {
   return t.rule;
 }
 
-/**
- * 🆕 bookkeeping: `config.seen` is the list of play slugs / event ids whose screen the user
- * opened (or that existed when the list was first used). Without KV the list lives in
- * config.json and is written through the normal GitHub config edit path. Rules:
- * - no `seen` key (first use): every id currently in state counts as seen (no flood of 🆕);
- * - opening an item adds its id; ids no longer in state are dropped whenever we write;
- * - at most MAX_SEEN ids are kept (newest last). A no-op (already seen) changes nothing, so
- *   nothing is written. The Python side ignores the key (config_from_dict), the PC keeps its
- *   own `seen` set in ui.json.
- */
-function stateIds(state) {
-  return new Set([...Object.keys(statePlays(state)), ...Object.keys(sourceEvents(state))]);
-}
-
-function markSeen(out, state, add) {
-  const cur = stateIds(state);
-  if (!Array.isArray(out.seen)) {
-    out.seen = [...cur].sort().slice(-MAX_SEEN);
-    return;
-  }
-  const have = new Set(out.seen);
-  const fresh = [...new Set(add)].filter((id) => cur.has(id) && !have.has(id));
-  if (fresh.length === 0) return;
-  out.seen = [...out.seen.filter((id) => typeof id === "string" && cur.has(id)), ...fresh].slice(-MAX_SEEN);
-}
-
 /** Pure: returns a new config (deep copy) with the route applied; unchanged copy on any problem. */
 export function apply(route, config, state) {
   let out;
@@ -299,17 +273,6 @@ export function apply(route, config, state) {
       return out;
     }
 
-    if (op === "pl") {
-      markSeen(out, state, []); // first use of the list: baseline (everything is seen)
-      return out;
-    }
-
-    if (op === "e") {
-      const eid = eventIndex(state).slugOf.get(parts[1]);
-      if (eid !== undefined) markSeen(out, state, [eid]);
-      return out;
-    }
-
     if (op === "ef") {
       // Per-event follow of Başiskele/VKV events: set semantics (ef:<h>:<0|1>[:<page>]).
       const eid = eventIndex(state).slugOf.get(parts[1]);
@@ -323,10 +286,6 @@ export function apply(route, config, state) {
     const slug = indexFor(out, state).slugOf.get(parts[1]);
     if (slug === undefined) return out;
 
-    if (op === "p") {
-      markSeen(out, state, [slug]);
-      return out;
-    }
     if (op === "ta") {
       if (parts[2] === "0" || parts[2] === "1") {
         const w = ensurePlay(out, slug);
@@ -544,12 +503,11 @@ export function eventViews(config, state, now = Date.now()) {
 }
 
 /**
- * Every play and event as one list, ordered like the PC list (followed first, then the
- * nearest upcoming session / event start, then title). `derived` holds the keys of the
+ * Every play and event as one list, ordered like the PC list: nearest upcoming session / event
+ * start, then title, then id; never by follow state, so toggling a follow switch moves no row. `derived` holds the keys of the
  * values that are our rule (audience, genre, zaman, target, rez), see derive.js.
  */
 export function listItems(config, state, now = Date.now()) {
-  const seen = isObj(config) && Array.isArray(config.seen) ? new Set(config.seen) : null; // no key = first use
   const plays = statePlays(state);
   const items = [];
   for (const slug of allSlugs(config, state)) {
@@ -561,7 +519,6 @@ export function listItems(config, state, now = Date.now()) {
     items.push({
       kind: "play", id: slug, title: playTitle(state, slug), source: SOURCE_SHORT.biletinial,
       followed, watched, removed: Boolean(entry.removed), url: entry.url,
-      isNew: seen !== null && Object.hasOwn(plays, slug) && !seen.has(slug),
       ...playFields(entry, watch, now),
     });
   }
@@ -569,13 +526,11 @@ export function listItems(config, state, now = Date.now()) {
     items.push({
       kind: "event", id, title: String(rec.title || id), source: SOURCE_SHORT[rec.source] ?? String(rec.source ?? ""),
       followed, watched: followed, removed: false, url: rec.url, venue: rec.venue,
-      isNew: seen !== null && !seen.has(id),
       ...eventFields(rec, id, now),
     });
   }
   const far = Infinity;
-  items.sort((a, b) => (Number(b.watched) - Number(a.watched))
-    || ((a.nearest ?? far) === (b.nearest ?? far) ? 0 : (a.nearest ?? far) < (b.nearest ?? far) ? -1 : 1)
+  items.sort((a, b) => ((a.nearest ?? far) === (b.nearest ?? far) ? 0 : (a.nearest ?? far) < (b.nearest ?? far) ? -1 : 1)
     || a.title.localeCompare(b.title, "tr") || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return items;
 }
@@ -607,7 +562,7 @@ function listScreen(config, state, pageArg, now) {
   const lines = [`🎭 <b>Oyunlar ve etkinlikler</b> (sayfa ${page + 1}/${pages}, ${all.length} öğe)`, ...help(...HELP.list), LEGEND];
   if (all.length === 0) lines.push("", "Henüz oyun veya etkinlik bilgisi yok.");
   for (const it of shown) {
-    lines.push("", `${it.followed ? "☑" : "☐"} ${it.isNew ? "🆕 " : ""}<b>${esc(trunc(it.title, 60))}</b>${it.removed ? " (kalktı)" : ""}`,
+    lines.push("", `${it.followed ? "☑" : "☐"} <b>${esc(trunc(it.title, 60))}</b>${it.removed ? " (kalktı)" : ""}`,
       `${esc(it.source)}${whenSuffix(it)}`, ...fieldLines(it));
   }
   const nav = [
@@ -623,7 +578,7 @@ function listScreen(config, state, pageArg, now) {
         const flag = it.followed ? 0 : 1;
         return [
           btn(`${it.followed ? "☑" : "☐"} ${trunc(it.title, 22)}`, `${isPlay ? "ta" : "ef"}:${hh}:${flag}:${page}`),
-          btn(`${it.isNew ? "🆕 " : ""}Ayrıntı ›`, isPlay ? `p:${hh}:0:${page}` : `e:${hh}:${page}`),
+          btn("Ayrıntı ›", isPlay ? `p:${hh}:0:${page}` : `e:${hh}:${page}`),
         ];
       }),
       nav,
@@ -659,7 +614,6 @@ function mainScreen(config, state, now) {
   const items = listItems(config, state, now);
   const watched = allSlugs(config, state).filter((s) => isWatched(config, state, s)).length;
   const events = items.filter((i) => i.kind === "event" && i.followed).length;
-  const fresh = items.filter((i) => i.isNew).length;
   const paused = isObj(config) && config.paused === true;
   const lastScan = state?.meta?.last_scan;
   const text = [
@@ -669,7 +623,6 @@ function mainScreen(config, state, now) {
     ...(paused ? ["Duraklatılmışken oluşan bildirimler atılır; devam edince gönderilmez."] : []),
     `Takip edilen oyun: ${watched}`,
     `Takip edilen etkinlik: ${events}`,
-    ...(fresh ? [`🆕 Henüz açmadığın yeni öğe: ${fresh}`] : []),
     lastScan ? `Son tarama: ${esc(fmt(lastScan))}` : "Son tarama: bilinmiyor",
     ...portalLines(state),
   ].join("\n");

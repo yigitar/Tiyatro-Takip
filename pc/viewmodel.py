@@ -323,10 +323,10 @@ def event_row(view: dict, now: datetime | None = None) -> Row:
 
 
 def with_events(rows: list[Row], views: list[dict], now: datetime | None = None) -> list[Row]:
-    """Plays + source events in one list: followed first, then nearest, then title."""
+    """Plays + source events in one list: nearest upcoming start, then title (never by follow state: toggling Takip must not move a row)."""
     merged = list(rows) + [event_row(v, now) for v in views]
     far = datetime.max.replace(tzinfo=ISTANBUL)
-    merged.sort(key=lambda r: (not r.watched, r.nearest or far, r.title.casefold()))
+    merged.sort(key=lambda r: (r.nearest or far, r.title.casefold(), r.slug))
     return merged
 
 
@@ -337,7 +337,7 @@ def build_rows(state: dict, config: Config, seen_slugs, removed_slugs,
     ``seen_slugs``: plays the user already knew before the last refresh (anything else
     is ``is_new``); ``removed_slugs``: plays that disappeared in the last refresh.
     Archived plays (all sessions past) are left out unless watched or just removed.
-    Order: watched first, then nearest upcoming session, then title.
+    Order: nearest upcoming session, then title (independent of follow state).
     """
     seen, removed = set(seen_slugs or ()), set(removed_slugs or ())
     plays = (state or {}).get("plays") or {}
@@ -349,7 +349,7 @@ def build_rows(state: dict, config: Config, seen_slugs, removed_slugs,
             continue
         rows.append(row)
     far = datetime.max.replace(tzinfo=ISTANBUL)
-    rows.sort(key=lambda r: (not r.watched, r.nearest or far, r.title.casefold()))
+    rows.sort(key=lambda r: (r.nearest or far, r.title.casefold(), r.slug))
     return rows
 
 

@@ -1,4 +1,4 @@
-// Wave 7: unified play/event list, derived fields, 🆕 seen list, link buttons.
+// Wave 7: unified play/event list, derived fields, link buttons.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { h, render, apply, listItems, sourceLinks, isMutating, viewOf, HELP, LEGEND } from "../src/menu.js";
@@ -8,6 +8,7 @@ import {
 } from "../src/derive.js";
 import { makeConfig, makeState } from "./_fixtures.js";
 
+const EXPECTED_ORDER = ["bk:20300206-1400-cop-atlas", "bk:evlilik", "vkv:541", "kusursuz-bir-aile", "kucuk-prens", "yeni-oyun"];
 const NOW = Date.parse("2030-02-01T09:00:00+03:00");
 const KB = h("kusursuz-bir-aile");
 const flat = (r) => r.keyboard.flat();
@@ -197,11 +198,15 @@ test("paging: many items -> 6 per page, every page <= 4096 chars and every callb
   assert.ok(render("m", cfg, s, NOW).text.length <= 4096);
 });
 
-test("order: followed first, then nearest start, then title (as the PC list)", () => {
+test("order: nearest start, then title, independent of follow state (as the PC list)", () => {
   const cfg = makeConfig();
   const ids = listItems(cfg, evState(), NOW).map((i) => i.id);
-  // followed play first; then by nearest upcoming start: Çöp Atlas (5 d), Evlilik (7 d), Ceviz (10 d), Küçük Prens (Apr)
-  assert.deepEqual(ids, ["kusursuz-bir-aile", "bk:20300206-1400-cop-atlas", "bk:evlilik", "vkv:541", "kucuk-prens", "yeni-oyun"]);
+  assert.deepEqual(ids, EXPECTED_ORDER);
+  // following another item moves nothing
+  const cfg2 = makeConfig();
+  cfg2.plays["yeni-oyun"] = { active: true, targets: [], tag_overrides: {} };
+  cfg2.event_follow = { "vkv:541": true };
+  assert.deepEqual(listItems(cfg2, evState(), NOW).map((i) => i.id), ids);
 });
 
 test("archived unfollowed plays stay out of the list (as the PC), watched ones stay", () => {
@@ -214,72 +219,22 @@ test("archived unfollowed plays stay out of the list (as the PC), watched ones s
   assert.ok(!ids.includes("kucuk-prens") && ids.includes("yeni-oyun"));
 });
 
-// ---- 🆕 seen list ----
+// ---- no `seen` list / 🆕 marker (wave 9: discovery is a Telegram notice from the scanner) ----
 
-const seenOf = (cfg, route, s) => apply(route, cfg, s).seen;
-
-test("seen: first use baselines everything; render without a seen key shows no 🆕", () => {
+test("no 🆕 marker or seen bookkeeping: list/main render without it, browsing routes are not mutating", () => {
   const s = evState();
-  const cfg = makeConfig();
-  assert.equal(cfg.seen, undefined);
-  assert.ok(!render("pl:0", cfg, s, NOW).text.includes("🆕 <b>"));
-  assert.ok(!render("m", cfg, s, NOW).text.includes("🆕"));
-  const seen = seenOf(cfg, "pl:0", s);
-  assert.deepEqual([...seen].sort(), [...Object.keys(s.plays), ...Object.keys(s.source_events)].sort());
-  assert.deepEqual(apply("pl:0", { ...cfg, seen }, s).seen, seen); // idempotent
-  assert.deepEqual(seenOf(cfg, `p:${KB}:0:0`, s), seen); // opening an item first = baseline too
-});
-
-test("seen: a new item is 🆕 until its screen is opened once, then never again", () => {
-  const s = evState();
-  const cfg = { ...makeConfig(), seen: ["kusursuz-bir-aile", "kucuk-prens", "yeni-oyun", "bk:old", "bk:evlilik"] };
-  const text = render("pl:0", cfg, s, NOW).text;
-  assert.ok(text.includes("🆕 <b>Ceviz Adam") && text.includes("🆕 <b>Çöp Atlas"), text);
-  assert.ok(!text.includes("🆕 <b>Kusursuz"));
-  assert.ok(render("m", cfg, s, NOW).text.includes("🆕 Henüz açmadığın yeni öğe: 2"));
-  assert.ok(flat(render("pl:0", cfg, s, NOW)).some((b) => b.text === "🆕 Ayrıntı ›"));
-  const c1 = apply(`e:${h("vkv:541")}:0`, cfg, s);
-  assert.ok(c1.seen.includes("vkv:541") && !c1.seen.includes("bk:20300206-1400-cop-atlas"));
-  assert.ok(!render("pl:0", c1, s, NOW).text.includes("🆕 <b>Ceviz Adam"));
-  assert.ok(render("pl:0", c1, s, NOW).text.includes("🆕 <b>Çöp Atlas"));
-  assert.deepEqual(apply(`e:${h("vkv:541")}:0`, c1, s), c1); // second open: nothing to write
-  // the event screen itself does not carry a 🆕 marker and also marks the id seen
-  assert.ok(!render(`e:${h("vkv:541")}:0`, cfg, s, NOW).text.includes("🆕 <b>"));
-  // a play is cleared the same way
-  const s2 = evState();
-  s2.plays["tamamen-yeni"] = { title: "Tamamen Yeni", sessions: {} };
-  const c2 = apply(`p:${h("tamamen-yeni")}`, { ...cfg }, s2);
-  assert.ok(c2.seen.includes("tamamen-yeni"));
-  assert.ok(render("pl:0", cfg, s2, NOW).text.includes("🆕 <b>Tamamen Yeni"));
-});
-
-test("seen: following (toggle) does not clear 🆕; unknown ids and non-item routes never touch it", () => {
-  const s = evState();
-  const cfg = { ...makeConfig(), seen: ["kusursuz-bir-aile"] };
-  const evh = h("vkv:541");
-  assert.deepEqual(apply(`ef:${evh}:1:0`, cfg, s).seen, ["kusursuz-bir-aile"]);
-  assert.deepEqual(apply(`ta:${h("kucuk-prens")}:1:0`, cfg, s).seen, ["kusursuz-bir-aile"]);
-  assert.deepEqual(apply("p:00000000", cfg, s), cfg);
-  assert.deepEqual(apply("e:00000000", cfg, s), cfg);
-  assert.deepEqual(apply("pz:1", cfg, s).seen, ["kusursuz-bir-aile"]);
-});
-
-test("seen stays bounded (<= 500) and drops ids that left the state", () => {
-  const s = makeState();
-  for (let i = 0; i < 700; i++) s.plays[`p${i}`] = { title: `P${i}`, sessions: {} };
-  const base = apply("pl:0", makeConfig(), s).seen;
-  assert.equal(base.length, 500);
-  const stale = { ...makeConfig(), seen: ["gone-1", "gone-2", "kusursuz-bir-aile"] };
-  const c = apply(`p:${h("yeni-oyun")}`, stale, makeState());
-  assert.deepEqual(c.seen, ["kusursuz-bir-aile", "yeni-oyun"]); // stale ids pruned on write
-  // opening more items keeps the cap
-  let cfg = { ...makeConfig(), seen: base };
-  for (let i = 0; i < 20; i++) {
-    cfg = apply(`p:${h(`p${i}`)}`, cfg, s);
+  const cfg = { ...makeConfig(), seen: ["kusursuz-bir-aile"] }; // a leftover key from wave 7 is ignored
+  for (const route of ["pl:0", "m"]) {
+    const text = render(route, cfg, s, NOW).text;
+    assert.ok(!text.includes("🆕 <b>") && !text.includes("Henüz açmadığın"), text);
   }
-  assert.ok(cfg.seen.length <= 500);
-  // malformed seen is replaced by a fresh baseline instead of throwing
-  assert.ok(Array.isArray(apply("pl:0", { ...makeConfig(), seen: "x" }, makeState()).seen));
+  assert.ok(!flat(render("pl:0", cfg, s, NOW)).some((b) => b.text.includes("🆕")));
+  assert.ok(!LEGEND.includes("🆕"));
+  for (const route of ["pl:0", `p:${KB}:0:0`, `e:${h("vkv:541")}:0`, "m", "tl"]) {
+    assert.equal(isMutating(route), false, route);
+    assert.deepEqual(apply(route, cfg, s), cfg, route); // nothing to write
+  }
+  assert.ok(listItems(cfg, s, NOW).every((i) => !("isNew" in i)));
 });
 
 // ---- links ----

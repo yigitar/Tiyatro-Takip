@@ -266,19 +266,18 @@ def test_worker_follow_route_matches_python_and_renders_python_events():  # wave
 
 # ---- wave 7: unified list, seen list, link buttons -------------------------------------------
 
-def test_worker_seen_list_is_ignored_by_python_and_survives_pc_edits():
+def test_browsing_routes_write_nothing_and_an_old_seen_key_survives_pc_edits():
     state, raw_cfg, plays = _python_state()
     slug = plays[0].slug
     res = node({"config": raw_cfg, "state": state, "applies": [f"p:{{h:{slug}}}:0:0", "pl:0"],
                 "renders": []})
-    cfg = res["applied"][0]
-    assert sorted(cfg["seen"]) == sorted(p.slug for p in plays)      # first use: all seen
-    config_from_dict(cfg)                                              # a valid Python config
-    assert res["applied"][1] == cfg                                    # idempotent
-    py = copy.deepcopy(cfg)
+    assert res["applied"][0] == raw_cfg == res["applied"][1]          # wave 9: no `seen` written
+    old = {**raw_cfg, "seen": [p.slug for p in plays]}                  # leftover from wave 7
+    config_from_dict(old)                                              # still a valid Python config
+    py = copy.deepcopy(old)
     configedit.set_active(py, slug, False)
     configedit.set_event_follow(py, "vkv:1", True)
-    assert py["seen"] == cfg["seen"]                                   # PC edits keep it
+    assert py["seen"] == old["seen"]                                   # PC edits keep it
 
 
 @pytest.mark.parametrize("ret", ["", ":0", ":3", ":i2"])

@@ -171,34 +171,15 @@ test("non-mutating callback renders without writing", async () => {
   assert.equal(tgCalls(calls, "editMessageText").length, 1);
 });
 
-// wave 7: the 🆕 `seen` list lives in config.json and is written through the config edit path
-test("first use of the list baselines `seen` once (everything seen), then nothing is written", async () => {
-  const { fake, calls, files } = makeFake();
-  await handle(req(cb("pl:0")), ENV, fake);
-  assert.equal(ghWrites(calls).length, 1);
-  assert.deepEqual(files["config.json"].data.seen, ["kucuk-prens", "kusursuz-bir-aile", "yeni-oyun"]);
-  const text = tgCalls(calls, "editMessageText")[0].body.text;
-  assert.ok(!text.includes("🆕 <b>"), text);
-  await handle(req(cb("pl:0")), ENV, fake);
-  await handle(req(cb(`p:${KB}:0:0`)), ENV, fake);
-  assert.equal(ghWrites(calls).length, 1); // idempotent: already seen -> no second commit
-});
-
-test("opening a new item adds it to `seen` and clears its 🆕 marker; the list shows it before", async () => {
-  const config = makeConfig();
-  config.seen = ["kusursuz-bir-aile", "kucuk-prens"];
-  const { fake, calls, files } = makeFake({ config });
-  await handle(req(cb("pl:0")), ENV, fake);
+// wave 9: no `seen` machinery any more: browsing never writes config.json, no 🆕 markers
+test("browsing the list, items and main screen never writes config.json and shows no 🆕", async () => {
+  const { fake, calls } = makeFake();
+  for (const route of ["m", "pl:0", `p:${KB}:0:0`, "tl", "up", "src"]) await handle(req(cb(route)), ENV, fake);
   assert.equal(ghWrites(calls).length, 0);
-  const list = tgCalls(calls, "editMessageText")[0].body;
-  assert.ok(list.text.includes("🆕 <b>Yeni Oyun</b>"), list.text);
-  const open = list.reply_markup.inline_keyboard.flat().find((b) => b.text.startsWith("🆕"));
-  assert.ok(open.callback_data.startsWith("p:"));
-  await handle(req(cb(open.callback_data)), ENV, fake);
-  assert.equal(ghWrites(calls).length, 1);
-  assert.deepEqual(files["config.json"].data.seen, ["kusursuz-bir-aile", "kucuk-prens", "yeni-oyun"]);
-  await handle(req(cb("pl:0")), ENV, fake);
-  assert.ok(!tgCalls(calls, "editMessageText").at(-1).body.text.includes("🆕 <b>"));
+  for (const c of tgCalls(calls, "editMessageText")) {
+    assert.ok(!c.body.text.includes("🆕 <b>") && !c.body.text.includes("Henüz açmadığın"), c.body.text);
+    assert.ok(c.body.reply_markup.inline_keyboard.flat().every((b) => !b.text.includes("🆕")));
+  }
 });
 
 test("URL buttons survive the Telegram payload (url, no callback_data)", async () => {

@@ -134,14 +134,15 @@ def test_event_row_has_source_seans_status_and_follow():
     assert bk.contact == [] and bk.source.startswith("Başiskele")
 
 
-def test_unified_list_sorts_by_kaynak_and_keeps_followed_first():
+def test_unified_list_sorts_by_kaynak_and_default_order_ignores_follow():
     play = Row("p1", "Biletinial Oyun", source="Biletinial", watched=False, nearest=NOW)
     rows = with_events([play], [view("bk:1", "basiskele", title="A"), view()])
     assert {r.source[:3] for r in rows} == {"Bil", "Baş", "VKV"}
     assert "source" in L.SORT_COLUMNS
     asc = [r.source for r in L.sort_rows(rows, ("source", "asc"))]
     assert asc == sorted(asc, key=L.tr_sort_key)
-    assert rows[-1].slug == "p1"                    # followed events before an unfollowed play
+    # default order = nearest start, then title; follow state does not matter (wave 9)
+    assert [r.slug for r in rows][0] == "p1"        # nearest = NOW
 
 
 # ---- Tk: the unified list, event detail, merged portal ------------------------------------------
