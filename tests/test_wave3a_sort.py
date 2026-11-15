@@ -55,17 +55,20 @@ def test_sort_text_columns_turkish_and_missing_last():
     rows = [R("1", "Işık"), R("2", "İyi"), R("3", "Cam"), R("4", "Çocuk"), R("5", "")]
     assert slugs(L.sort_rows(rows, ("title", "asc"))) == ["3", "4", "1", "2", "5"]
     assert slugs(L.sort_rows(rows, ("title", "desc"))) == ["2", "1", "4", "3", "5"]
-    tags = [R("a", tags=["gündüz", "çocuk"]), R("b"), R("c", tags=["çocuk"]), R("d", tags=["a"])]
-    assert slugs(L.sort_rows(tags, ("tags", "asc"))) == ["d", "c", "a", "b"]
+    zaman = [R("a", zaman="gündüz+gece"), R("b"), R("c", zaman="gece"), R("d", zaman="gündüz")]
+    assert slugs(L.sort_rows(zaman, ("zaman", "asc"))) == ["c", "d", "a", "b"]  # gece, gündüz, gündüz+gece
     genre = [R("a", genre="Dram"), R("b", genre=""), R("c", genre="Çocuk Oyunu")]
     assert slugs(L.sort_rows(genre, ("genre", "asc"))) == ["c", "a", "b"]
     assert slugs(L.sort_rows(genre, ("genre", "desc"))) == ["a", "c", "b"]
 
 
 def test_sort_sessions_status_and_follow():
-    rows = [R("a", session_count=2), R("b", session_count=0), R("c", session_count=7)]
-    assert slugs(L.sort_rows(rows, ("sessions", "desc"))) == ["c", "a", "b"]
-    assert slugs(L.sort_rows(rows, ("sessions", "asc"))) == ["b", "a", "c"]
+    from datetime import datetime, timedelta
+    t0 = datetime(2026, 11, 20, 20, 0).astimezone()
+    # Seans sorts by the earliest upcoming session (date and time), rows without one last
+    rows = [R("a", nearest=t0 + timedelta(days=2)), R("b"), R("c", nearest=t0)]
+    assert slugs(L.sort_rows(rows, ("sessions", "asc"))) == ["c", "a", "b"]
+    assert slugs(L.sort_rows(rows, ("sessions", "desc"))) == ["a", "c", "b"]
     st = [R("a", session_count=6, status_summary="1 satışta · 5 tükendi"), R("b", session_count=3, status_summary="2 satışta · 1 tükendi"),
           R("c", session_count=3, status_summary="3 yakında"), R("d", status_summary="seans yok"),
           R("e", session_count=2, status_summary="1 satışta · 1 tükendi")]
@@ -91,10 +94,12 @@ def test_header_click_cycle():
     assert L.next_sort(("title", "asc"), "title") == ("title", "desc")
     assert L.next_sort(("title", "desc"), "title") is None
     assert L.next_sort(("title", "desc"), "genre") == ("genre", "asc")
-    for col in ("sessions", "summary", "follow"):  # "most first" on the first click
+    for col in ("summary", "follow", "target"):  # "most first" on the first click
         assert L.next_sort(None, col) == (col, "desc")
         assert L.next_sort((col, "desc"), col) == (col, "asc")
         assert L.next_sort((col, "asc"), col) is None
+    assert L.next_sort(None, "sessions") == ("sessions", "asc")   # earliest session first
+    assert L.next_sort(None, "rez") == ("rez", "asc")             # açık first, then earliest
 
 
 def test_heading_text_shows_arrow_on_active_column_only():
@@ -153,7 +158,7 @@ def test_only_the_active_column_shows_an_arrow(ui):
     click(ui, "price")
     assert head(ui, "title") == "Oyun" and head(ui, "price") == "Fiyat ▲"
     click(ui, "sessions")
-    assert head(ui, "price") == "Fiyat" and head(ui, "sessions") == "Seans ▼"  # most first
+    assert head(ui, "price") == "Fiyat" and head(ui, "sessions") == "Seans ▲"  # earliest first
 
 
 def test_sort_keeps_selection_and_survives_refresh(ui):

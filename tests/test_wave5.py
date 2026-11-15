@@ -122,10 +122,10 @@ def test_event_row_has_source_seans_status_and_follow():
     assert r.status_summary == "rezervasyon 19 Kas 12:00'da açılacak"
     assert r.reservation_opens == "19 Kasım Perşembe 12:00"
     assert r.contact and r.watched
-    values = L.row_values(r)
-    assert values[2] == r.source and values[8] == r.seans and values[9] == r.status_summary
-    assert values[10] == "Takipte"
-    assert L.row_values(event_row(view(followed=False)))[10] == "Pasif"
+    values = dict(zip(L.SORT_COLUMNS, L.row_values(r)))
+    assert values["source"] == r.source and values["sessions"] == "1 seans: 28 Kas 11:00"
+    assert values["summary"] == r.status_summary and values["follow"] == "☑"
+    assert dict(zip(L.SORT_COLUMNS, L.row_values(event_row(view(followed=False)))))["follow"] == "☐"
     assert event_row(view(full=True)).status_summary == "doldu"
     assert event_row(view()).status_summary == "duyuru bekleniyor"
     assert event_row(view(opens=NOW - timedelta(days=1), pending=False)).status_summary         == "rezervasyon açık"
@@ -180,8 +180,8 @@ def test_diger_kaynaklar_tab_is_gone_and_events_are_in_the_one_list(mixed):
     cols = list(ui.tree["columns"])
     vals = dict(zip(cols, ui.tree.item("vkv:541", "values")))
     assert vals["source"].startswith("VKV") and vals["audience"] == "Çocuk"
-    assert vals["sessions"] == "28 Kasım Cumartesi 11:00"
-    assert vals["summary"].startswith("rezervasyon 19 Kas") and vals["follow"] == "Takipte"
+    assert vals["sessions"] == "1 seans: 28 Kas 11:00"
+    assert vals["summary"].startswith("rezervasyon 19 Kas") and vals["follow"] == "☑"
     assert dict(zip(cols, ui.tree.item("p1", "values")))["source"] == "Biletinial"
 
 
@@ -199,7 +199,7 @@ def test_event_detail_shows_labelled_dates_contact_and_follow_toggle(mixed):
     ui.active_chk.invoke()                       # same switch as plays, routed to event_follow
     ui.pump()
     assert ui.follow_calls == [("vkv:541", False)]
-    assert ui.tree.item("vkv:541", "values")[-1] == "Pasif"
+    assert ui.tree.item("vkv:541", "values")[0] == "☐"
     ui.select_slug("bk:1")                       # Başiskele: no contact block
     texts = fact_texts(ui)
     assert not any("435 6700" in t for t in texts) and "Rezervasyon açılışı" in texts

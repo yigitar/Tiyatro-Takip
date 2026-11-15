@@ -14,7 +14,8 @@ from tiyatro.models import ISTANBUL, Config, Event, Play, Target
 from tiyatro.notify import (DAY_BEFORE_TEXT, DAYS, KIND_TEXT, MONTHS, SRC_TEXT, format_message,
                             portal_headline, portal_label, source_headline)
 from tiyatro import srcevents
-from tiyatro.tags import apply_overrides, derived_tags, resolve_audience, resolve_genre
+from tiyatro.tags import (apply_overrides, audience_is_stated, derived_tags, genre_is_stated,
+                          resolve_audience, resolve_genre, time_of_day)
 from tiyatro.timeutil import parse_iso
 
 DAY_SHORT = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"]  # as worker/src/menu.js
@@ -23,6 +24,7 @@ STATUS_WORDS = (("on_sale", "satışta"), ("upcoming", "yakında"), ("sold_out",
                 ("unknown", "belirsiz"))
 APP_TITLE = "Tiyatro Takip"
 NO_TARGET_TEXT = "ℹ️ hedef yok → tüm seanslar izleniyor"  # as worker/src/menu.js
+NO_TARGET_SHORT = "yok → tüm seanslar"  # "Hedef" column of a followed-or-not play without targets
 
 
 @dataclass
@@ -55,6 +57,48 @@ class Row:
     reservation_opens: str = ""  # event rows: "19 Kasım Perşembe 12:00" or ""
     contact: list[str] = field(default_factory=list)  # VKV: phone / e-mail lines
     event_full: bool = False
+    # ---- wave 6 -----------------------------------------------------------------------
+    zaman: str = ""            # "gündüz" / "gece" / "gündüz+gece" (computed from session times)
+    target_count: int = 0      # explicit targets of the play (events: always 0)
+    target_text: str = ""      # "var (2)" / "yok → tüm seanslar" / "—" (events)
+    session_starts: list[datetime] = field(default_factory=list)  # upcoming session starts, sorted
+    sessions_text: str = ""    # "3 seans: 28 Kas 15:00, 28 Kas 20:00, +1"
+    rez_text: str = ""         # "Rez. açılış": "16 Kas Pzt 10:00 (yarın)" / "açık" / "tükendi" / "—"
+    rez_key: tuple | None = None  # sort key: (0, 0) açık first, then (1, opening timestamp)
+    derived: frozenset = frozenset()  # list columns whose value is derived, not read (italic)
+
+
+def short_when(d: datetime) -> str:
+    """"28 Kas 15:00" (compact session label of the Seans column)."""
+    d = d.astimezone(ISTANBUL)
+    return f"{d.day} {MONTHS[d.month - 1][:3]} {d:%H:%M}"
+
+
+def relative_day(d: datetime, now: datetime) -> str:
+    """"bugün" / "yarın" / "3 gün sonra" / "geçti" by calendar day in Istanbul time."""
+    diff = (d.astimezone(ISTANBUL).date() - now.astimezone(ISTANBUL).date()).days
+    if diff < 0:
+        return "geçti"
+    return {0: "bugün", 1: "yarın"}.get(diff, f"{diff} gün sonra")
+
+
+def rez_when(d: datetime, now: datetime) -> str:
+    """"16 Kas Pzt 10:00 (yarın)"."""
+    local = d.astimezone(ISTANBUL)
+    return (f"{local.day} {MONTHS[local.month - 1][:3]} {DAY_SHORT[local.weekday()]} "
+            f"{local:%H:%M} ({relative_day(d, now)})")
+
+
+def sessions_summary(starts: list[datetime], shown: int = 2) -> str:
+    """"3 seans: 28 Kas 15:00, 28 Kas 20:00, +1" (the first ``shown`` sessions in time order,
+    then "+N"); "" without sessions."""
+    ordered = sorted(starts)
+    if not ordered:
+        return ""
+    names = [short_when(d) for d in ordered[:shown]]
+    if len(ordered) > shown:
+        names.append(f"+{len(ordered) - shown}")
+    return f"{len(ordered)} seans: " + ", ".join(names)
 
 
 def when_text(d: datetime) -> str:
@@ -156,6 +200,7 @@ def _row(slug: str, entry: dict, config: Config, seen: set[str], removed: set[st
     counts = {key: 0 for key, _ in STATUS_WORDS}
     nearest = opening = None
     upcoming = 0
+    starts: list[datetime] = []
     for rec in (entry.get("sessions") or {}).values():
         if not isinstance(rec, dict) or rec.get("gone"):
             continue
@@ -163,6 +208,7 @@ def _row(slug: str, entry: dict, config: Config, seen: set[str], removed: set[st
         if start is None or start < now:
             continue
         upcoming += 1
+        starts.append(start)
         status = rec.get("status")
         counts[status if status in counts else "unknown"] += 1
         nearest = start if nearest is None or start < nearest else nearest
@@ -180,6 +226,18 @@ def _row(slug: str, entry: dict, config: Config, seen: set[str], removed: set[st
     audience = resolve_audience(entry.get("genre"), entry.get("tags") or (),
                                 age if isinstance(age, int) and not isinstance(age, bool)
                                 else None)
+    starts.sort()
+    explicit = len(watch.targets) if watch is not None else 0
+    rez_text, rez_key, rez_derived = _play_rez(counts, opening, upcoming, now)
+    derived = {"zaman"} if starts else set()
+    if not audience_is_stated(entry.get("genre")):
+        derived.add("audience")
+    if not genre_is_stated(entry.get("genre")):
+        derived.add("genre")
+    if not explicit:
+        derived.add("target")
+    if rez_derived:
+        derived.add("rez")
     return Row(
         slug=slug, title=str(entry.get("title") or slug),
         tags=derived_tags(tags, audience) if not tags else tags,
@@ -193,17 +251,61 @@ def _row(slug: str, entry: dict, config: Config, seen: set[str], removed: set[st
         watched=watched, active=active, target_lines=lines,
         is_new=slug not in seen, is_removed=is_removed,
         url=str(entry.get("url") or ""), nearest=nearest,
-        summary=summary_text, cast=cast, credits=credits)
+        summary=summary_text, cast=cast, credits=credits,
+        zaman=time_of_day([d.astimezone(ISTANBUL).hour for d in starts]),
+        target_count=explicit, target_text=f"var ({explicit})" if explicit else NO_TARGET_SHORT,
+        session_starts=starts, sessions_text=sessions_summary(starts),
+        rez_text=rez_text, rez_key=rez_key, derived=frozenset(derived))
 
 
-def event_row(view: dict) -> Row:
+def _play_rez(counts: dict, opening: datetime | None, upcoming: int, now: datetime):
+    """("Rez. açılış" text, sort key, derived?) of a play. Ladder: earliest opening of an
+    UPCOMING ("yakında") session; else "açık" when a session is ON_SALE; else "tükendi"
+    when every upcoming session is sold out; else "—" (derived: nothing to read)."""
+    if opening is not None:
+        return rez_when(opening, now), (1, opening.timestamp()), False
+    if counts.get("on_sale"):
+        return "açık", (0, 0.0), False
+    if upcoming and counts.get("sold_out") == upcoming:
+        return "tükendi", None, False
+    return "—", None, True
+
+
+def _event_rez(view: dict, now: datetime):
+    """("Rez. açılış" text, sort key, derived?) of a source event: "doldu" when the page
+    says it is full, the announced opening time, "açık" / "açılmış olabilir" (our reading
+    of a passed opening time, derived) or "duyuru bekleniyor" (nothing announced)."""
+    opens = view.get("opens_at")
+    if view.get("full"):
+        return "doldu", None, False
+    if opens is None:
+        return "duyuru bekleniyor", None, True
+    if now < opens:
+        return rez_when(opens, now), (1, opens.timestamp()), False
+    if view.get("opens_pending") is False:
+        return "açık", (0, 0.0), True
+    return "açılmış olabilir", (0, 0.0), True
+
+
+def event_row(view: dict, now: datetime | None = None) -> Row:
     """A Başiskele / VKV event as a list row (``srcevents.event_views`` item)."""
+    now = now or datetime.now(ISTANBUL)
     start = view.get("start")
     local = start.astimezone(ISTANBUL) if start else None
     opens = view.get("opens_at")
     audience = view["audience"] or resolve_audience(view["kind"], (), None, view["title"])
     tags = derived_tags([], audience, local.hour if local else None)
     contact = list(srcevents.VKV_CONTACT_LINES) if view["source"] == srcevents.VKV else []
+    rez_text, rez_key, rez_derived = _event_rez(view, now)
+    derived: set[str] = {"target"}   # "—": targets do not exist for source events
+    if local:
+        derived.add("zaman")
+    if not audience_is_stated(view["kind"]):
+        derived.add("audience")
+    if not genre_is_stated(view["kind"]):
+        derived.add("genre")
+    if rez_derived:
+        derived.update({"rez", "summary"})
     return Row(
         slug=view["id"], title=view["title"], tags=tags, audience=audience,
         genre=view["genre"] or resolve_genre(view["kind"], view["title"]),
@@ -212,12 +314,17 @@ def event_row(view: dict) -> Row:
         url=view["url"], nearest=start, source=view["source_name"], is_event=True,
         seans=when_text(start) if start else "", venue=view["venue"],
         reservation_opens=when_text(opens) if opens else "", contact=contact,
-        event_full=bool(view["full"]))
+        event_full=bool(view["full"]),
+        zaman=time_of_day([local.hour]) if local else "",
+        target_count=0, target_text="—",
+        session_starts=[start] if start else [], sessions_text=sessions_summary(
+            [start] if start else []),
+        rez_text=rez_text, rez_key=rez_key, derived=frozenset(derived))
 
 
-def with_events(rows: list[Row], views: list[dict]) -> list[Row]:
+def with_events(rows: list[Row], views: list[dict], now: datetime | None = None) -> list[Row]:
     """Plays + source events in one list: followed first, then nearest, then title."""
-    merged = list(rows) + [event_row(v) for v in views]
+    merged = list(rows) + [event_row(v, now) for v in views]
     far = datetime.max.replace(tzinfo=ISTANBUL)
     merged.sort(key=lambda r: (not r.watched, r.nearest or far, r.title.casefold()))
     return merged

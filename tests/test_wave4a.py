@@ -38,8 +38,8 @@ def test_row_has_separate_kitle_and_tur():
     assert (r.audience, r.genre) == ("Yetişkin", "Tiyatro")  # genre blank -> stated fallback
     r = _row("p", _entry("Komedi", tags=["çocuk"], age=7), cfg, set(), set(), now)
     assert (r.audience, r.genre) == ("Çocuk", "Komedi")
-    values = L.row_values(r)
-    assert values[3:5] == ("Çocuk", "Komedi")
+    values = dict(zip(L.SORT_COLUMNS, L.row_values(r)))
+    assert (values["audience"], values["genre"]) == ("Çocuk", "Komedi")
 
 
 def test_meta_line_shows_both():

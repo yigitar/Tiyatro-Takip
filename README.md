@@ -51,18 +51,62 @@ gün, saat ve kişi sayısına göre daraltmak istersen hedef eklersin.
   ("rezervasyon 19 Kas 12:00'da açılacak" / "rezervasyon açık" / "doldu" / "duyuru
   bekleniyor") gösterir. Ayrıntıda "Etkinlik tarihi" ile "Rezervasyon açılışı" ayrı yazılır;
   VKV için telefon/e-posta/bağlantı bloğu ve "Sayfayı aç" vardır.
-- **Boş Kitle/Tür/Etiketler kuralı:** Kitle: sayfa/kategori "çocuk" diyorsa, "çocuk"
+- **Boş Kitle/Tür kuralı:** Kitle: sayfa/kategori "çocuk" diyorsa, "çocuk"
   etiketi varsa veya yaş sınırı 12 ve altındaysa **Çocuk**; sayfa "yetişkin" diyorsa,
   yaş 13+ ise ya da hiçbir çocuk işareti yoksa **Yetişkin**. Tür: sayfadaki tür alanı
   (kitle sözcükleri atılır); yalnızca kitle yazıyorsa başlık/açıklamadaki açık tür
   sözcüğü (müzikal, komedi, dram, trajedi, monolog, stand-up, operet, kabare); o da
-  yoksa tiyatro etkinliği için "Tiyatro". Etiketler boşsa kitle ("çocuk"/"yetişkin") ve
-  gündüz saati ("gündüz") etiketi gösterilir. "—" yalnızca tiyatro olmayan ve türü hiç
+  yoksa tiyatro etkinliği için "Tiyatro". "—" yalnızca tiyatro olmayan ve türü hiç
   belli olmayan kayıtlarda kalır.
-- **Takip düğmesi:** Her etkinlik tek tek açılıp kapatılır (PC: ayrıntıdaki "Aktif
-  (takip ediliyor)" kutusu, oyunlarla aynı; Telegram: "Diğer kaynaklar" ekranı). Varsayılan: tiyatro/müzikal açık,
-  diğerleri (atölye, söyleşi, film) kapalı. Kapalı etkinlik listede gri kalır, bildirim
-  göndermez. Seçimler `config.json` içindeki `event_follow` anahtarında tutulur.
+- **Takip kutusu (varsayılan: KAPALI):** Yeni görünen her oyun ve her etkinlik (Biletinial,
+  Başiskele, VKV) **takipsiz** başlar; istediklerini sen açarsın. Listede ilk sütun
+  "Takip" bir kutudur (☑ / ☐): hücreye tıklamak oyunlar ve Başiskele/VKV etkinlikleri için
+  takibi açıp kapatır (ayrıntıyı açmaya gerek yok; ayrıntıdaki "Aktif" kutusu aynı
+  anahtardır). Telegram: "Diğer kaynaklar" ekranı. Takipsiz etkinlik listede kalır, bildirim
+  göndermez (yeni-etkinlik bildirimi dahil). Seçimler `config.json` içindeki `event_follow`
+  (etkinlik) ve `plays` (oyun) anahtarlarında tutulur. **Önceden takipte olanlar
+  değişmez:** eski sürümde varsayılanla (tiyatro/müzikal) takipte sayılan etkinliklerin
+  kaydındaki varsayılan korunur, açık seçimler olduğu gibi kalır.
+  Bir etkinlik takipteyken bildirim gelmesi için kaynağın rezervasyon açılış saatini
+  yayınlaması gerekir; yayınlanmadıysa ("duyuru bekleniyor") bildirim gelmez.
+- **PC listesi sütunları (hepsi sıralanabilir):** Takip (☑/☐; tıklanınca takibi değiştirir),
+  Oyun, Sayfa ("Oyun ↗" düğmesi sayfayı açar), Kaynak, Kitle, Tür,
+  **Zaman** (yalnızca "gündüz" = 17:00'den önce başlayan seans, "gece" = 17:00 ve sonrası,
+  ikisi de varsa "gündüz+gece"; seans saatlerinden hesaplanır, kitle burada yazmaz),
+  Süre, Yaş, Fiyat, **Seans** ("3 seans: 28 Kas 15:00, 28 Kas 20:00, +1": ilk iki seans,
+  kalanı "+N"; sıralama en erken seansın tarih-saatine göredir), **Rez. açılış**
+  ("16 Kas Pzt 10:00 (yarın)"), **Hedef**, Durum özeti.
+  - *Rez. açılış:* oyunda, "yakında" durumundaki seansların en erken `opens_at` zamanı
+    (göreli ipucuyla); yoksa herhangi bir seans satıştaysa "açık"; yaklaşan tüm seanslar
+    tükenmişse "tükendi"; aksi halde "—". Etkinlikte: açılış zamanı / "açık" /
+    "açılmış olabilir" / "doldu" / "duyuru bekleniyor". Sıralama: "açık" önce, sonra en erken
+    açılış zamanı; değeri olmayanlar sona gider.
+  - *Hedef:* "var (N)" (N = kendi eklediğin hedef sayısı) ya da "yok → tüm seanslar".
+    Etkinliklerde hedef kavramı olmadığı için "—".
+- **Kaynaktan alınan / türetilmiş değerler:** Kaynak sayfada yazan değerler (başlık, tarih-saat,
+  fiyat, yaş, süre, tür alanı, özet, oyuncular, rezervasyon metni, durum) normal yazılır;
+  bizim kuralımızla ya da varsayımla üretilenler **italik ve gri-mavi** yazılır ve listenin
+  altında "normal = kaynaktan alınan, italik = türetilmiş/varsayım" açıklaması durur.
+  Türetilmiş sayılanlar: Kitle (sayfa/kategori kitleyi açıkça yazmıyorsa; yaş/etiket/başlık
+  kuralı ya da "çocuk işareti yok → Yetişkin"), Tür (tür alanı boşsa; başlık/açıklamadan
+  bulunan sözcük ya da "Tiyatro"), Zaman (her zaman hesaplanır), Hedef "yok → tüm seanslar",
+  "—" ve "duyuru bekleniyor" gibi boşluk göstergeleri, etkinliklerde "açık"/"açılmış olabilir".
+  Alan bazlı bayrak `pc/viewmodel.py` içindeki `Row.derived` kümesinde tutulur (arayüz tahmin
+  etmez).
+- **Yeni öğe vurgusu:** Son yenilemeden/taramadan sonra listeye giren ve henüz açılmamış
+  (satırına tıklanmamış) oyun/etkinliklerin adı **kalın ve mor** görünür; satırı bir kez
+  seçince normale döner. "Görüldü" bilgisi bu bilgisayarda `pc/local/ui.json` içinde
+  (`seen`) tutulur, depoya gitmez. Güncellemeden sonraki ilk çalıştırmada, veri yüklendikten
+  sonraki ilk dolu liste başlangıç sayılır: o listedeki her şey görülmüş kabul edilir
+  (renk yağmuru yok); yalnızca sonradan çıkanlar yeni olur.
+- **Bağlantılar:** Her satırda "Oyun ↗" düğmesi oyunun/etkinliğin sayfasını açar. Oyun
+  ayrıntısındaki seans tablosunda her seansın kendi "Seans ↗" düğmesi vardır (Biletinial
+  seans bağlantısı durumda saklıdır); bağlantısı olmayan seansta düğme "Oyun ↗" olup oyun
+  sayfasını açar ve tablonun altında bunu söyleyen bir not görünür. Başiskele/VKV'de seans
+  başına ayrı sayfa yoktur: etkinlik ayrıntısında "Etkinlik sayfası ↗" düğmesi ve bu notun
+  kendisi bulunur. Kaynaklar şeridinde her kaynağın yanında "Kaynağı aç" düğmesi vardır
+  (Biletinial mekân sayfası, Başiskele en yeni program haberi — bilinmiyorsa belediye ana
+  sayfası, VKV Etkinlikler listesi); Başiskele satırında ayrıca "Portalı aç" durur.
 - **Kaynak durumu:** Her kaynak (Biletinial, Başiskele, VKV) için ✅ güncel / ⚠️ 30 dakikadan
   eski / ❌ son kontrol başarısız simgesi, "Son kontrol" ve "Son güncelleme" (kaynağın kendi
   içeriğinin değişme zamanı) gösterilir: PC'de Oyunlar sekmesinin üstünde, Telegram'da

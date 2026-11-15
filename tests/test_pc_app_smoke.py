@@ -149,11 +149,13 @@ def ui(tmp_path, tk_root):
 def test_window_lists_plays_with_markers_and_columns(ui):
     assert [c for c in ui.tree["columns"]] == [c[0] for c in appmod.COLUMNS]
     assert [ui.tree.heading(c)["text"] for c in ui.tree["columns"]] == [
-        "Oyun", "Etiketler", "Kaynak", "Kitle", "Tür", "Süre", "Yaş", "Fiyat", "Seans", "Durum özeti", "Takip"]
+        "Takip", "Oyun", "Sayfa", "Kaynak", "Kitle", "Tür", "Zaman", "Süre", "Yaş", "Fiyat",
+        "Seans", "Rez. açılış", "Hedef", "Durum özeti"]
     kids = ui.tree.get_children()
     assert kids[0] == "p1"  # watched first
-    assert "YENİ" in ui.tree.item("p2", "values")[0]
-    assert "new" in ui.tree.item("p2", "tags")
+    assert ui.tree.item("p1", "values")[0] == "☑" and ui.tree.item("p2", "values")[0] == "☐"
+    # first run after the upgrade: everything listed is the baseline, nothing is "new"
+    assert "new" not in ui.tree.item("p2", "tags") and ui.seen.initialised
     assert ui.refresh_btn and ui.pause_btn
     assert ui.status_labels["gh"].cget("text").startswith("sağlıklı")
 
@@ -230,7 +232,6 @@ def test_refresh_success_and_failure_keep_list(ui):
     ui.pump()
     assert "Liste güncellendi" in ui.msg_var.get()
     assert str(ui.refresh_btn.cget("state")) == "normal"
-    assert "YENİ" not in ui.tree.item("p2", "values")[0]
     ui.svc.refresh_error = RefreshError("sayfa engellendi")
     ui.refresh_list()
     ui.pump()

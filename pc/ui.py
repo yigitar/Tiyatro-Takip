@@ -30,8 +30,9 @@ from pc import app_logic as L
 from pc.activity_ui import ActivityTab, default_reveal
 from pc.service import RefreshError
 from pc.settings import DEFAULT_LOCAL_DIR, SettingsError, load_settings
+from pc.table import DERIVED_COLOR, GridTable
 from pc.viewmodel import APP_TITLE, DAY_SHORT, credit_lines
-from pc.widgets import AutoScrollbar, autosize_text
+from pc.widgets import AutoScrollbar, RichLabel, autosize_text
 from tiyatro import sources as S
 from tiyatro.config import config_to_dict
 from tiyatro.models import ISTANBUL
@@ -45,11 +46,12 @@ ACTIVITY_MS = 2000
 MAX_POPUPS = 3
 NO_INFO = "Bilgi yok"
 DETAIL_CHROME_PX = 30  # title + border of the "Oyun ayrıntısı" frame
-COLUMNS = (("title", "Oyun", 260), ("tags", "Etiketler", 110), ("source", "Kaynak", 80),
-           ("audience", "Kitle", 70), ("genre", "Tür", 90),
-           ("duration", "Süre", 60), ("age", "Yaş", 45), ("price", "Fiyat", 70),
-           ("sessions", "Seans", 120), ("summary", "Durum özeti", 230),
-           ("follow", "Takip", 70))
+COLUMNS = L.LIST_COLUMNS      # (key, heading, width): one table for plays and source events
+NEW_COLOR = "#6d28d9"         # name of an item the user has not opened yet (bold)
+FOLLOW_HELP_EVENT = ("Takip açıkken bu etkinlik için rezervasyon açılış saati duyurulunca, "
+                     "açılışa 1 gün ve 10 dk kala ve açıldığında bildirim gelir; açılış saati "
+                     "yayınlanmadıysa şimdilik bildirim gelmez.")
+NO_SESSION_PAGE = "Bu kaynakta seans başına ayrı sayfa yok: düğme etkinlik sayfasını açar."
 
 
 def setup_logging(local_dir: Path, secrets: list[str]) -> None:
@@ -362,6 +364,9 @@ class App:
         self._default_rows: list = []
         self.bold_font = tkfont.nametofont("TkDefaultFont").copy()
         self.bold_font.configure(weight="bold")
+        self.italic_font = tkfont.nametofont("TkDefaultFont").copy()
+        self.italic_font.configure(slant="italic")
+        self.seen = L.SeenStore.load(self.local_dir / "ui.json")  # items the user has opened
         root.title(APP_TITLE)
         geom = L.sanitize_geometry(ui["geometry"], root.winfo_screenwidth(),
                                    root.winfo_screenheight())
@@ -409,7 +414,15 @@ class App:
         self.source_bar = ttk.Frame(games)  # "Kaynaklar" strip (wave 4 B)
         self.source_labels: list = []
         self.source_buttons: list = []   # "Portalı aç" link of the Başiskele row
+        self.source_open_buttons: dict = {}   # source id -> "Kaynağı aç" button
         self._source_sig = None
+        self.legend = ttk.Frame(games)  # what normal / italic cells mean (derived values)
+        self.legend.pack(side="bottom", fill="x", pady=(2, 0))
+        plain, derived = L.LEGEND.split(", ", 1)
+        self.legend_texts = [plain + ",", derived]
+        ttk.Label(self.legend, text=plain + ",", foreground=L.GRAY).pack(side="left")
+        ttk.Label(self.legend, text=derived, font=self.italic_font,
+                  foreground=DERIVED_COLOR).pack(side="left", padx=(4, 0))
         pane = ttk.PanedWindow(games, orient="vertical")
         self.pane = pane
         self._sash_user, self._fit_key, self._need_seen = False, None, 0
@@ -417,18 +430,17 @@ class App:
         pane.pack(fill="both", expand=True)
         top = ttk.Frame(pane)
         pane.add(top, weight=3)
-        self.tree = ttk.Treeview(top, columns=[c[0] for c in COLUMNS], show="headings",
-                                 selectmode="browse")
-        for key, label, width in COLUMNS:
-            self.tree.heading(key, text=L.heading_text(label, key, self.sort),
-                              command=lambda k=key: self.sort_by(k))
-            self.tree.column(key, width=width, anchor="w", stretch=key in ("title", "summary"))
+        self.tree = GridTable(top, COLUMNS, stretch=("title", "sessions", "summary"),
+                              on_sort=self.sort_by, on_cell=self._cell_click,
+                              row_px=L.ROW_PX, head_px=L.HEADING_PX)
+        for key, label, _width in COLUMNS:
+            self.tree.heading(key, text=L.heading_text(label, key, self.sort))
         vsb = AutoScrollbar(top, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
-        self.tree.tag_configure("watched", font=self.bold_font)
-        self.tree.tag_configure("new", background="#dbeafe")
+        self.tree.tag_configure("watched", bold=True)
+        self.tree.tag_configure("new", bold=True, foreground=NEW_COLOR, column="title")
         self.tree.tag_configure("removed", background="#fde2e2", foreground="#7f1d1d")
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.root.bind_all("<MouseWheel>", self._detail_wheel, add="+")
@@ -541,10 +553,22 @@ class App:
         except Exception:
             log.exception("rows() failed")
             return
+        self._apply_seen(rows)
         self._default_rows = rows
         self._render_rows()
         self._render_sources()
         self._fit_panes()
+
+    def _apply_seen(self, rows) -> None:
+        """Mark items the user has not opened yet (``is_new``). The first non-empty list of
+        a service that already holds real data is the baseline: everything in it counts as
+        seen, so the upgrade does not paint the whole list."""
+        state = getattr(self.service, "state", None)
+        ready = bool(isinstance(state, dict) and (state.get("plays") or state.get("source_events")))
+        if ready and self.seen.baseline([r.slug for r in rows]):
+            self.save_ui()
+        for r in rows:
+            r.is_new = self.seen.is_new(r.slug) and not r.is_removed
 
     def _fit_panes(self) -> None:
         """Divider position: the list shows its rows, the detail pane gets the height its
@@ -593,17 +617,19 @@ class App:
         try:
             views = fn() if fn is not None else []
             portals = pfn() if pfn is not None else []
+            links = L.source_links(self.service.config, self.service.state)
         except Exception:
             log.exception("sources() failed")
             return
         views = L.source_views_with_portals(views, portals)
-        sig = tuple((L.source_line(v), v.get("portal_url")) for v in views)
+        sig = tuple((L.source_line(v), v.get("portal_url"), links.get(v["id"])) for v in views)
         if sig == self._source_sig:
             return
         self._source_sig = sig
         for child in self.source_bar.winfo_children():
             child.destroy()
         self.source_labels, self.source_buttons = [], []
+        self.source_open_buttons = {}
         if not views:
             self.source_bar.pack_forget()
             return
@@ -615,6 +641,11 @@ class App:
                               foreground=colors.get(v["status"], L.GRAY))
             label.pack(side="left")
             self.source_labels.append(label)
+            if links.get(v["id"]):   # every source: its list / venue / program page
+                opener = ttk.Button(line, text="Kaynağı aç", width=11,
+                                    command=lambda u=links[v["id"]]: self.open_url(u))
+                opener.pack(side="left", padx=8)
+                self.source_open_buttons[v["id"]] = opener
             if v.get("portal_url"):
                 button = ttk.Button(line, text="Portalı aç", width=10,
                                     command=lambda u=v["portal_url"]: self.open_url(u))
@@ -639,14 +670,33 @@ class App:
         top = self.tree.yview()[0]
         self.tree.delete(*self.tree.get_children())
         for r in rows:
-            self.tree.insert("", "end", iid=r.slug, values=L.row_values(r),
-                             tags=L.row_tags(r))
+            self.tree.insert("", "end", iid=r.slug, cells=L.row_cells(r), tags=L.row_tags(r))
         if self.selected in self.rows_by_slug:
             self.tree.selection_set(self.selected)
         else:
             self.selected = None
         self.tree.yview_moveto(top)
         self.show_detail()
+
+    def _cell_click(self, iid: str, key: str) -> None:
+        """Click on a ☑/☐ cell (toggle following) or an "Oyun ↗" button (open the page)."""
+        row = self.rows_by_slug.get(iid)
+        if row is None:
+            return
+        if key == "link":
+            if row.url:
+                self.open_url(row.url)
+            return
+        if key != "follow":
+            return
+        fn = self.service.set_event_follow if row.is_event else self.service.set_active
+        pend = ("ef" if row.is_event else "active", row.slug)
+        if pend in self._pending:   # a save for this row is still running
+            return
+        new = not row.active
+        row.active, row.watched = new, new and not row.is_removed   # shown at once; the save
+        self._render_rows()             # below re-reads the real state when it is done
+        self.edit(fn, row.slug, new, key=pend)
 
     def select_slug(self, slug: str) -> None:
         self.tree.selection_set(slug)
@@ -659,6 +709,12 @@ class App:
         if new == self.selected and self._detail_sig is not None:
             return  # reselect after a list rebuild: show_detail decides by signature
         self.selected = new
+        if new is not None and self.seen.mark(new):   # opened once: no longer "new"
+            row = self.rows_by_slug.get(new)
+            if row is not None:
+                row.is_new = False
+                self.tree.set_tags(new, L.row_tags(row))
+            self.save_ui()
         self.show_detail(force=True)
 
     def _detail_placeholder(self) -> None:
@@ -678,7 +734,7 @@ class App:
             return
         sessions = L.session_lines(self.entry(row.slug), self.now())
         sig = (L.row_values(row), tuple(row.target_lines), row.active,
-               tuple((s.when, s.status, s.opens) for s in sessions),
+               tuple((s.when, s.status, s.opens, s.url) for s in sessions), row.url,
                row.summary, tuple(row.cast), tuple(row.credits))
         if sig == self._detail_sig and not force:
             return
@@ -692,8 +748,9 @@ class App:
                                    command=lambda: row.url and self.open_url(row.url),
                                    state="normal" if row.url else "disabled")
         self.open_btn.pack(side="right")
-        self.meta_label = ttk.Label(body, text=L.meta_line(row))
-        self.meta_label.pack(fill="x", padx=8, anchor="w")
+        self.meta_label = RichLabel(body, self.italic_font, DERIVED_COLOR)
+        self.meta_label.set_parts(L.meta_parts(row))
+        self.meta_label.pack(padx=8, anchor="w")
 
         acts = ttk.Frame(body)
         acts.pack(fill="x", padx=8)
@@ -716,18 +773,31 @@ class App:
 
         cols = ttk.Frame(body)
         cols.pack(fill="both", expand=True, padx=8, pady=6)
-        self.session_tree = ttk.Treeview(cols, columns=("when", "status", "opens"),
-                                         show="headings",
-                                         height=min(max(len(sessions), 2), 8))
-        for key, label, width in (("when", "Seans", 170), ("status", "Durum", 100),
-                                  ("opens", "Satış açılışı", 170)):
-            self.session_tree.heading(key, text=label)
-            self.session_tree.column(key, width=width, anchor="w")
-        for s in sessions:
-            self.session_tree.insert("", "end", values=(s.when, f"{s.icon} {s.status}", s.opens))
+        left = ttk.Frame(cols)
+        left.pack(side="left", fill="both", expand=True)
+        self._session_links: dict[str, str] = {}
+        self.session_tree = GridTable(
+            left, (("when", "Seans", 160), ("status", "Durum", 100),
+                   ("opens", "Satış açılışı", 170), ("link", "Bağlantı", 96)),
+            on_cell=self._session_click, sortable=False, row_px=L.ROW_PX, head_px=L.HEADING_PX,
+            height_rows=min(max(len(sessions), 2), 8))
+        missing = False
+        for n, s in enumerate(sessions):
+            text, url, note = L.session_link(s, row.url)
+            missing = missing or bool(note)
+            self._session_links[str(n)] = url
+            self.session_tree.insert("", "end", iid=str(n), cells=[
+                L.Cell(s.when), L.Cell(f"{s.icon} {s.status}"), L.Cell(s.opens),
+                L.Cell(text or L.BLANK, False, "link" if url else "text")])
         if not sessions:
-            self.session_tree.insert("", "end", values=("yaklaşan seans yok", "", ""))
-        self.session_tree.pack(side="left", fill="both", expand=True)
+            self.session_tree.insert("", "end", iid="none", cells=[
+                L.Cell("yaklaşan seans yok"), L.Cell(""), L.Cell(""), L.Cell("")])
+        self.session_tree.pack(side="top", fill="both", expand=True)
+        self.session_note = ttk.Label(left, text="Seans bağlantısı olmayan satırda düğme oyun "
+                                      "sayfasını açar (\"Oyun ↗\")." if missing else "",
+                                      foreground=L.GRAY)
+        if missing:
+            self.session_note.pack(side="top", anchor="w")
         sess_sb = AutoScrollbar(cols, orient="vertical", command=self.session_tree.yview)
         self.session_tree.configure(yscrollcommand=sess_sb.set)
         sess_sb.pack(side="left", fill="y")
@@ -737,8 +807,11 @@ class App:
         self.target_buttons = {}
         watch = self.service.config.plays.get(row.slug) if self.service.config else None
         if watch is None or not watch.targets:
-            text = L.NO_TARGET_TEXT if watch is not None and watch.active else "Hedef yok."
-            ttk.Label(targets, text=text).pack(anchor="w", padx=6, pady=4)
+            implicit = watch is not None and watch.active
+            text = L.NO_TARGET_TEXT if implicit else "Hedef yok."
+            ttk.Label(targets, text=text, **(   # "tüm seanslar" is our default, not data
+                {"font": self.italic_font, "foreground": DERIVED_COLOR} if implicit else {})
+                      ).pack(anchor="w", padx=6, pady=4)
         for t in (watch.targets if watch else []):
             line = ttk.Frame(targets)
             line.pack(fill="x", padx=6, pady=2)
@@ -756,6 +829,11 @@ class App:
         self._build_info(body, row)
         self._refit()
 
+    def _session_click(self, iid: str, key: str) -> None:
+        url = self._session_links.get(iid)
+        if key == "link" and url:
+            self.open_url(url)
+
     def _show_event_detail(self, row, force: bool) -> None:
         """Detail of a Başiskele / VKV event: source, event date, reservation opening,
         contact block (VKV), follow switch, page link."""
@@ -772,8 +850,9 @@ class App:
                                    command=lambda: row.url and self.open_url(row.url),
                                    state="normal" if row.url else "disabled")
         self.open_btn.pack(side="right")
-        self.meta_label = ttk.Label(body, text=L.meta_line(row))
-        self.meta_label.pack(fill="x", padx=8, anchor="w")
+        self.meta_label = RichLabel(body, self.italic_font, DERIVED_COLOR)
+        self.meta_label.set_parts(L.meta_parts(row))
+        self.meta_label.pack(padx=8, anchor="w")
         acts = ttk.Frame(body)
         acts.pack(fill="x", padx=8, pady=(2, 0))
         self.active_var = tk.BooleanVar(value=row.active)
@@ -784,19 +863,35 @@ class App:
                                       widget=self.active_chk))
         self.active_chk.pack(side="left")
         self.add_buttons, self.target_buttons = {}, {}
+        self.follow_help = ttk.Label(body, text=FOLLOW_HELP_EVENT, foreground=L.GRAY,
+                                     wraplength=700, justify="left")
+        self.follow_help.pack(fill="x", padx=8, anchor="w")
+        links = ttk.Frame(body)       # no per-session pages at these sources: one page button
+        links.pack(fill="x", padx=8, pady=(4, 0))
+        self.event_page_btn = ttk.Button(links, text="Etkinlik sayfası ↗",
+                                         command=lambda: row.url and self.open_url(row.url),
+                                         state="normal" if row.url else "disabled")
+        self.event_page_btn.pack(side="left")
+        ttk.Label(links, text=NO_SESSION_PAGE, foreground=L.GRAY).pack(side="left", padx=8)
         grid = ttk.Frame(body)
         grid.pack(fill="x", padx=8, pady=6)
-        facts = [("Kaynak", row.source), ("Etkinlik tarihi", row.seans or "Bilgi yok"),
-                 ("Rezervasyon açılışı", row.reservation_opens or "Bilgi yok"),
-                 ("Durum", row.status_summary or "Bilgi yok"), ("Mekan", row.venue or "Bilgi yok")]
-        facts += [("İletişim" if i == 0 else "", line) for i, line in enumerate(row.contact)]
+        der = row.derived
+        facts = [("Kaynak", row.source, False),
+                 ("Etkinlik tarihi", row.seans or "Bilgi yok", not row.seans),
+                 ("Rezervasyon açılışı", row.reservation_opens or "Bilgi yok",
+                  not row.reservation_opens),
+                 ("Durum", row.status_summary or "Bilgi yok", "summary" in der),
+                 ("Mekan", row.venue or "Bilgi yok", not row.venue)]
+        facts += [("İletişim" if i == 0 else "", line, False)
+                  for i, line in enumerate(row.contact)]
         if row.contact and row.url:
-            facts.append(("Etkinlik sayfası", row.url))
+            facts.append(("Etkinlik sayfası", row.url, False))
         self.event_fact_labels = []
-        for i, (name, value) in enumerate(facts):
+        for i, (name, value, derived) in enumerate(facts):
             ttk.Label(grid, text=name, font=self.bold_font).grid(row=i, column=0, sticky="nw",
                                                                  padx=(0, 12), pady=1)
-            lbl = ttk.Label(grid, text=value, wraplength=700, justify="left")
+            extra = {"font": self.italic_font, "foreground": DERIVED_COLOR} if derived else {}
+            lbl = ttk.Label(grid, text=value, wraplength=700, justify="left", **extra)
             lbl.grid(row=i, column=1, sticky="w", pady=1)
             self.event_fact_labels.append(lbl)
         self._refit()
@@ -1069,6 +1164,7 @@ class App:
                        "geometry_v": L.GEOMETRY_VERSION,
                        "beep": self.beep_enabled,
                        "sort": list(self.sort) if self.sort else None,
+                       "seen": self.seen.to_json(),
                        "activity": self.activity_tab.filters()})
         except Exception:
             log.exception("ui.json not saved")

@@ -196,21 +196,30 @@ class FakeRow:
         self.watched, self.active, self.is_new, self.is_removed = True, True, False, False
         self.target_lines = ["x"]
         self.source, self.is_event, self.seans = "Biletinial", False, ""
+        # wave 6
+        self.url, self.zaman, self.target_text, self.target_count = "https://x.test/p", "gündüz", "var (1)", 1
+        self.sessions_text, self.rez_text, self.rez_key = "3 seans: 28 Kas 15:00, +2", "açık", (0, 0.0)
+        self.nearest, self.derived = None, frozenset({"zaman"})
         self.__dict__.update(kw)
 
 
 def test_row_values_and_tags():
     r = FakeRow()
-    assert L.row_values(r) == ("Oyun", "çocuk, gündüz", "Biletinial", "Çocuk", "Komedi", "90 dk", "7+", "100 TL",
-                               "3", "1 satışta", "Takipte")
+    assert [c[0] for c in L.LIST_COLUMNS] == [
+        "follow", "title", "link", "source", "audience", "genre", "zaman", "duration", "age",
+        "price", "sessions", "rez", "target", "summary"]
+    assert L.row_values(r) == ("☑", "Oyun", "Oyun ↗", "Biletinial", "Çocuk", "Komedi", "gündüz",
+                               "90 dk", "7+", "100 TL", "3 seans: 28 Kas 15:00, +2", "açık",
+                               "var (1)", "1 satışta")
     assert L.row_tags(r) == ("watched",)
     assert L.row_tags(FakeRow(is_new=True)) == ("watched", "new")
     assert L.row_tags(FakeRow(is_removed=True, watched=False)) == ("removed",)
-    assert L.row_values(FakeRow(is_new=True))[0] == "YENİ · Oyun"
-    assert L.row_values(FakeRow(is_removed=True, watched=False))[0] == "KALKTI · Oyun"
-    assert L.row_values(FakeRow(watched=False, active=True))[-1] == "—"
-    assert L.row_values(FakeRow(watched=False, active=False))[-1] == "Pasif"
-    assert L.row_values(FakeRow(watched=False, active=False, target_lines=[]))[-1] == "—"
+    assert L.row_values(FakeRow(is_new=True))[1] == "Oyun"          # colour + bold, no prefix
+    assert L.row_values(FakeRow(is_removed=True, watched=False))[1] == "KALKTI · Oyun"
+    assert L.row_values(FakeRow(watched=False, active=False))[0] == "☐"
+    assert L.row_values(FakeRow(url=""))[2] == "—"
+    cells = L.row_cells(FakeRow())
+    assert [c.derived for c in cells].count(True) == 1 and cells[6].derived   # only "zaman"
 
 
 # ---- status -------------------------------------------------------------------------

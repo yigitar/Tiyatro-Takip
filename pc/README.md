@@ -33,7 +33,7 @@ der. Pencereyi kapatmak uygulamayı kapatır, küçültmek çalışmaya devam et
 
 ## Kullanım
 
-- Liste: izlenen oyunlar üstte; YENİ / KALKTI işaretleri son "Listeyi güncelle"ye göredir.
+- Liste: izlenen oyunlar üstte; ilk sütun ☑/☐ takip kutusudur (tıklayınca değişir). KALKTI işareti son "Listeyi güncelle"ye göredir; açılmamış yeni öğelerin adı kalın mor görünür. Italik gri-mavi değerler kaynaktan alınmamış, türetilmiş/varsayımdır (ayrıntı: ana README).
 - Oyun seçilince: Biletinial bağlantısı, seanslar, hedefler (Düzenle / Sil), Aktif anahtarı,
   Yetişkin/Çocuk hedefi ekleme. Değişiklikler Telegram menüsüyle aynı `config.json`'a yazılır.
 - Hedef düzenleyici: kişi sayısı, günler, saat sınırları, güne özel saat, hariç tarihler.

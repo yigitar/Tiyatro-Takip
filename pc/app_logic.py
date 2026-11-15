@@ -84,6 +84,26 @@ def source_line(view: dict) -> str:
     return f"{text} · {view['portal_text']}" if view.get("portal_text") else text
 
 
+def source_links(config, state) -> dict[str, str]:
+    """Page the "Kaynağı aç" button of each source opens (wave 6): Biletinial = the venue
+    page of the config (first source), Başiskele = the newest known monthly program article
+    (else the municipality home page), VKV = the Etkinlikler list."""
+    from tiyatro import srcevents as E
+    links: dict[str, str] = {}
+    sources = list(getattr(config, "sources", None) or [])
+    if sources and _http(sources[0]):
+        links["biletinial"] = sources[0]
+    articles = (((state or {}).get("src_cache") or {}).get("basiskele") or {}).get("articles")
+    newest = ""
+    if isinstance(articles, dict):
+        ranked = sorted((str((r or {}).get("pub") or ""), link) for link, r in articles.items()
+                        if isinstance(r, dict) and _http(link))
+        newest = ranked[-1][1] if ranked else ""
+    links["basiskele"] = newest or E.BASISKELE_BASE
+    links["vkv"] = E.VKV_LIST_URL
+    return links
+
+
 QUICK_DAYS = {"Hafta içi": [0, 1, 2, 3, 4], "Hafta sonu": [5, 6],
               "Hepsi": [0, 1, 2, 3, 4, 5, 6]}
 _TIME = re.compile(r"^(\d{1,2})(?:[:.](\d{2}))?$")
@@ -219,6 +239,22 @@ class SessionLine:
     status: str
     icon: str
     opens: str = ""
+    url: str = ""        # the session's own page (Biletinial seance link); "" = none stored
+
+
+def _http(value) -> str:
+    return value.strip() if isinstance(value, str) and value.strip().lower().startswith(
+        ("http://", "https://")) else ""
+
+
+def session_link(line: SessionLine, play_url: str) -> tuple[str, str, str]:
+    """(button text, url, note) of one session row: its own page when the state has one,
+    otherwise the play page (note says so); ("", "", "") when there is no page at all."""
+    if line.url:
+        return "Seans ↗", line.url, ""
+    if play_url:
+        return "Oyun ↗", play_url, "seans bağlantısı yok: oyun sayfası açılır"
+    return "", "", ""
 
 
 def session_lines(entry, now: datetime) -> list[SessionLine]:
@@ -233,43 +269,83 @@ def session_lines(entry, now: datetime) -> list[SessionLine]:
         opens = _istanbul(rec.get("opens_at"))
         show = rec.get("status") == "upcoming" and opens is not None and opens > now
         found.append((start, SessionLine(when_text(start), text, icon,
-                                         when_text(opens) if show else "")))
+                                         when_text(opens) if show else "",
+                                         _http(rec.get("url")))))
     found.sort(key=lambda x: x[0])
     return [line for _s, line in found]
 
 
+@dataclass(frozen=True)
+class Cell:
+    """One list cell: its text, whether the value is derived (our rule / fallback / computed
+    rather than read from the source page) and how it behaves ("text", "check", "link")."""
+    text: str
+    derived: bool = False
+    kind: str = "text"
+
+
+# (key, heading, width in px); the list is one table for plays and source events (wave 6)
+LIST_COLUMNS = (("follow", "Takip", 50), ("title", "Oyun", 220), ("link", "Sayfa", 60),
+                ("source", "Kaynak", 105), ("audience", "Kitle", 66), ("genre", "Tür", 85),
+                ("zaman", "Zaman", 95), ("duration", "Süre", 50), ("age", "Yaş", 40),
+                ("price", "Fiyat", 60), ("sessions", "Seans", 270),
+                ("rez", "Rez. açılış", 215), ("target", "Hedef", 125),
+                ("summary", "Durum özeti", 170))
+CHECKED, UNCHECKED = "☑", "☐"
+LEGEND = "normal = kaynaktan alınan, italik = türetilmiş/varsayım"
+BLANK = "—"
+
+
+def row_title(row) -> str:
+    return f"KALKTI · {row.title}" if row.is_removed else row.title
+
+
+def row_cells(row) -> list[Cell]:
+    """Cells in ``LIST_COLUMNS`` order. ``row.derived`` (set by the viewmodel, never guessed
+    here) says which values are derived; an empty value is shown as "—" and counts as derived."""
+    der = row.derived
+
+    def text(key: str, value: str) -> Cell:
+        return Cell(value or BLANK, key in der or not value)
+
+    return [
+        Cell(CHECKED if row.watched else UNCHECKED, False, "check"),
+        Cell(row_title(row)),
+        Cell("Oyun ↗" if row.url else BLANK, False, "link" if row.url else "text"),
+        Cell(row.source),
+        text("audience", row.audience), text("genre", row.genre), text("zaman", row.zaman),
+        Cell(row.duration or BLANK), Cell(row.age or BLANK), Cell(row.price or BLANK),
+        Cell(row.sessions_text or BLANK, not row.sessions_text),
+        text("rez", row.rez_text), text("target", row.target_text),
+        Cell(row.status_summary, "summary" in der),
+    ]
+
+
 def row_values(row) -> tuple[str, ...]:
-    title = row.title
-    if row.is_removed:
-        title = f"KALKTI · {title}"
-    elif row.is_new:
-        title = f"YENİ · {title}"
+    return tuple(c.text for c in row_cells(row))
+
+
+def meta_parts(row) -> list[Cell]:
+    """Detail header segments: Kitle / Tür (derived ones flagged), Süre, Yaş (event rows:
+    Kaynak first, no Süre/Yaş). Each segment is rendered as its own label."""
+    der = row.derived
+    parts = []
     if row.is_event:
-        follow = "Takipte" if row.watched else "Pasif"
-    elif row.watched:
-        follow = "Takipte"
-    elif row.active:
-        follow = "—"
-    else:
-        follow = "Pasif" if row.target_lines else "—"
-    seans = (row.seans or "—") if row.is_event else str(row.session_count)
-    return (title, ", ".join(row.tags) or "—", row.source, row.audience or "—",
-            row.genre or "—", row.duration, row.age, row.price, seans, row.status_summary,
-            follow)
+        parts.append(Cell(f"Kaynak: {row.source}"))
+    parts.append(Cell(f"Kitle: {row.audience or 'Bilgi yok'}", "audience" in der or not row.audience))
+    parts.append(Cell(f"Tür: {row.genre or 'Bilgi yok'}", "genre" in der or not row.genre))
+    if not row.is_event:
+        if row.duration:
+            parts.append(Cell(f"Süre: {row.duration}"))
+        if row.age:
+            parts.append(Cell(f"Yaş: {row.age}"))
+    return parts
 
 
 def meta_line(row) -> str:
     """Detail header: "Kitle: Çocuk  ·  Tür: Komedi  ·  Süre: 90 dk  ·  Yaş: 7+"
     (event rows: "Kaynak: VKV  ·  Kitle: …  ·  Tür: …")."""
-    if row.is_event:
-        return "  ·  ".join([f"Kaynak: {row.source}", f"Kitle: {row.audience or 'Bilgi yok'}",
-                             f"Tür: {row.genre or 'Bilgi yok'}"])
-    parts = [f"Kitle: {row.audience or 'Bilgi yok'}", f"Tür: {row.genre or 'Bilgi yok'}"]
-    if row.duration:
-        parts.append(f"Süre: {row.duration}")
-    if row.age:
-        parts.append(f"Yaş: {row.age}")
-    return "  ·  ".join(parts)
+    return "  ·  ".join(c.text for c in meta_parts(row))
 
 
 def row_tags(row) -> tuple[str, ...]:
@@ -400,10 +476,9 @@ def scrub_secrets(text: str, secrets=()) -> str:
 _TR_ALPHABET = "abcçdefgğhıijklmnoöpqrsştuüvwxyz"
 _TR_RANK = {ch: i for i, ch in enumerate(_TR_ALPHABET)}
 _TR_LOWER = {"I": "ı", "İ": "i"}
-SORT_COLUMNS = ("title", "tags", "source", "audience", "genre", "duration", "age", "price", "sessions", "summary",
-                "follow")
+SORT_COLUMNS = tuple(key for key, _label, _w in LIST_COLUMNS)
 # First click sorts "most first" (descending key) on these; every other column ascending.
-_FIRST_DESC = {"sessions", "summary", "follow"}
+_FIRST_DESC = {"summary", "follow", "target", "link"}
 
 
 def tr_sort_key(text) -> tuple:
@@ -436,8 +511,14 @@ def _sort_value(row, column: str):
     """Comparable value of ``row`` for ``column`` or None when the row has no value."""
     if column == "title":
         return tr_sort_key(row.title) if row.title.strip() else None
-    if column == "tags":
-        return tr_sort_key(", ".join(row.tags)) if row.tags else None
+    if column == "zaman":
+        return tr_sort_key(row.zaman) if row.zaman else None
+    if column == "link":
+        return 1 if row.url else None
+    if column == "rez":
+        return row.rez_key
+    if column == "target":
+        return None if row.is_event else row.target_count
     if column == "source":
         return tr_sort_key(row.source)
     if column == "audience":
@@ -446,8 +527,8 @@ def _sort_value(row, column: str):
         return tr_sort_key(row.genre) if row.genre.strip() else None
     if column in ("duration", "age", "price"):
         return _number(getattr(row, column))
-    if column == "sessions":
-        return row.session_count
+    if column == "sessions":   # the earliest upcoming session (date and time), not the count
+        return row.nearest.timestamp() if row.nearest is not None else None
     if column == "summary":
         if not row.session_count:
             return None
@@ -486,6 +567,59 @@ def heading_text(label: str, column: str, sort) -> str:
     if sort and sort[0] == column:
         return f"{label} {'▲' if sort[1] == 'asc' else '▼'}"
     return label
+
+
+# ---- "new" items (wave 6) ------------------------------------------------------------------
+
+SEEN_MAX = 3000
+
+
+class SeenStore:
+    """Ids of list items the user has already seen, kept per machine in ``ui.json``.
+
+    An item is *new* when its id is not in the set; it stops being new when the user selects
+    its row. Rule for the first run after the upgrade (no ``seen`` key in ``ui.json``): the
+    first non-empty list is taken as the baseline and every item in it counts as seen (no
+    colour flood); only items that appear later are new. Before the baseline nothing is new.
+    """
+
+    def __init__(self, ids=None):
+        self.initialised = ids is not None
+        self.ids: dict[str, None] = dict.fromkeys(
+            i for i in (ids or ()) if isinstance(i, str) and i)
+
+    @classmethod
+    def load(cls, path) -> "SeenStore":
+        try:
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return cls()
+        saved = data.get("seen") if isinstance(data, dict) else None
+        return cls(saved if isinstance(saved, list) else None)
+
+    def baseline(self, current_ids) -> bool:
+        """Mark everything currently listed as seen, once; True when it happened."""
+        current = [i for i in current_ids if isinstance(i, str) and i]
+        if self.initialised or not current:
+            return False
+        self.ids.update(dict.fromkeys(current))
+        self.initialised = True
+        return True
+
+    def is_new(self, item_id: str) -> bool:
+        return self.initialised and item_id not in self.ids
+
+    def mark(self, item_id: str) -> bool:
+        """The user selected this row; True when that changed anything."""
+        if not self.initialised or not item_id or item_id in self.ids:
+            return False
+        self.ids[item_id] = None
+        return True
+
+    def to_json(self) -> list[str] | None:
+        if not self.initialised:
+            return None
+        return list(self.ids)[-SEEN_MAX:]
 
 
 # ---- ui.json ---------------------------------------------------------------------------------

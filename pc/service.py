@@ -964,7 +964,7 @@ class Service:
         everything = set(state.get("plays") or {}) | set(config.plays)
         now = now or self._clock()
         rows = build_rows(state, config, everything - self.new_slugs, self.removed_slugs, now)
-        return with_events(rows, srcmod_events.event_views(self.state, config, now))
+        return with_events(rows, srcmod_events.event_views(self.state, config, now), now)
 
     # ---- status ------------------------------------------------------------------------
     def _next_opening_info(self, state: dict, config: Config, now: datetime) -> dict | None:

@@ -78,3 +78,30 @@ def autosize_text(text, max_lines, min_lines: int = 1, on_change=None):
     text.bind("<Configure>", fit, add="+")
     fit()
     return fit
+
+
+class RichLabel(tk.Text):
+    """A one-line read-only label whose segments can be italic grey-blue (derived values).
+    ``cget("text")`` returns the plain text, like a ``ttk.Label``."""
+
+    def __init__(self, master, italic_font, color: str, **kw):
+        bg = ttk.Style().lookup("TFrame", "background") or self._root().cget("background")
+        super().__init__(master, height=1, wrap="none", borderwidth=0, highlightthickness=0,
+                         relief="flat", padx=0, pady=0, background=bg, cursor="arrow",
+                         font="TkDefaultFont", **kw)
+        self.tag_configure("derived", font=italic_font, foreground=color)
+        self._plain = ""
+
+    def set_parts(self, parts, sep: str = "  ·  ") -> None:
+        """``parts``: objects with ``text`` and ``derived`` (``app_logic.Cell``)."""
+        self.configure(state="normal")
+        self.delete("1.0", "end")
+        for n, part in enumerate(parts):
+            if n:
+                self.insert("end", sep)
+            self.insert("end", part.text, ("derived",) if part.derived else ())
+        self.configure(state="disabled", width=max(10, len(self.get("1.0", "end-1c")) + 2))
+        self._plain = sep.join(p.text for p in parts)
+
+    def cget(self, key):
+        return self._plain if key == "text" else super().cget(key)
