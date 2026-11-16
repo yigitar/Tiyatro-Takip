@@ -562,7 +562,8 @@ class Service:
                 lrec["on_sale_count"] = max(_count(lrec.get("on_sale_count")),
                                             _count(grec.get("on_sale_count")))
                 if _newer(grec.get("status_since"), lrec.get("status_since")):
-                    for key in ("status", "status_since", "prev_status", "on_sale_pending"):
+                    for key in ("status", "status_since", "prev_status", "on_sale_pending",
+                                "remaining"):
                         if key in grec:
                             lrec[key] = grec[key]
                 if _newer(grec.get("closed_seen_at"), lrec.get("closed_seen_at")):

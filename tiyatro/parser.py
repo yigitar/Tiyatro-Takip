@@ -168,6 +168,39 @@ def _button_state(block: str) -> tuple[Status, datetime | None]:
     return Status.UNKNOWN, opens
 
 
+_REMAINING_RE = re.compile(r"son\s+(\d{1,4})\s+bilet", re.I)
+_REMAINING_MAX = 9999
+_SPAN_OPEN_RE = re.compile(r"<span\b([^>]*)>", re.I)
+_SPAN_CLOSE_RE = re.compile(r"</span", re.I)
+
+
+def _remaining(block: str) -> int | None:
+    """"Son N Bilet" badge (``div.warn span.tg``) of a session row, else None. Display only:
+    it never changes the status. Any problem or ambiguity (two different counts, other
+    badge texts, N = 0) gives None; this function never raises."""
+    try:
+        found: set[int] = set()
+        for wm, wat in _tags(block, "div"):
+            if "warn" not in (wat.get("class") or "").lower().split():
+                continue
+            end = _DIV_TOKEN_RE.search(block, wm.end())
+            inner = block[wm.end():end.start() if end else len(block)]
+            for sm in _SPAN_OPEN_RE.finditer(inner):
+                if "tg" not in (_attrs(sm.group(1)).get("class") or "").lower().split():
+                    continue
+                close = _SPAN_CLOSE_RE.search(inner, sm.end())
+                text = htmlmod.unescape(_TAG_STRIP_RE.sub(" ", inner[sm.end():close.start() if close else len(inner)]))
+                text = text.replace("İ", "i").replace("I", "i").lower().replace("i̇", "i").strip()
+                full = _REMAINING_RE.fullmatch(text)
+                if full:
+                    n = int(full.group(1))
+                    if 1 <= n <= _REMAINING_MAX:
+                        found.add(n)
+        return found.pop() if len(found) == 1 else None
+    except Exception:
+        return None
+
+
 def _row_div_end(html: str, pos: int, limit: int) -> int:
     """End of the row's own <div> container (depth counting); `limit` if unbalanced."""
     depth = 1
@@ -266,6 +299,7 @@ def parse_play(html: str, url: str) -> Play:
             opens_at=opens_at,
             url=htmlmod.unescape(share.group(1)) if share else f"{url}/{sid}",
             venue=venue,
+            remaining=_remaining(block),
         ))
 
     h1 = re.search(r'<h1\b[^>]*\bhero-v3__title\b[^>]*>(.*?)</h1>', html, re.S | re.I)

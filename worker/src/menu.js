@@ -685,7 +685,7 @@ function mainScreen(config, state, now) {
 }
 
 const STATUS_TEXT = {
-  on_sale: (rec) => ["✅", "satışta", rec],
+  on_sale: (rec) => ["✅", Number.isInteger(rec.remaining) && rec.remaining >= 1 && rec.remaining <= 9999 ? `satışta · son ${rec.remaining} bilet` : "satışta", rec],
   upcoming: (rec) => ["⏳", rec.opens_at ? `yakında (açılış ${fmt(rec.opens_at)})` : "yakında", rec],
   sold_out: (rec) => ["❌", "tükendi", rec],
 };

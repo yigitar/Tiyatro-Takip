@@ -106,6 +106,20 @@ def _kind_line(ev: Event) -> str:
     return text
 
 
+REMAINING_CAUTION_MAX = 10  # "Son N bilet" with N up to this also gets the caution line
+
+
+def remaining_lines(value) -> list[str]:
+    """Extra ON_SALE alert lines for the page's "Son N Bilet" badge (info only, never gates
+    the alert). Nothing for a missing / invalid count."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 9999:
+        return []
+    lines = [f"🎫 Son {value} bilet"]
+    if value <= REMAINING_CAUTION_MAX:
+        lines.append(f"Sayfa “Son {value} bilet” diyor; koltuk haritası farklı olabilir.")
+    return lines
+
+
 def _title(ev: Event, plays: dict[str, Play]) -> str:
     title = ev.payload.get("title")
     if not title and ev.play_slug in plays:
@@ -259,6 +273,8 @@ def _entry(ev: Event, plays: dict[str, Play], config: Config, ids: list[str]) ->
         lines.append(f"\U0001f4c5 {_when(start)}")
     if ev.kind not in KIND_FIRST:
         lines.append(_kind_line(ev))
+    if ev.kind == "ON_SALE":
+        lines.extend(remaining_lines(ev.payload.get("remaining")))
     people = _targets(ev, config, ids)
     if people:
         lines.append(f"\U0001f465 {people}")

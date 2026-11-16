@@ -24,6 +24,7 @@ class Session:
     opens_at: datetime | None
     url: str
     venue: str
+    remaining: int | None = None  # site badge "Son N Bilet"; display only
 
 
 @dataclass

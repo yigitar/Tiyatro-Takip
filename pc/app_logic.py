@@ -21,6 +21,7 @@ from pc.viewmodel import DAY_SHORT, NO_TARGET_TEXT, target_summary, when_text  #
 from tiyatro.notify import DAYS, MONTHS
 from tiyatro.config import MAX_PEOPLE, MIN_PEOPLE, config_from_dict
 from tiyatro.models import ISTANBUL, Target
+from tiyatro.state import valid_remaining
 from tiyatro.timeutil import parse_iso
 
 from pc import theme as _theme  # noqa: E402
@@ -340,6 +341,9 @@ def session_lines(entry, now: datetime) -> list[SessionLine]:
         if start is None or start < now:
             continue
         text, icon = _STATUS.get(rec.get("status"), _STATUS["unknown"])
+        left = valid_remaining(rec.get("remaining"))
+        if rec.get("status") == "on_sale" and left is not None:
+            text = f"{text} · son {left} bilet"
         opens = _istanbul(rec.get("opens_at"))
         show = rec.get("status") == "upcoming" and opens is not None and opens > now
         found.append((start, SessionLine(when_text(start), text, icon,

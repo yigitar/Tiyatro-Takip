@@ -103,6 +103,13 @@ def _normalize(old: dict) -> dict:
     return state
 
 
+def valid_remaining(value) -> int | None:
+    """The stored "Son N Bilet" count: a small positive int, anything else is None."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 9999:
+        return None
+    return value
+
+
 def _stored_session(sid: str, entry: dict) -> Session:
     return Session(
         id=sid,
@@ -112,6 +119,7 @@ def _stored_session(sid: str, entry: dict) -> Session:
         opens_at=_dt(entry.get("opens_at")),
         url=entry.get("url", ""),
         venue="",
+        remaining=valid_remaining(entry.get("remaining")),
     )
 
 
@@ -175,7 +183,8 @@ def _merge_play(state: dict, play: Play, config: Config, now_iso: str) -> bool:
         if opens_at is None and s.status is Status.UNKNOWN:
             opens_at = rec.get("opens_at")  # odd markup at opening time: keep the plan
         rec.update(status=s.status.value, opens_at=opens_at, start=_iso(s.start),
-                   url=s.url or rec.get("url", ""), gone=False)
+                   url=s.url or rec.get("url", ""), gone=False,
+                   remaining=valid_remaining(s.remaining))
         if s.end is not None:
             rec["end"] = _iso(s.end)
         else:
@@ -197,7 +206,7 @@ def _merge_play(state: dict, play: Play, config: Config, now_iso: str) -> bool:
 
 
 def _session_payload(entry: dict, session: Session) -> dict:
-    return {
+    payload = {
         "title": entry["title"],
         "play_url": entry.get("url"),
         "url": session.url,
@@ -205,6 +214,9 @@ def _session_payload(entry: dict, session: Session) -> dict:
         "opens_at": _iso(session.opens_at),
         "status": session.status.value,
     }
+    if session.remaining is not None:
+        payload["remaining"] = session.remaining
+    return payload
 
 
 def diff(old: dict, plays: list[Play], config: Config, now: datetime, *,

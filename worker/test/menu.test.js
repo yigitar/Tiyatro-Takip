@@ -615,3 +615,20 @@ test("sourceViews: a stored program warning turns a fresh check into a visible �
   st.sources.basiskele.warning = null;
   assert.equal(sourceViews(st).find((x) => x.id === "basiskele").icon, "✅");
 });
+
+test("play screen: on_sale session shows 'son N bilet' only for a valid remaining count", () => {
+  const s = makeState();
+  const sess = s.plays["kusursuz-bir-aile"].sessions;
+  sess.s1.remaining = 3;
+  sess.s2.remaining = 5;      // not on sale: ignored
+  sess.s3.remaining = 2;      // sold out: ignored
+  const text = render(`p:${KB}`, cfg, s, Date.parse("2030-01-01T00:00:00+03:00")).text;
+  assert.match(text, /✅ [^\n]*— satışta · son 3 bilet/);
+  assert.ok(!text.includes("son 5 bilet") && !text.includes("son 2 bilet"));
+  for (const bad of [0, -1, 1.5, "3", true, null, 10000]) {
+    sess.s1.remaining = bad;
+    const t = render(`p:${KB}`, cfg, s, Date.parse("2030-01-01T00:00:00+03:00")).text;
+    assert.ok(!t.includes("son "), String(bad));
+    assert.match(t, /— satışta\n/);
+  }
+});
