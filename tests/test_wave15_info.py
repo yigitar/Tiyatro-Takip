@@ -199,7 +199,7 @@ def test_event_detail_shows_ozet_oyuncular_yapim_as_normal_text(ui):
     assert labels["Oyuncular"].cget("text") == "Ayşe Yılmaz, Ali Veli"
     assert "Yönetmen: Can Özkan" in labels["Yapım"].cget("text")
     for lbl in labels.values():
-        assert str(lbl.cget("foreground")) != L.GRAY             # source-quoted: normal colour
+        assert str(lbl.cget("foreground")) != "SystemGrayText"             # source-quoted: normal colour
         assert "italic" not in str(lbl.cget("font")).lower()
 
 
@@ -210,8 +210,8 @@ def test_event_detail_says_kaynakta_bilgi_yok_in_grey_when_the_source_gave_nothi
     assert labels["Özet"].cget("text").startswith("“Ceviz Adam")
     for name in ("Oyuncular", "Yapım"):
         assert labels[name].cget("text") == SOURCE_NO_INFO == "Kaynakta bilgi yok"
-        assert str(labels[name].cget("foreground")) == L.GRAY
+        assert str(labels[name].cget("foreground")) == "SystemGrayText"
     ui.select_slug("vkv:540")
     ui.root.update()
     assert ui.event_info_labels["Özet"].cget("text") == SOURCE_NO_INFO
-    assert str(ui.event_info_labels["Özet"].cget("foreground")) == L.GRAY
+    assert str(ui.event_info_labels["Özet"].cget("foreground")) == "SystemGrayText"

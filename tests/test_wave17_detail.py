@@ -82,7 +82,7 @@ def test_plays_and_events_share_sections_labels_and_placeholder(ui):
         assert isinstance(ui.cast_label, SelectableLabel) and isinstance(ui.credits_label, SelectableLabel)
         assert ui.summary_text is ui.event_info_labels["Özet"]
         # same Özet box style: white, bordered
-        assert str(ui.summary_text.cget("background")) == "white"
+        assert str(ui.summary_text.cget("background")) == "SystemWindow"
         assert str(ui.summary_text.cget("relief")) == "solid" and int(ui.summary_text.cget("borderwidth")) == 1
         # same facts labels
         labels = [w.cget("text") for w in ui.event_facts_grid.winfo_children()
@@ -100,9 +100,9 @@ def test_plays_and_events_share_sections_labels_and_placeholder(ui):
     ui.select_slug("bk:k")
     _pump(ui)
     assert ui.summary_text.get("1.0", "end-1c") == SOURCE_NO_INFO
-    assert str(ui.summary_text.cget("foreground")) == L.GRAY
+    assert str(ui.summary_text.cget("foreground")) == "SystemGrayText"
     for lbl in (ui.cast_label, ui.credits_label):
-        assert lbl.cget("text") == SOURCE_NO_INFO and str(lbl.cget("foreground")) == L.GRAY
+        assert lbl.cget("text") == SOURCE_NO_INFO and str(lbl.cget("foreground")) == "SystemGrayText"
 
 
 def test_right_column_structure_is_the_same_wide_and_stacked(ui):

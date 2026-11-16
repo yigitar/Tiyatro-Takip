@@ -455,7 +455,7 @@ def test_checkbox_is_drawn_to_the_row_height_and_links_are_plain_text(tk_root):
     tk_root.update()
     t.draw()
     boxes = [(c, f, o) for c, f, o in rects(t) if o in (T.BOX_ON, T.BOX_EDGE)]
-    assert [f for _c, f, _o in boxes] == [T.BOX_ON, "white"]
+    assert [f for _c, f, _o in boxes] == [T.BOX_ON, "SystemWindow"]
     for coords, _f, _o in boxes:                     # square, inside its row, ~55 % of height
         w, h = coords[2] - coords[0], coords[3] - coords[1]
         assert abs(w - h) <= 1 and 0.4 * t.row_px <= h <= 0.7 * t.row_px

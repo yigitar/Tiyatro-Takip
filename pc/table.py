@@ -19,20 +19,22 @@ import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import ttk
 
+from pc import theme as _theme
 from pc.widgets import AutoScrollbar
 
-DERIVED_COLOR = "#4f6d8f"   # grey-blue: derived / assumed values
-TEXT_COLOR = "#111827"
-SELECT_BG = "#cfe3ff"
-GRID_COLOR = "#e5e7eb"
-HEAD_BG = "#eef1f5"
-LINK_COLOR = "#1d4ed8"      # link-style cells ("Oyun ↗"): plain blue text, underlined on hover
-ZEBRA_BG = "#f7f8fa"        # every second row: barely visible, like Excel banding
-BOX_EDGE, BOX_ON = "#8a94a3", "#2563eb"   # drawn checkbox: outline / checked fill
+DERIVED_COLOR = _theme.DERIVED   # grey-blue: derived / assumed values
+TEXT_COLOR = _theme.WINDOW_TEXT
+SELECT_BG = _theme.HILITE
+SELECT_FG = _theme.HILITE_TEXT
+GRID_COLOR = _theme.GRID
+HEAD_BG = _theme.FACE
+LINK_COLOR = _theme.LINK      # link-style cells ("Oyun ↗"): plain blue text, underlined on hover
+ZEBRA_BG = _theme.ZEBRA        # every second row: barely visible, like Excel banding
+BOX_EDGE, BOX_ON = _theme.SHADOW, _theme.HILITE   # drawn checkbox: outline / checked fill
 PAD = 6
 CHECKED_GLYPH = "☑"   # cell text of a checked box (pc.app_logic.CHECKED)
-DROP_COLOR = "#2563eb"      # column drag: drop indicator line / ghost outline
-GHOST_BG = "#dbeafe"
+DROP_COLOR = _theme.HILITE      # column drag: drop indicator line / ghost outline
+GHOST_BG = _theme.FACE
 MIN_COL_PX = 44             # narrowest a column can be dragged/shrunk (96 dpi); never below its base
 MAX_COL_PX = 700            # widest a dragged / auto-fitted column gets (96 dpi)
 EDGE_PX = 5                 # half width of the header border hit area (96 dpi)
@@ -131,7 +133,7 @@ class GridTable(ttk.Frame):
         self.head_px = max(int(round(head_px * self.scale)), line + 8)
         self._fit_cache: dict = {}
 
-        bg = ttk.Style().lookup("Treeview", "background") or "white"
+        bg = ttk.Style().lookup("Treeview", "background") or _theme.WINDOW
         self.header = tk.Canvas(self, height=self.head_px, highlightthickness=0, background=HEAD_BG)
         self.body = tk.Canvas(self, highlightthickness=0, background=bg, takefocus=1)
         if height_rows is not None:
@@ -579,11 +581,14 @@ class GridTable(ttk.Frame):
             for i, key in enumerate(order):
                 cell = row.cells[slot[key]]
                 font, fg, _bg = self._row_style(row, key, cell)
+                selected = row.iid == self._selected
+                if selected:
+                    fg = SELECT_FG      # system highlight text on the system highlight
                 mid = y0 + self.row_px // 2
                 centre = (xs[i] + xs[i + 1]) // 2
                 if cell.kind == "link":
                     hot = self._hover == (row.iid, key)
-                    body.create_text(centre, mid, text=cell.text, fill=LINK_COLOR,
+                    body.create_text(centre, mid, text=cell.text, fill=SELECT_FG if selected else LINK_COLOR,
                                      font=self._fonts[("link", False)] if hot
                                      else self._fonts[(False, False)])
                 elif cell.kind == "check":
@@ -603,11 +608,11 @@ class GridTable(ttk.Frame):
         if checked:
             body.create_rectangle(x0, y0, x1, y1, fill=BOX_ON, outline=BOX_ON, width=line)
             body.create_line(x0 + size * 0.22, cy + size * 0.02, x0 + size * 0.42, y1 - size * 0.24,
-                             x1 - size * 0.20, y0 + size * 0.26, fill="white",
+                             x1 - size * 0.20, y0 + size * 0.26, fill=_theme.HILITE_TEXT,
                              width=max(2, int(round(size / 6))), capstyle="round",
                              joinstyle="round")
         else:
-            body.create_rectangle(x0, y0, x1, y1, fill="white", outline=BOX_EDGE, width=line)
+            body.create_rectangle(x0, y0, x1, y1, fill=_theme.WINDOW, outline=BOX_EDGE, width=line)
 
     # ---- scrolling ---------------------------------------------------------------------------
     def _on_yscroll(self, first, last):

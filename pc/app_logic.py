@@ -23,7 +23,10 @@ from tiyatro.config import MAX_PEOPLE, MIN_PEOPLE, config_from_dict
 from tiyatro.models import ISTANBUL, Target
 from tiyatro.timeutil import parse_iso
 
-GREEN, AMBER, RED, GRAY = "#1a7f37", "#b36b00", "#c62828", "#6b7280"
+from pc import theme as _theme  # noqa: E402
+
+# status hues (information), derived to stay readable on the system window colour
+GREEN, AMBER, RED, GRAY = _theme.GREEN, _theme.AMBER, _theme.RED, _theme.GRAY
 BEEP_INTERVAL_S = 20
 BEEP_MAX = 5
 DEFAULT_PORT = 47615

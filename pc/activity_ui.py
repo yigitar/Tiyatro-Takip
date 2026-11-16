@@ -13,6 +13,7 @@ from pathlib import Path
 from tkinter import ttk
 
 from pc import activity as A
+from pc import theme as T
 from pc.viewmodel import APP_TITLE
 from pc.widgets import AutoScrollbar, SelectableText
 from tiyatro.models import ISTANBUL
@@ -21,7 +22,6 @@ LEVEL_CHOICES = {"Hepsi": "all", "Uyarı ve hata": "warn"}
 COLUMNS = (("when", "Zaman", 105), ("cat", "Kategori", 120), ("title", "Özet", 520),
            ("result", "Sonuç", 300))
 SAVE_DELAY_MS = 500
-WARN_BG, ERROR_BG, ERROR_FG = "#fff4cc", "#fde2e2", "#7f1d1d"
 
 
 def default_reveal(path: Path) -> None:
@@ -96,7 +96,7 @@ class ActivityTab(ttk.Frame):
         self.search_var.trace_add("write", lambda *_a: self._search_changed())
         ttk.Entry(row, textvariable=self.search_var, width=28).pack(side="left", padx=4)
         self.count_var = tk.StringVar()
-        ttk.Label(row, textvariable=self.count_var, foreground="#6b7280").pack(
+        ttk.Label(row, textvariable=self.count_var, foreground=T.GRAY_TEXT).pack(
             side="left", padx=12)
         self.reveal_btn = ttk.Button(row, text="Dosyayı göster", command=self._reveal)
         self.reveal_btn.pack(side="right")
@@ -114,8 +114,8 @@ class ActivityTab(ttk.Frame):
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
-        self.tree.tag_configure("warn", background=WARN_BG)
-        self.tree.tag_configure("error", background=ERROR_BG, foreground=ERROR_FG)
+        self.tree.tag_configure("warn")      # native: no custom row tints (the filter separates them)
+        self.tree.tag_configure("error")
         self.tree.bind("<Double-1>", self._double_click)
         self.tree.bind("<Return>", lambda _e: self.open_detail())
         self.tree.bind("<Control-c>", lambda _e: self.copy_selected())

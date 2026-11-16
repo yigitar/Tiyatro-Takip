@@ -5,6 +5,8 @@ import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import ttk
 
+from pc import theme as _theme
+
 
 class AutoScrollbar(ttk.Scrollbar):
     """A ``ttk.Scrollbar`` (pack layout) that hides itself while the whole content is
@@ -164,7 +166,7 @@ class SelectableText(tk.Text):
         opts = dict(wrap=wrap, font=font, cursor="xterm", insertwidth=0, takefocus=0,
                     exportselection=False, undo=False, height=1, width=1)
         if box:
-            opts.update(borderwidth=1, relief="solid", background=background or "white")
+            opts.update(borderwidth=1, relief="solid", background=background or "SystemWindow")
         else:
             opts.update(borderwidth=0, highlightthickness=0, relief="flat", padx=0, pady=0,
                         background=background or _pane_background(master))
@@ -368,8 +370,8 @@ class LinkButton(tk.Label):
     while hovered. Used instead of a bordered ``ttk.Button`` where a small unobtrusive
     "open" action is wanted (source cards)."""
 
-    def __init__(self, master, text: str, command, *, color: str = "#1d4ed8",
-                 hover_color: str = "#1e40af", font=None, background=None, **kw):
+    def __init__(self, master, text: str, command, *, color: str = _theme.LINK,
+                 hover_color: str = _theme.LINK, font=None, background=None, **kw):
         opts = {"text": text, "foreground": color, "cursor": "hand2", "padx": 2, "pady": 2}
         if background is not None:
             opts["background"] = background

@@ -26,6 +26,7 @@ except ImportError:  # pragma: no cover
 
 from pc import activity as A
 from pc import app_logic as L
+from pc import theme as T
 from pc import winsetup
 from pc.activity_ui import ActivityTab, default_reveal
 from pc.service import RefreshError
@@ -41,10 +42,10 @@ from tiyatro.tags import clean_summary
 
 log = logging.getLogger("pc.app")
 
-STRIP_BG, STRIP_EDGE, VALUE_COLOR = "#eef2f7", "#c7d0dc", "#111827"
-LEGEND_BG, LEGEND_EDGE = "#f8fafc", "#cbd5e1"
-CARD_BG, CARD_MIN_PX = "white", 250
-SIDE_BG, SIDE_W = "#f1f4f8", 280   # sidebar background / width (96 dpi px)
+STRIP_BG, STRIP_EDGE, VALUE_COLOR = T.FACE, T.SHADOW, T.WINDOW_TEXT   # native: system colours
+LEGEND_BG, LEGEND_EDGE = T.FACE, T.SHADOW
+CARD_BG, CARD_MIN_PX = T.WINDOW, 250
+SIDE_BG, SIDE_W = T.FACE, 280   # sidebar background / width (96 dpi px)
 NARROW_PX = 1000    # window narrower than this: the sidebar becomes a strip on top
 SESSION_ROWS_MAX = 8      # session table shows up to this many rows, then scrolls
 DETAIL_SB_PX = 17   # scrollbar slot always reserved in the detail width (no feedback)
@@ -70,7 +71,7 @@ VIEW_ATTRS = (
     "_text_fg", "detail_canvas", "detail_vsb", "detail_body")
 DETAIL_CHROME_PX = 30  # title + border of the "Oyun ayrıntısı" frame
 COLUMNS = L.LIST_COLUMNS      # (key, heading, width): one table for plays and source events
-NEW_COLOR = "#6d28d9"         # name of an item the user has not opened yet (bold)
+NEW_COLOR = T.NEW         # name of an item the user has not opened yet (bold)
 FOLLOW_HELP_EVENT = ("Takip açıkken bu etkinlik için rezervasyon açılış saati duyurulunca, "
                      "açılışa 1 gün ve 10 dk kala ve açıldığında bildirim gelir; açılış saati "
                      "yayınlanmadıysa şimdilik bildirim gelmez.")
@@ -163,8 +164,8 @@ class Tooltip:
         self.tip.wm_overrideredirect(True)
         self.tip.wm_geometry(f"+{self.widget.winfo_rootx() + 10}+"
                              f"{self.widget.winfo_rooty() - 10 - 18 * min(text.count(chr(10)) + 1, 8)}")
-        tk.Label(self.tip, text=text, justify="left", background="#ffffe0", relief="solid",
-                 borderwidth=1, wraplength=520).pack()
+        tk.Label(self.tip, text=text, justify="left", background=T.TIP_BG, foreground=T.TIP_FG,
+                 font="TkTooltipFont", relief="solid", borderwidth=1, wraplength=520).pack()
 
     def _hide(self, _e=None):
         if self.tip is not None:
@@ -198,12 +199,14 @@ class Popup(tk.Toplevel):
         self.place()
         self.focus_ok = winsetup.set_no_activate(self)    # before it is shown
         self.deiconify()
-        self.restart_timer()
         self.update_idletasks()
         self.place()                  # mapped: exact outer rect
+        self.restart_timer()
 
     def place(self) -> None:
-        """Bottom-right corner of the work area (above the taskbar)."""
+        """Bottom-right corner of the work area of the main window's monitor (above the
+        taskbar), ~16 px margin. The OUTER rect (frame + title bar) must fit: the first call
+        (still hidden) estimates the frame, the second (mapped) uses the real outer size."""
         self.update_idletasks()
         work = winsetup.work_area(self.app.root)
         gap = self.app.px(16)
@@ -516,7 +519,7 @@ class App:
         self.tree.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
         self.tree.tag_configure("new", bold=True, foreground=NEW_COLOR, column="title")
-        self.tree.tag_configure("removed", background="#fde2e2", foreground="#7f1d1d")
+        self.tree.tag_configure("removed", background=T.ERROR_ROW, foreground=T.WINDOW_TEXT)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.root.bind_all("<MouseWheel>", self._detail_wheel, add="+")
 
@@ -625,7 +628,7 @@ class App:
                  ("gh", "GitHub"), ("hb", "PC kaydı"), ("pending", "Bekleyen bildirim"))
         for n, (key, title) in enumerate(cells):
             top = self.px(5) if n == 0 else self.px(1)
-            cap = tk.Label(st, text=title, foreground=L.GRAY, background=STRIP_BG,
+            cap = tk.Label(st, text=title, foreground=T.GRAY_TEXT, background=STRIP_BG,
                            font=self.small_font, anchor="nw", justify="left")
             cap.grid(row=n, column=0, sticky="nw", padx=(pad, self.px(6)),
                      pady=(top, self.px(1)))
@@ -635,8 +638,8 @@ class App:
             self.status_labels[key] = lbl
             self._status_captions.append(cap)
         st.bind("<Configure>", self._rewrap_status)
-        self.paused_badge = tk.Label(st, text="DURAKLATILDI", background=L.RED,
-                                     foreground="white", padx=8, pady=2, font=self.value_font)
+        self.paused_badge = tk.Label(st, text="DURAKLATILDI", background=STRIP_BG,
+                                     foreground=L.RED, padx=8, pady=2, font=self.value_font)
         self.warn_label = SelectableLabel(st, text="", foreground=L.AMBER, background=STRIP_BG,
                                           wraplength=self.px(240))
         self.warn_label.grid(row=7, column=0, columnspan=2, sticky="w", padx=pad)
@@ -697,7 +700,7 @@ class App:
             frame = tk.Frame(self.legend, background=LEGEND_BG)
             tk.Label(frame, text=sample, font=font, foreground=color,
                      background=LEGEND_BG).pack(side="left")
-            lab = tk.Label(frame, text=" " + meaning, foreground=L.GRAY,
+            lab = tk.Label(frame, text=" " + meaning, foreground=T.GRAY_TEXT,
                            background=LEGEND_BG, justify="left", anchor="w",
                            wraplength=self.px(SIDE_W) - self.px(100))
             lab.pack(side="left")
@@ -712,7 +715,7 @@ class App:
             item(sample, meaning, font=font, color=color)
         for icon, meaning, color in L.LEGEND_STATES:
             item(icon, meaning, color=color)
-        note = tk.Label(self.legend, text=L.LEGEND_TIMES, foreground=L.GRAY,
+        note = tk.Label(self.legend, text=L.LEGEND_TIMES, foreground=T.GRAY_TEXT,
                         background=LEGEND_BG, anchor="w", justify="left",
                         wraplength=self.px(SIDE_W) - self.px(40))
         self.legend_texts.append(L.LEGEND_TIMES)
@@ -1236,7 +1239,7 @@ class App:
 
     def _build_event_links(self, left, row) -> None:
         """Events have no per-session pages: the follow help and one page button."""
-        self.follow_help = SelectableLabel(left, text=FOLLOW_HELP_EVENT, foreground=L.GRAY,
+        self.follow_help = SelectableLabel(left, text=FOLLOW_HELP_EVENT, foreground=T.GRAY_TEXT,
                                            wraplength=self.px(300))
         self.follow_help.pack(padx=8, anchor="w")
         links = ttk.Frame(left)
@@ -1244,7 +1247,7 @@ class App:
         self.event_page_btn = ttk.Button(links, text="Etkinlik sayfası ↗")
         self.event_page_btn.pack(side="left")
         self.event_no_page_label = SelectableLabel(links, text=NO_SESSION_PAGE,
-                                                   foreground=L.GRAY, wraplength=self.px(300))
+                                                   foreground=T.GRAY_TEXT, wraplength=self.px(300))
         self.event_no_page_label.pack(side="left", padx=8)
         self._fill_event_links(row)
 
@@ -1264,7 +1267,7 @@ class App:
         self._session_sb = ttk.Scrollbar(sess, orient="vertical",
                                          command=self.session_tree.yview)
         self._session_sb_on = False
-        self.session_note = SelectableLabel(left, text="", foreground=L.GRAY,
+        self.session_note = SelectableLabel(left, text="", foreground=T.GRAY_TEXT,
                                             wraplength=self.px(300))
         self._session_note_on = False
         self._fill_sessions(row, sessions)
@@ -1478,7 +1481,7 @@ class App:
         box = self.summary_text
         text = clean_summary(row.summary)
         box.set_text(text or SOURCE_NO_INFO, derived=bool(text) and "summary" in borrowed)
-        box.configure(width=1, foreground=self._text_fg[box] if text else L.GRAY)   # width: the column
+        box.configure(width=1, foreground=self._text_fg[box] if text else T.GRAY_TEXT)   # width: the column
         box.yview_moveto(0)
         if row.borrowed_from:
             names = [FIELD_NAMES[k] for k in FIELD_NAMES if k in borrowed]
@@ -1503,7 +1506,7 @@ class App:
                 lbl.configure(foreground=self._text_fg[lbl])
             else:
                 lbl.set_text(SOURCE_NO_INFO)
-                lbl.configure(foreground=L.GRAY)
+                lbl.configure(foreground=T.GRAY_TEXT)
 
     def _detail_avail_px(self) -> int:
         """Width the detail content gets: the detail frame minus the (always reserved)

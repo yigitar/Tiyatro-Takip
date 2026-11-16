@@ -290,7 +290,7 @@ def test_reorder_keeps_styling_and_cell_values_with_their_headers(ui):
                 if t.body.type(i) == "text"][:len(t.order)]
         assert body[0] == texts["zaman"] or body[0].startswith(texts["zaman"][:3])
         # zebra background still drawn on odd rows
-        assert any(t.body.itemcget(i, "fill") == "#f7f8fa" for i in t.body.find_all()
+        assert any(t.body.itemcget(i, "fill") == __import__("pc.table", fromlist=["x"]).ZEBRA_BG for i in t.body.find_all()
                    if t.body.type(i) == "rectangle")
     finally:
         ui.root.withdraw()
