@@ -95,6 +95,12 @@ def _dt(value) -> datetime | None:
         return None
 
 
+def warning_of(rec) -> str | None:
+    """Short health warning stored by the scan ("Program haberi bulunamadı ..."), else None."""
+    w = rec.get("warning") if isinstance(rec, dict) else None
+    return w if isinstance(w, str) and w.strip() else None
+
+
 def status_of(rec, now: datetime) -> str:
     """"ok" | "stale" | "failed" | "unknown"."""
     if not isinstance(rec, dict):
@@ -104,8 +110,8 @@ def status_of(rec, now: datetime) -> str:
         return "unknown"
     if rec.get("ok") is False:
         return "failed"
-    if now - checked > STALE_AFTER:
-        return "stale"
+    if now - checked > STALE_AFTER or warning_of(rec):
+        return "stale"        # ⚠️: the check is late, or the source warns (see ``warning_of``)
     return "ok"
 
 
@@ -140,7 +146,8 @@ def describe(state: dict | None, now: datetime) -> list[dict]:
                     "last_check": time_text(rec.get("last_check_at"), now),
                     "last_change": time_text(rec.get("last_change_at"), now),
                     "items_count": count if isinstance(count, int) else None,
-                    "error": rec.get("error") if isinstance(rec.get("error"), str) else None})
+                    "error": rec.get("error") if isinstance(rec.get("error"), str) else None,
+                    "warning": warning_of(rec)})
     return out
 
 
@@ -152,4 +159,6 @@ def line(view: dict) -> str:
         parts.append(f"{view['items_count']} öğe")
     if view["status"] == "failed" and view.get("error"):
         parts.append(f"hata: {view['error']}")
+    if view.get("warning"):
+        parts.append(view["warning"])
     return " · ".join(parts)

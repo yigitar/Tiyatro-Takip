@@ -60,6 +60,7 @@ SRC_TEXT = {
     "SRC_SOON": "⏰ 10 dk sonra rezervasyon açılıyor",
     "SRC_OPENED": "🎟️ rezervasyon açıldı!",
     "SRC_REOPENED": "🎟️ rezervasyon yeniden açıldı!",
+    "SRC_PROGRAM_MISSING": "⚠️ program haberi bulunamadı",
 }
 PORTAL_NOTE_ITEMS = 5
 PORTAL_LABELS = {"basiskele": "Başiskele rezervasyon portalı"}

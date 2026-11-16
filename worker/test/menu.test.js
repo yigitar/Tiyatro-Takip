@@ -602,3 +602,15 @@ test("explanations do not push a long play screen over 4096 characters", () => {
   assert.ok(render(`p:${KB}`, cfg, s).text.length <= 4096);
   assert.ok(render(`p:${KB}`, cfg, s).text.includes("ℹ️ Aktif yap"));
 });
+
+test("sourceViews: a stored program warning turns a fresh check into a visible ⚠️ line", () => {
+  const w = "Program haberi bulunamadı (başlık değişmiş olabilir)";
+  const iso = new Date(Date.now() - 60e3).toISOString();
+  const st = srcState({ basiskele: { name: "Başiskele Belediyesi", ok: true, last_check_at: iso, last_ok_at: iso, last_change_at: iso, items_count: 0, error: null, warning: w } });
+  const v = sourceViews(st).find((x) => x.id === "basiskele");
+  assert.equal(v.icon, "⚠️");
+  assert.equal(v.warning, w);
+  assert.ok(render("src", cfg, st).text.includes("başlık değişmiş olabilir"));
+  st.sources.basiskele.warning = null;
+  assert.equal(sourceViews(st).find((x) => x.id === "basiskele").icon, "✅");
+});

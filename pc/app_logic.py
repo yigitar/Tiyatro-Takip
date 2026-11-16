@@ -145,6 +145,8 @@ def source_card(view: dict, now: datetime) -> SourceCard:
     lines = [f"Son kontrol: {stamp('last_check_at', view.get('last_check'), True)}",
              f"Son güncelleme: {stamp('last_change_at', view.get('last_change'), False)}",
              f"{count} etkinlik" if isinstance(count, int) else f"{BLANK} etkinlik"]
+    if view.get("warning"):
+        lines.append(f"⚠️ {view['warning']}")
     if view.get("portal_text"):
         text = view["portal_text"]
         lines.append(text[:1].upper() + text[1:])

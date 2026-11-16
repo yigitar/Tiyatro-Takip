@@ -256,6 +256,7 @@ class RssItem:
     title: str
     link: str
     published: datetime | None
+    desc: str = ""          # wave 17: plain text of the item description (hints for the fallback)
 
 
 def parse_rss(xml_text: str) -> list[RssItem]:
@@ -278,7 +279,8 @@ def parse_rss(xml_text: str) -> list[RssItem]:
                 pub = parsedate_to_datetime(raw.strip()).astimezone(ISTANBUL)
             except (TypeError, ValueError, IndexError):
                 pub = None
-        out.append(RssItem(title, urljoin(BASISKELE_BASE + "/", link), pub))
+        desc = _norm_space(re.sub(r"<[^>]+>", " ", htmllib.unescape(it.findtext("description") or "")))
+        out.append(RssItem(title, urljoin(BASISKELE_BASE + "/", link), pub, desc[:400]))
     return out
 
 
@@ -293,6 +295,41 @@ def is_program_title(title: str) -> bool:
 
 def program_items(items: list[RssItem]) -> list[RssItem]:
     return [i for i in items if is_program_title(i.title)]
+
+
+# Content-based fallback (wave 17): a program article whose title no longer matches the heuristic
+# is found by what it says. Only recent, not yet checked items whose title/description hint at
+# culture-art words are fetched (few per scan, remembered), and an article counts only when the
+# event-sentence parser finds at least one dated and timed event in it.
+FALLBACK_DAYS = 45
+FALLBACK_MAX_FETCH = 3
+CHECKED_MAX = 60
+CULTURE_HINTS = ("tiyatro", "oyun", "konser", "sahne", "gosteri", "cocuk", "sinema", "atolye",
+                 "soylesi", "sergi")
+PROGRAM_MISSING_TEXT = "Program haberi bulunamadı (başlık değişmiş olabilir)"
+PROGRAM_MISSING = "SRC_PROGRAM_MISSING"
+
+
+def has_culture_hint(*texts: str) -> bool:
+    low = fold(" ".join(t for t in texts if t))
+    return any(h in low for h in CULTURE_HINTS)
+
+
+def program_warning(now: datetime, listings: list, articles: dict) -> str | None:
+    """Health of the Başiskele program discovery: the warning text when nothing usable was
+    found (no events at all, nothing upcoming), or, from the 21st on, nothing dated in the
+    current month. ``None`` = healthy."""
+    local = now.astimezone(ISTANBUL)
+    starts = [l.start for l in listings if l.start is not None]
+    if not starts:
+        return PROGRAM_MISSING_TEXT
+    if not any(s >= now for s in starts):
+        return PROGRAM_MISSING_TEXT
+    if local.day >= 21 and not any(
+            (s.astimezone(ISTANBUL).year, s.astimezone(ISTANBUL).month) == (local.year, local.month)
+            for s in starts):
+        return PROGRAM_MISSING_TEXT
+    return None
 
 
 _LINE_RE = re.compile(rf"^(\d{{1,2}})\s+({_MONTH_RE})\s+({_DAY_RE})\s*[–—-]\s*(.+)$", re.I)
@@ -785,6 +822,9 @@ class SourceScan:
     error: str | None = None
     articles: dict = field(default_factory=dict)   # Başiskele: remembered program articles
     complete: bool = True                          # False: partial read (burst / detail only)
+    checked: dict = field(default_factory=dict)    # Başiskele: other RSS items already read (link -> {pub, ok})
+    warning: str | None = None                     # Başiskele: program discovery health (see program_warning)
+    extra_fetches: int = 0                         # Başiskele: content-fallback article fetches this scan
 
     def content(self) -> list:
         """Normalized parsed content (for the source's change time)."""
@@ -792,7 +832,8 @@ class SourceScan:
                       for l in self.listings)
 
 
-def scan_basiskele(fetch_fn, cache: dict | None, now: datetime) -> SourceScan:
+def scan_basiskele(fetch_fn, cache: dict | None, now: datetime,
+                   checked: dict | None = None) -> SourceScan:
     """Read the RSS feed, then every known monthly program article (newest
     ``MAX_ARTICLES``). ``cache`` = state["src_cache"]["basiskele"]["articles"]."""
     out = SourceScan(BASISKELE)
@@ -807,8 +848,34 @@ def scan_basiskele(fetch_fn, cache: dict | None, now: datetime) -> SourceScan:
     for link, rec in (cache or {}).items():
         if isinstance(rec, dict) and isinstance(link, str):
             known[link] = {"title": str(rec.get("title") or ""), "pub": rec.get("pub")}
+            if rec.get("via"):
+                known[link]["via"] = str(rec["via"])
     for it in program_items(items):
         known[it.link] = {"title": it.title, "pub": _iso(it.published)}
+    seen_other = {k: dict(v) for k, v in (checked or {}).items()
+                  if isinstance(k, str) and isinstance(v, dict)}
+    fb_horizon = now - timedelta(days=FALLBACK_DAYS)
+    pages: dict[str, str] = {}      # pages read by the fallback: not fetched a second time below
+    for it in sorted(items, key=lambda i: i.published or fb_horizon, reverse=True):
+        if out.extra_fetches >= FALLBACK_MAX_FETCH:
+            break
+        if (it.link in known or it.link in seen_other or it.published is None
+                or it.published < fb_horizon or is_program_title(it.title)
+                or not has_culture_hint(it.title, it.desc)):
+            continue
+        out.extra_fetches += 1
+        try:
+            page = fetch_fn(it.link).html
+            found, _o, _p = parse_article(page, it.link, it.published)
+        except Exception:
+            continue          # not remembered: tried again next scan (still capped)
+        seen_other[it.link] = {"pub": _iso(it.published), "ok": bool(found)}
+        if found:
+            pages[it.link] = page
+            known[it.link] = {"title": it.title, "pub": _iso(it.published), "via": "content"}
+    keep = sorted(seen_other, key=lambda k: seen_other[k].get("pub") or "", reverse=True)[:CHECKED_MAX]
+    out.checked = {k: seen_other[k] for k in keep
+                   if (_dt(seen_other[k].get("pub")) or now) >= fb_horizon}
     horizon = now - ARTICLE_TTL
     for link in [k for k, r in known.items()
                  if (_dt(r.get("pub")) or now) < horizon]:
@@ -818,7 +885,7 @@ def scan_basiskele(fetch_fn, cache: dict | None, now: datetime) -> SourceScan:
     failed = 0
     for link in newest:
         try:
-            page = fetch_fn(link).html
+            page = pages.get(link) or fetch_fn(link).html
             events, opens_at, pending = parse_article(page, link, _dt(known[link].get("pub")))
         except Exception:
             failed += 1
@@ -834,6 +901,8 @@ def scan_basiskele(fetch_fn, cache: dict | None, now: datetime) -> SourceScan:
     for ls in out.listings:  # one event may be in two articles: keep the first
         seen.setdefault(ls.id, ls)
     out.listings = list(seen.values())
+    if out.ok:
+        out.warning = program_warning(now, out.listings, out.articles)
     return out
 
 

@@ -516,10 +516,11 @@ def _start_sources(state: dict, fetch_fn: Callable | None, sleep: Callable,
                    now: datetime) -> _SourceFetch | None:
     if fetch_fn is None:
         return None
-    cache = copy.deepcopy(((state.get("src_cache") or {}).get("basiskele") or {})
-                          .get("articles") or {})
+    bk = (state.get("src_cache") or {}).get("basiskele") or {}
+    cache = copy.deepcopy(bk.get("articles") or {})
+    checked = copy.deepcopy(bk.get("checked") or {})
     return _SourceFetch({
-        srcevents.BASISKELE: lambda: srcevents.scan_basiskele(fetch_fn, cache, now),
+        srcevents.BASISKELE: lambda: srcevents.scan_basiskele(fetch_fn, cache, now, checked),
         srcevents.VKV: lambda: srcevents.scan_vkv(fetch_fn, now, sleep),
     })
 
@@ -546,7 +547,18 @@ def _apply_sources(state: dict, config: Config, results: dict, now: datetime,
             else:  # burst re-read of a few detail pages: proves reachability only
                 record_check(state, sid, now, True)
             if sid == srcevents.BASISKELE:
-                state.setdefault("src_cache", {}).setdefault(sid, {})["articles"] = scan.articles
+                cache = state.setdefault("src_cache", {}).setdefault(sid, {})
+                cache["articles"] = scan.articles
+                cache["checked"] = scan.checked
+                state["sources"][sid]["warning"] = scan.warning
+                if scan.warning:      # one notice per month (dedupe key), never a silent check mark
+                    month = now.astimezone(ISTANBUL).strftime("%Y-%m")
+                    ev = _emit(state, srcevents.PROGRAM_MISSING,
+                               f"{srcevents.PROGRAM_MISSING}:{sid}:{month}",
+                               {"source": sid, "title": "", "detail": scan.warning,
+                                "url": srcevents.BASISKELE_BASE}, now)
+                    if ev:
+                        events.append(ev)
         except Exception:
             continue
     return events

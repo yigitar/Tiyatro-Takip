@@ -155,7 +155,9 @@ def test_scan_reads_rss_then_the_program_article():
     web = Web()
     scan = S.scan_basiskele(web.fetch, None, NOV3)
     assert scan.ok and scan.error is None
-    assert web.calls == [S.BASISKELE_RSS, ARTICLE_URL]
+    # wave 17: RSS, the title-matched article, plus at most FALLBACK_MAX_FETCH content-fallback reads
+    assert web.calls[0] == S.BASISKELE_RSS and ARTICLE_URL in web.calls
+    assert len(web.calls) <= 2 + S.FALLBACK_MAX_FETCH and scan.extra_fetches <= S.FALLBACK_MAX_FETCH
     assert len(scan.listings) == 13 and ARTICLE_URL in scan.articles
     assert all(l.detail_ok for l in scan.listings)
 
@@ -188,7 +190,8 @@ def test_scan_failures_are_short_and_secret_free():
 def test_feed_without_a_program_article_is_ok_and_empty():
     web = Web(rss=RSS.replace("Kasım Ayında da Dolu Dolu Kültür-Sanat", "Başka Haber"))
     scan = S.scan_basiskele(web.fetch, None, NOV3)
-    assert scan.ok and scan.listings == [] and web.calls == [S.BASISKELE_RSS]
+    assert scan.ok and scan.listings == [] and web.calls[0] == S.BASISKELE_RSS
+    assert len(web.calls) <= 1 + S.FALLBACK_MAX_FETCH
 
 
 # ---- folding: announcements, reminders, follow ------------------------------------------
@@ -421,7 +424,7 @@ def test_pc_service_logs_source_checks_and_notifies(monkeypatch, tmp_path):
     web.fail = {S.BASISKELE_RSS}
     tick_at(e, PNOW + timedelta(minutes=5))
     warn = [x for x in reversed(e.svc.activity.load())
-            if x["cat"] == "Hata/Uyarı" and "Başiskele" in x["title"]]
+            if x["cat"] == "Hata/Uyarı" and "Başiskele Belediyesi okunamadı" in x["title"]]
     assert warn and warn[0]["level"] == "warn"
     assert e.svc.sources()[1]["status"] == "failed"
     ev = Event("SRC_NEW", "k", "", None, [], {"source": "basiskele", "title": "X"})

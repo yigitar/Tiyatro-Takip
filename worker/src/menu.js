@@ -375,6 +375,8 @@ const STALE_MS = 30 * 60 * 1000;
 const SOURCE_LEGEND = "✅ güncel · ⚠️ 30 dakikadan eski (kontrol gecikti) · ❌ son kontrol başarısız\n"
   + "Son kontrol = kaynağa en son bakılma zamanı; Son güncelleme = kaynağın kendi içeriğinin en son değişme zamanı.";
 
+const warningOf = (rec) => (typeof rec.warning === "string" && rec.warning.trim() ? rec.warning : null);
+
 /** Per-source health from state.sources (tiyatro/sources.py); sources without a record are skipped. */
 export function sourceViews(state, now = Date.now()) {
   const recs = isObj(state) && isObj(state.sources) ? state.sources : {};
@@ -384,7 +386,7 @@ export function sourceViews(state, now = Date.now()) {
     const rec = recs[id];
     const checked = Date.parse(rec.last_check_at);
     const status = !Number.isFinite(checked) ? "unknown"
-      : rec.ok === false ? "failed" : now - checked > STALE_MS ? "stale" : "ok";
+      : rec.ok === false ? "failed" : (now - checked > STALE_MS || warningOf(rec)) ? "stale" : "ok";
     const icon = { ok: "✅", stale: "⚠️", failed: "❌", unknown: "⚪" }[status];
     return {
       id, status, icon, name: String(rec.name || SOURCE_NAMES[id] || id),
@@ -392,6 +394,7 @@ export function sourceViews(state, now = Date.now()) {
       lastChange: rec.last_change_at ? fmtShort(rec.last_change_at) : "—",
       count: Number.isInteger(rec.items_count) ? rec.items_count : null,
       error: typeof rec.error === "string" && rec.error ? rec.error : null,
+      warning: warningOf(rec),
     };
   });
 }
@@ -404,6 +407,7 @@ function sourceLines(state, now) {
     if (v.count !== null) parts.push(`${v.count} öğe`);
     out.push(parts.join(" · "));
     if (v.status === "failed" && v.error) out.push(`Hata: ${esc(trunc(v.error, 80))}`);
+    if (v.warning) out.push(esc(trunc(v.warning, 120)));
   }
   return out;
 }
