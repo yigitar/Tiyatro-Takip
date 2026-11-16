@@ -393,12 +393,12 @@ class App:
         self.scale = max(1.0, float(root.winfo_fpixels("1i")) / 96.0)
         self.seen = L.SeenStore.load(self.local_dir / "ui.json")  # items the user has opened
         root.title(APP_TITLE)
-        winsetup.apply_window_icon(root)
         geom = L.sanitize_geometry(ui["geometry"], root.winfo_screenwidth(),
                                    root.winfo_screenheight())
         root.geometry(geom or L.default_geometry(root.winfo_screenwidth(),
                                                  root.winfo_screenheight()))
         root.minsize(*L.MIN_WINDOW)
+        winsetup.apply_window_icon(root)   # after geometry: realising the window earlier resets it to 200x200
         root.report_callback_exception = self._ui_exception
         self._build()
         root.protocol("WM_DELETE_WINDOW", self.close)

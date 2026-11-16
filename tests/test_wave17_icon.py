@@ -149,9 +149,8 @@ def test_apply_window_icon_uses_fallback_when_local_missing(monkeypatch, tmp_pat
     monkeypatch.setattr(winsetup, "icon_files", lambda assets=None: (winsetup.ICON_ICO, winsetup.ICON_PNG))
     if winsetup.os.name == "nt":
         assert winsetup.apply_window_icon(Root()) == "ico"
-        (a1, k1), (a2, k2) = seen["calls"]          # this window (WM_SETICON) AND the default for Toplevels
-        assert Path(a1[0]) == winsetup.ICON_ICO and not k1
-        assert Path(k2["default"]) == winsetup.ICON_ICO
+        (a1, k1), = seen["calls"]       # the class icon for every Toplevel; never iconbitmap(path) (see below)
+        assert not a1 and Path(k1["default"]) == winsetup.ICON_ICO
     assert winsetup.ICON_ICO.is_file() and winsetup.ICON_PNG.is_file()      # committed fallback exists
 
 
@@ -178,5 +177,19 @@ def test_real_root_window_gets_per_window_icon_handles(tk_root):
         send.restype = ctypes.c_void_p
         send.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]
         assert send(hwnd, 0x7F, 0, 0) and send(hwnd, 0x7F, 1, 0)      # WM_GETICON small / big
+    finally:
+        top.destroy()
+
+
+def test_icon_does_not_reset_the_geometry_of_a_withdrawn_root(tk_root):
+    """``iconbitmap(path)`` on a withdrawn root turns its geometry into 200x200 (found in wave 17);
+    the icon is applied after the geometry and must leave it alone."""
+    top = __import__("tkinter").Toplevel(tk_root)
+    top.withdraw()
+    try:
+        top.geometry("900x600+20+20")
+        assert winsetup.apply_window_icon(top) in ("ico", "png")
+        top.update_idletasks()
+        assert top.geometry() == "900x600+20+20"
     finally:
         top.destroy()

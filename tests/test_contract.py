@@ -158,12 +158,12 @@ def test_worker_play_screen_shows_summary_and_cast_from_python_state():  # wave 
     res = node({"config": raw_cfg, "state": state, "applies": [],
                 "renders": [f"p:{{h:{gece.slug}}}", f"p:{{h:{hic.slug}}}"]})
     text = res["rendered"][0]["text"]
-    assert "📝 Rüzgâr uğuldar, deniz yırtılır Gece ikiye" in text
+    assert "📝 Özet: Rüzgâr uğuldar, deniz yırtılır Gece ikiye" in text
     assert "Oyuncular: İbrahim Aydın, İlker Bağlam, Sarper Saydam, Senem Akman Muratoğlu, " \
            "Sevcan Kuş Efe, Su Özdemir (+5)" in text
     assert len(text) <= 4096
     hic_text = res["rendered"][1]["text"]
-    assert "📝 Bir tren kompartımanında" in hic_text and "Oyuncular:" not in hic_text
+    assert "📝 Özet: Bir tren kompartımanında" in hic_text and "Oyuncular: Kaynakta bilgi yok" in hic_text
 
 
 # ---- wave 3c: portals ------------------------------------------------------------------

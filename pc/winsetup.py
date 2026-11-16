@@ -174,6 +174,32 @@ def set_app_user_model_id(app_id: str = APP_USER_MODEL_ID, api=None) -> bool:
         return False
 
 
+def set_window_icons(root, ico: Path, user32=None) -> bool:
+    """WM_SETICON (big + small, exact system sizes) for a Tk window, from the .ico file, so
+    ``WM_GETICON`` / the taskbar button get a per-window icon and not only the class icon.
+    Never raises; False when unavailable."""
+    try:
+        if user32 is None:
+            import ctypes
+            user32 = ctypes.windll.user32
+            user32.LoadImageW.restype = ctypes.c_void_p
+            user32.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t,
+                                            ctypes.c_ssize_t]
+            user32.GetParent.restype = ctypes.c_void_p
+        root.update_idletasks()                    # the Win32 wrapper window exists after this
+        hwnd = user32.GetParent(root.winfo_id()) or root.winfo_id()
+        done = False
+        for kind, metric in ((1, 11), (0, 49)):    # ICON_BIG/SM_CXICON, ICON_SMALL/SM_CXSMICON
+            size = user32.GetSystemMetrics(metric)
+            handle = user32.LoadImageW(None, str(ico), 1, size, size, 0x10)   # IMAGE_ICON, LR_LOADFROMFILE
+            if handle:
+                user32.SendMessageW(hwnd, 0x80, kind, handle)                 # WM_SETICON
+                done = True
+        return done
+    except Exception:
+        return False
+
+
 def apply_window_icon(root, ico: Path | None = None, png: Path | None = None) -> str:
     """Window / taskbar icon of a Tk root: the multi-size .ico on Windows (iconbitmap), else /
     as a fallback the PNG (wm_iconphoto). Missing file or Tk error: no icon, no exception.
@@ -183,8 +209,9 @@ def apply_window_icon(root, ico: Path | None = None, png: Path | None = None) ->
         ico, png = ico or d_ico, png or d_png
     try:
         if os.name == "nt" and ico.is_file():
-            root.iconbitmap(str(ico))              # this window (WM_SETICON big + small)
-            root.iconbitmap(default=str(ico))      # every later Toplevel (Popup, editors, dialogs)
+            # NOT ``root.iconbitmap(path)``: on a withdrawn root it resets the window to 200x200
+            root.iconbitmap(default=str(ico))      # class icon: every Toplevel (Popup, editors, dialogs)
+            set_window_icons(root, ico)            # this window: WM_SETICON big + small
             return "ico"
     except Exception:
         pass

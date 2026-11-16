@@ -325,10 +325,11 @@ def test_event_provenance_per_source():
 
 def test_meta_parts_flag_derived_segments():
     parts = L.meta_parts(row_of(play({"a": sess(5, 20)})))
-    assert [(c.text, c.derived) for c in parts[:2]] == [("Kitle: Yetişkin", True),
+    assert [(c.text, c.derived) for c in parts[:3]] == [("Kaynak: Biletinial", False),
+                                                        ("Kitle: Yetişkin", True),
                                                         ("Tür: Komedi", False)]
     assert L.meta_line(row_of(play({"a": sess(5, 20)}))).startswith(
-        "Kitle: Yetişkin  ·  Tür: Komedi")
+        "Kaynak: Biletinial  ·  Kitle: Yetişkin  ·  Tür: Komedi")
     assert L.meta_parts(event_row(_view(), NOW))[0].text.startswith("Kaynak: VKV")
 
 

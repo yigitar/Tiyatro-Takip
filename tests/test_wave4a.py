@@ -44,8 +44,9 @@ def test_row_has_separate_kitle_and_tur():
 
 def test_meta_line_shows_both():
     assert L.meta_line(Row("p", "T", audience="Çocuk", genre="Komedi", duration="90 dk",
-                           age="7+")) == "Kitle: Çocuk  ·  Tür: Komedi  ·  Süre: 90 dk  ·  Yaş: 7+"
-    assert "Kitle: Bilgi yok  ·  Tür: Bilgi yok" == L.meta_line(Row("p", "T"))
+                           age="7+")) == ("Kaynak: Biletinial  ·  Kitle: Çocuk  ·  Tür: Komedi  ·  Süre: 90 dk"
+                                         "  ·  Yaş: 7+")
+    assert "Kaynak: Biletinial  ·  Kitle: Bilgi yok  ·  Tür: Bilgi yok" == L.meta_line(Row("p", "T"))
 
 
 def test_kitle_sortable_missing_last():
