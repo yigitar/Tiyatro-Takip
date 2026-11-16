@@ -167,7 +167,11 @@ def test_detail_dialog_shows_the_full_text(ui):
     text = dlg.body.get("1.0", "end")
     assert "6 oyun, 17 seans" in text and "PC (otomatik) · Normal mod" in text
     assert "Liste kontrolü" in text and "Bilgi" in text
-    assert str(dlg.body.cget("state")) == "disabled"
+    before = dlg.body.get("1.0", "end-1c")        # read-only (wave 17: selectable, not disabled)
+    dlg.body.focus_force()
+    dlg.body.event_generate("<Key>", keysym="x")
+    dlg.update()
+    assert dlg.body.get("1.0", "end-1c") == before
     dlg.destroy()
     tab.tree.selection_remove(iid)
     assert tab.open_detail() is None  # nothing selected

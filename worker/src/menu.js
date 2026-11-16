@@ -15,7 +15,7 @@
 // Only set routes write config.json; browsing (m, pl, p, e, tl, ...) never does. Newly found plays/events
 // are announced by the scanner ("🆕 Yeni oyun bulundu" Telegram notice), not marked in these lists.
 
-import { audienceOf, genreLabel, playFields, eventFields } from "./derive.js";
+import { audienceOf, genreLabel, playFields, playInfoFields, eventFields } from "./derive.js";
 
 export { audienceOf, genreLabel };
 
@@ -523,7 +523,7 @@ export function listItems(config, state, now = Date.now()) {
     items.push({
       kind: "play", id: slug, title: playTitle(state, slug), source: SOURCE_SHORT.biletinial,
       followed, watched, removed: Boolean(entry.removed), url: entry.url,
-      ...playFields(entry, watch, now),
+      ...playFields(entry, watch, now), ...playInfoFields(entry),
     });
   }
   for (const { id, rec, followed } of eventViews(config, state, now)) {
@@ -596,27 +596,42 @@ const NO_SOURCE_INFO = "Kaynakta bilgi yok";
 const EVENT_SUMMARY_CHARS = 600;
 const CREDITS_CHARS = 300;
 
+const FIELD_NAMES = { summary: "Özet", cast: "Oyuncular", credits: "Yapım", duration: "Süre", age: "Yaş", genre: "Tür" };
+const italic = (text, on) => (on ? `<i>${text}</i>` : text);
+
 /**
- * Süre/Yaş/Ücret (only when stated), Özet, Oyuncular, Yapım of a source event, as the page states them
- * (normal text, nothing derived); a section the source did not provide says "Kaynakta bilgi yok".
+ * ONE detail template for plays (p:) and events (e:), same order and labels as the PC pane:
+ * Kaynak, [Etiketler | Etkinlik], Mekan, "Kitle · Tür · Zaman [· Süre · Yaş · Ücret]",
+ * "Hedef · Rez. açılış", then Özet / Oyuncular / Yapım (a missing part says "Kaynakta bilgi yok"),
+ * and a provenance line when parts were taken from the same-named Biletinial play (italic).
+ * `head` = the kind-specific lines after Kaynak.
  */
-function eventInfoLines(it) {
-  const lines = [];
-  const stated = [it.sure && `Süre: ${esc(it.sure)}`, it.yas && `Yaş: ${esc(it.yas)}`,
-    it.ucret && `Ücret: ${esc(it.ucret)}`].filter(Boolean);
-  if (stated.length) lines.push(stated.join(" · "));
+function detailLines(it, head) {
+  const lines = [`Kaynak: ${esc(it.source)}`, ...head];
+  const venue = it.venue ? esc(trunc(it.venue, 80)) : "Bilgi yok";
+  lines.push(`Mekan: ${it.venue && !it.venueDerived ? venue : `<i>${venue}</i>`}`);
+  const stated = [["Süre", it.sure, "duration"], ["Yaş", it.yas, "age"], ["Ücret", it.ucret, ""]]
+    .filter(([, v]) => v).map(([k, v, f]) => `${k}: ${italic(esc(v), f && it.borrowed.includes(f))}`);
+  lines.push([`Kitle: ${fieldText(it, "audience", it.kitle)}`, `Tür: ${fieldText(it, "genre", it.tur)}`,
+    `Zaman: ${fieldText(it, "zaman", it.zaman)}`, ...stated].join(" · "));
+  lines.push(`Hedef: ${fieldText(it, "target", it.hedef)} · Rez. açılış: ${fieldText(it, "rez", it.rez)}`);
   const ozet = trunc(it.ozet.replace(/\s+/g, " ").trim(), EVENT_SUMMARY_CHARS);
-  lines.push(`📝 Özet: ${ozet ? esc(ozet) : NO_SOURCE_INFO}`);
-  lines.push(castLine(it.oyuncular) || `Oyuncular: ${NO_SOURCE_INFO}`);
+  lines.push(`📝 Özet: ${ozet ? italic(esc(ozet), it.borrowed.includes("summary")) : NO_SOURCE_INFO}`);
+  const cast = castLine(it.oyuncular, it.borrowed.includes("cast"));
+  lines.push(cast || `Oyuncular: ${NO_SOURCE_INFO}`);
   const shown = [];
   let used = 0;
   for (const [k, v] of it.yapim) {            // whole entries only: never cut inside an escaped entity
     const raw = `${trunc(k, 30)}: ${trunc(v, 60)}`;
     if (used + raw.length > CREDITS_CHARS) break;
     used += raw.length;
-    shown.push(esc(raw));
+    shown.push(italic(esc(raw), it.borrowedCredits.includes(k)));
   }
   lines.push(`Yapım: ${shown.length ? shown.join(" · ") : NO_SOURCE_INFO}`);
+  if (it.borrowedFrom) {
+    const names = Object.keys(FIELD_NAMES).filter((k) => it.borrowed.includes(k)).map((k) => FIELD_NAMES[k]);
+    lines.push(`<i>ℹ️ Biletinial kaydından (aynı ad): ${esc(names.join(", "))} — “${esc(trunc(it.borrowedFrom, 60))}”</i>`);
+  }
   return lines;
 }
 
@@ -627,11 +642,8 @@ function eventScreen(config, state, id, now, pageArg) {
   const it = listItems(config, state, now).find((x) => x.kind === "event" && x.id === id);
   if (!it) return notFound("Etkinlik", btn("‹ Liste", `pl:${lp}`));
   const rec = sourceEvents(state)[id];
-  const lines = [`📅 <b>${esc(trunc(it.title, 100))}</b>`, ...help(...HELP.event), LEGEND, `Kaynak: ${esc(it.source)}`];
-  if (rec.start) lines.push(`Etkinlik: ${esc(fmt(rec.start))}`);
-  if (it.venue) lines.push(`Mekan: ${esc(trunc(it.venue, 80))}`);
-  lines.push(...fieldLines(it));
-  lines.push(...eventInfoLines(it));
+  const lines = [`📅 <b>${esc(trunc(it.title, 100))}</b>`, ...help(...HELP.event), LEGEND,
+    ...detailLines(it, rec.start ? [`Etkinlik: ${esc(fmt(rec.start))}`] : [])];
   lines.push(`Takip: ${it.followed ? "☑ takipte" : "☐ takipte değil (yeni etkinlikler varsayılan olarak takipte değildir)"}`);
   const flag = it.followed ? 0 : 1;
   return {
@@ -684,20 +696,14 @@ function sessionLine(rec) {
   return `${icon} ${esc(fmt(rec.start))} — ${esc(label)}`;
 }
 
-const SUMMARY_CHARS = 250;
 const CAST_SHOWN = 6;
 
-function shortSummary(raw) {
-  if (typeof raw !== "string") return "";
-  return trunc(raw.replace(/\s+/g, " ").trim(), SUMMARY_CHARS);
-}
-
-function castLine(raw) {
+function castLine(raw, derived = false) {
   const names = (Array.isArray(raw) ? raw : []).filter((n) => typeof n === "string" && n.trim());
   if (names.length === 0) return "";
   const shown = names.slice(0, CAST_SHOWN).map((n) => esc(trunc(n.trim(), 40))).join(", ");
   const more = names.length > CAST_SHOWN ? ` (+${names.length - CAST_SHOWN})` : "";
-  return `Oyuncular: ${shown}${more}`;
+  return `Oyuncular: ${italic(`${shown}${more}`, derived)}`;
 }
 
 const chunk = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, k) => arr.slice(k * n, k * n + n));
@@ -708,19 +714,9 @@ function playScreen(config, state, slug, idx, now, spArg, lpArg) {
   const watch = cfgPlays(config)[slug];
   const active = watch?.active === true;
   const lp = /^\d+$/.test(lpArg ?? "") ? Number(lpArg) : 0;
-  const f = playFields(entry, watch, now);
-  const lines = [`🎭 <b>${esc(playTitle(state, slug))}</b>`, ...help(...HELP.play), LEGEND, `Kaynak: ${SOURCE_SHORT.biletinial}`];
-  if (Array.isArray(entry.tags) && entry.tags.length) lines.push(`🏷 Etiketler: ${esc(entry.tags.join(", "))}`);
-  const meta = [`Kitle: ${fieldText(f, "audience", f.kitle)}`, `Tür: ${fieldText(f, "genre", f.tur)}`,
-    `Zaman: ${fieldText(f, "zaman", f.zaman)}`];
-  if (entry.duration_min) meta.push(`Süre: ${esc(entry.duration_min)} dk`);
-  if (entry.age_limit != null) meta.push(`Yaş: ${esc(entry.age_limit)}+`);
-  lines.push(meta.join(" · "));
-  lines.push(`Hedef: ${fieldText(f, "target", f.hedef)} · Rez. açılış: ${fieldText(f, "rez", f.rez)}`);
-  const summary = shortSummary(entry.summary);
-  if (summary) lines.push(`📝 ${esc(summary)}`);
-  const cast = castLine(entry.cast);
-  if (cast) lines.push(cast);
+  const it = { ...playFields(entry, watch, now), ...playInfoFields(entry), source: SOURCE_SHORT.biletinial };
+  const tags = Array.isArray(entry.tags) && entry.tags.length ? [`🏷 Etiketler: ${esc(entry.tags.join(", "))}`] : [];
+  const lines = [`🎭 <b>${esc(playTitle(state, slug))}</b>`, ...help(...HELP.play), LEGEND, ...detailLines(it, tags)];
   lines.push(`Takip: ${active ? "🟢 aktif" : "⚪ pasif (yeni oyunlar varsayılan olarak takipte değildir)"}`);
 
   const sessions = sessionList(state, slug).filter(([, rec]) => Date.parse(rec.start) >= now);

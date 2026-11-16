@@ -14,7 +14,7 @@ from tkinter import ttk
 
 from pc import activity as A
 from pc.viewmodel import APP_TITLE
-from pc.widgets import AutoScrollbar
+from pc.widgets import AutoScrollbar, SelectableText
 from tiyatro.models import ISTANBUL
 
 LEVEL_CHOICES = {"Hepsi": "all", "Uyarı ve hata": "warn"}
@@ -47,12 +47,11 @@ class DetailDialog(tk.Toplevel):
             lines += ["", entry["detail"]]
         box = ttk.Frame(self)
         box.pack(fill="both", expand=True, padx=10, pady=(10, 4))
-        self.body = tk.Text(box, width=70, height=12, wrap="word", font="TkDefaultFont",
-                            borderwidth=1, relief="solid")
+        self.body = SelectableText(box, width=70, height=12, box=True, autosize=False)
         sb = AutoScrollbar(box, orient="vertical", command=self.body.yview)
         self.body.configure(yscrollcommand=sb.set)
-        self.body.insert("1.0", "\n".join(lines))
-        self.body.configure(state="disabled")
+        self.body.set_text("\n".join(lines))
+        self.body.scrolls = lambda: bool(sb.winfo_ismapped())
         self.body.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
         ttk.Button(self, text="Kapat", command=self.destroy).pack(anchor="e", padx=10, pady=8)
@@ -119,6 +118,12 @@ class ActivityTab(ttk.Frame):
         self.tree.tag_configure("error", background=ERROR_BG, foreground=ERROR_FG)
         self.tree.bind("<Double-1>", self._double_click)
         self.tree.bind("<Return>", lambda _e: self.open_detail())
+        self.tree.bind("<Control-c>", lambda _e: self.copy_selected())
+        self.tree.bind("<Control-Insert>", lambda _e: self.copy_selected())
+        self.tree.bind("<Button-3>", self._row_menu)
+        self.row_menu = tk.Menu(self.tree, tearoff=0)
+        self.row_menu.add_command(label="Kopyala", command=self.copy_selected)
+        self.row_menu.add_command(label="Ayrıntı", command=self.open_detail)
         self.refresh()
 
     # ---- filter state ----------------------------------------------------------------
@@ -209,6 +214,29 @@ class ActivityTab(ttk.Frame):
         if iid:
             self.tree.selection_set(iid)
             self.open_detail()
+
+    def row_text(self, iid: str) -> str:
+        """The row as the user sees it (tab separated: Zaman, Kategori, Özet, Sonuç)."""
+        return "\t".join(str(v) for v in self.tree.item(iid, "values"))
+
+    def copy_selected(self) -> str:
+        """Selected rows (one per line) to the clipboard."""
+        text = "\n".join(self.row_text(i) for i in self.tree.selection())
+        if text:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+        return "break"
+
+    def _row_menu(self, event) -> str:
+        iid = self.tree.identify_row(event.y)
+        if iid:
+            if iid not in self.tree.selection():
+                self.tree.selection_set(iid)
+            try:
+                self.row_menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                self.row_menu.grab_release()
+        return "break"
 
     def open_detail(self) -> DetailDialog | None:
         sel = self.tree.selection()

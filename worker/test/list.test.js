@@ -406,3 +406,49 @@ test("a huge summary and cast cannot push the event screen over the Telegram lim
   assert.ok(bytes(r.text) < 4096, bytes(r.text));
   assert.ok(r.text.includes("…") && r.text.includes("(+194)"));
 });
+
+// Wave 17: ONE template for the play (p:) and event (e:) screens.
+function sectionLabels(text) {
+  return text.split("\n").map((l) => /^(?:📝 )?(Kaynak|Etiketler|Etkinlik|Mekan|Kitle|Hedef|Özet|Oyuncular|Yapım|Takip|Seanslar|Hedefler)\b/.exec(l.replace(/<[^>]+>/g, "").replace(/^🏷 /, ""))?.[1])
+    .filter(Boolean);
+}
+
+test("wave 17: p: and e: screens use the same sections in the same order and the same placeholders", () => {
+  const s = evState();
+  s.plays["kusursuz-bir-aile"].tags = [];
+  const play = render(`p:${KB}`, makeConfig(), s, NOW).text;
+  const ev = render(`e:${h("bk:evlilik")}`, makeConfig(), s, NOW).text;
+  const common = ["Kaynak", "Mekan", "Kitle", "Hedef", "Özet", "Oyuncular", "Yapım", "Takip"];
+  const pick = (labels) => labels.slice(labels.indexOf("Kaynak")).filter((l) => common.includes(l));
+  assert.deepEqual(pick(sectionLabels(play)), common.slice(0, 5).concat(["Oyuncular", "Yapım", "Takip"]));
+  assert.deepEqual(pick(sectionLabels(play)), pick(sectionLabels(ev)));
+  for (const t of [play, ev]) {
+    assert.ok(t.includes("Mekan: <i>Bilgi yok</i>"), t);
+    assert.ok(/Kitle: .* · Tür: .* · Zaman: /.test(t) && /Hedef: .* · Rez\. açılış: /.test(t));
+  }
+  // the event has no stated Özet / cast / credits: the same grey placeholder text as a play without them
+  const bare = render(`p:${h("yeni-oyun")}`, makeConfig(), s, NOW).text;
+  for (const line of ["📝 Özet: Kaynakta bilgi yok", "Oyuncular: Kaynakta bilgi yok", "Yapım: Kaynakta bilgi yok"]) {
+    assert.ok(ev.includes(line) && bare.includes(line), line);
+  }
+  // a play shows its stated Süre / Yaş / Ücret in the same meta line as an event does
+  assert.ok(/Zaman: [^\n]* · Süre: 90 dk · Yaş: 7\+ · Ücret: 150 TL/.test(render(`p:${h("kucuk-prens")}`, makeConfig(), s, NOW).text)
+    || /Süre: /.test(play));
+});
+
+test("wave 17: a borrowed Özet / cast / credits are italic with one provenance line (p: and e:)", () => {
+  const s = evState();
+  s.plays["unutmak-kocaeli-bb"] = { title: "Unutmak", genre: "Dram", age_limit: 16, duration_min: 95, summary: "Bir kayıp.",
+    cast: ["Ali"], credits: { Yazan: "A B" }, sessions: {} };
+  s.source_events["bk:unutmak"] = { id: "bk:unutmak", source: "basiskele", title: "UNUTMAK", kind: "Tiyatro Oyunu", start: iso(4, 20),
+    venue: "Türkiye Yüzyılı Gençlik Merkezi", venue_derived: true, follow_default: false, info: { credits: { Sahneleyen: "Kocaeli Şehir Tiyatroları" } } };
+  const t = render(`e:${h("bk:unutmak")}`, makeConfig(), s, NOW).text;
+  assert.ok(t.includes("📝 Özet: <i>Bir kayıp.</i>") && t.includes("Oyuncular: <i>Ali</i>"));
+  assert.ok(t.includes("Yapım: Sahneleyen: Kocaeli Şehir Tiyatroları · <i>Yazan: A B</i>"), t);
+  assert.ok(t.includes("Mekan: <i>Türkiye Yüzyılı Gençlik Merkezi</i>"));
+  assert.ok(t.includes("<i>ℹ️ Biletinial kaydından (aynı ad): Özet, Oyuncular, Yapım, Süre, Yaş, Tür — “Unutmak”</i>"), t);
+  assert.ok(t.includes("Süre: <i>95 dk</i> · Yaş: <i>16+</i>"));
+  const play = render(`p:${h("unutmak-kocaeli-bb")}`, makeConfig(), s, NOW).text;
+  assert.ok(!play.includes("ℹ️ Biletinial kaydından") && play.includes("📝 Özet: Bir kayıp."));
+  assert.ok(bytes(t) < 4096);
+});

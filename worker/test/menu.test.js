@@ -360,7 +360,7 @@ test("play screen shows a short summary and the first 6 cast names (+N)", () => 
   assert.ok(t.includes("Bir &lt;konu&gt; &amp; özet. İkinci paragraf"));
   assert.ok(!t.includes("<konu>"));
   const line = t.split("\n").find((l) => l.startsWith("📝"));
-  assert.ok(line.length <= 280 && line.endsWith("…"), line.length);
+  assert.ok(line.startsWith("📝 Özet: ") && line.length <= 620, line.length);
   assert.ok(t.includes("Oyuncular: Ali &lt;A&gt;, Ece, Can, Deniz, Efe, Fulya (+2)"));
   assert.ok(t.indexOf("Oyuncular:") < t.indexOf("Seanslar"));
 });
@@ -371,16 +371,17 @@ test("wave 12: the play-screen summary is one clean line (CR, nbsp, blank-line r
     "\r\n\r\n  Ilk satir  \r\n \r\n \r\n\r\n\r\nIkinci satir\r\n\n\n  ";
   const t = render(`p:${KB}`, cfg, s).text;
   const line = t.split("\n").find((l) => l.startsWith("📝"));
-  assert.equal(line, "📝 Ilk satir Ikinci satir");
+  assert.equal(line, "📝 Özet: Ilk satir Ikinci satir");
   assert.ok(!/\n\n\n/.test(t) && !t.includes("\r") && !t.includes(" "));
 });
 
-test("play screen without summary/cast (or malformed ones) shows neither line", () => {
+test("play screen without summary/cast (or malformed ones) says Kaynakta bilgi yok, like the event screen", () => {
   for (const bad of [{}, { summary: null, cast: [] }, { summary: 5, cast: "x" }, { summary: "  ", cast: [null, 3] }]) {
     const s = makeState();
     Object.assign(s.plays["kusursuz-bir-aile"], bad);
     const t = render(`p:${KB}`, cfg, s).text;
-    assert.ok(!t.includes("Oyuncular:") && !t.includes("📝"), JSON.stringify(bad));
+    assert.ok(t.includes("📝 Özet: Kaynakta bilgi yok") && t.includes("Oyuncular: Kaynakta bilgi yok")
+      && t.includes("Yapım: Kaynakta bilgi yok"), JSON.stringify(bad));
   }
 });
 

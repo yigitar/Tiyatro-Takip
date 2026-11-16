@@ -123,7 +123,8 @@ class SelectableText(tk.Text):
 
     def __init__(self, master, *, text: str = "", wraplength: int = 0, font="TkDefaultFont",
                  foreground=None, background=None, box: bool = False, italic_font=None,
-                 derived_color: str | None = None, wrap: str = "word", **kw):
+                 derived_color: str | None = None, wrap: str = "word",
+                 autosize: bool = True, **kw):
         opts = dict(wrap=wrap, font=font, cursor="xterm", insertwidth=0, takefocus=0,
                     exportselection=False, undo=False, height=1, width=1)
         if box:
@@ -148,6 +149,7 @@ class SelectableText(tk.Text):
             self.tag_configure("derived", font=italic_font,
                                **({"foreground": derived_color} if derived_color else {}))
         self._plain = ""
+        self._autosize = autosize        # False: the caller sets width / height (scrolling dialogs)
         self._wrap_px = int(wraplength or 0)
         self._menu: tk.Menu | None = None
         self.scrolls = lambda: False     # the pane scrolls on the wheel unless this says otherwise
@@ -182,6 +184,8 @@ class SelectableText(tk.Text):
 
     # ---- sizing ------------------------------------------------------------------------
     def _fit(self) -> None:
+        if not self._autosize:
+            return
         text = self._plain
         zero = max(1, self._font.measure("0"))
         rows = text.split(chr(10))

@@ -307,6 +307,23 @@ export function playMatch(state, title) {
   return found.length === 1 ? found[0] : null;
 }
 
+/** pc/viewmodel.price_text. */
+function priceText(v) {
+  if (typeof v !== "number" || !Number.isFinite(v)) return "";
+  return Number.isInteger(v) ? `${v} TL` : `${v.toFixed(2).replace(".", ",")} TL`;
+}
+
+/** Özet / Oyuncular / Yapım / Süre / Yaş / Ücret of a stored play (pc/viewmodel._row), same keys as an event item. */
+export function playInfoFields(entry) {
+  const e = isObj(entry) ? entry : {};
+  const p = playInfo(e);
+  return {
+    ozet: p.ozet, oyuncular: p.oyuncular, yapim: p.yapim, sure: p.sure, yas: p.yas,
+    ucret: priceText(e.price_from), venue: "", venueDerived: false,
+    borrowed: [], borrowedCredits: [], borrowedFrom: "",
+  };
+}
+
 /** srcinfo.play_info_view: the play's own Özet / Oyuncular / Yapım / Süre / Yaş / Tür. */
 function playInfo(entry) {
   const str = (v) => (typeof v === "string" ? v.trim() : "");

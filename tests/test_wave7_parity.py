@@ -63,12 +63,13 @@ def check(config: dict, state: dict, nows: list[datetime]) -> int:
             assert item["rez"] == row.rez_text, where
             assert set(item["derived"]) == set(row.derived) & set(KEYS), where
             assert item["followed"] == row.active, where
-            if row.is_event:   # wave 15: Özet / Oyuncular / Yapım / Süre / Yaş / Ücret as stated
+            if True:   # wave 15 (events) / wave 17 (plays too): Özet / Oyuncular / Yapım / Süre / Yaş / Ücret
                 assert item["ozet"] == row.summary, where
                 assert item["oyuncular"] == row.cast, where
                 assert [tuple(c) for c in item["yapim"]] == list(row.credits), where
                 assert (item["sure"], item["yas"], item["ucret"]) == (
                     row.duration, row.age, row.price), where
+            if row.is_event:
                 # wave 17: fields borrowed from the same-named play, derived venue
                 assert set(item["borrowed"]) == set(row.borrowed), where
                 assert set(item["borrowedCredits"]) == set(row.borrowed_credits), where
