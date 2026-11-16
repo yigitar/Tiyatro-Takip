@@ -27,10 +27,13 @@ eksik anahtarın adını söyleyen bir hata penceresi gösterir.
 
 ## Başlatma
 
-`pc\start.bat` çift tıklanır (varsa `.venv`, yoksa `pythonw`/`pyw` kullanır) ya da depo
-kökünden `python -m pc.app`. Uygulama tek kopya çalışır (adlandırılmış Windows mutex'i; süreç
-çökse de işletim sistemi bırakır, eski kilit dosyası olmaz): ikinci başlatma açık pencereyi öne
-getirir (bulamazsa "zaten çalışıyor" der). Pencereyi kapatmak uygulamayı kapatır, küçültmek çalışmaya devam ettirir.
+Konsol penceresi açmadan başlatmanın üç yolu vardır; hepsi aynı başlatıcıyı (`pc/launcher.py`) kullanır:
+
+1. **Önerilen: `pc\tiyatro_takip.pyw` dosyasına çift tıkla.** Windows `.pyw` dosyalarını `pyw.exe` -> `pythonw.exe` ile açar (diğer botların `pythonw` ile çalışmasıyla aynı yöntem); hiçbir pencere açılmaz, imzasız `.exe` ya da yeni sistem görevi gerekmez. Çift tıklamada Windows'un genel Python'u açar; başlatıcı uygulamayı proje `.venv`'inin `pythonw.exe`'sinde, ayrık ve penceresiz (`CREATE_NO_WINDOW`, boş std tutamaçları) bir alt süreç olarak başlatıp kendisi çıkar. Proje venv'i içinden çalıştırılırsa uygulama aynı süreçte açılır. İstersen bu dosyaya kendin kısayol (`.lnk`) yapabilirsin; depo hiçbir kısayolu Masaüstü/Başlat menüsüne yazmaz.
+2. `pc\start.bat`: `start "" ...pythonw.exe pc\tiyatro_takip.pyw` çalıştırıp hemen `exit` eder (yedek yöntem; .bat'ı Explorer açtığı için pencere çok kısa bir an görünebilir, kalmaz).
+3. Windows açılışında başlatma (Ayarlar menüsü): `HKCU\...\Run` altına `"<venv>\Scripts\pythonw.exe" "<depo>\pc\tiyatro_takip.pyw"` yazılır (aynı başlatıcı, aynı penceresiz yöntem). Eski sürümle yazılmış `-c ...` komutlu değer çalışmaya devam eder; kutuyu kapatıp açınca yenisiyle değişir.
+
+Depo kökünden `python -m pc.app` de olur. Uygulama tek kopya çalışır (adlandırılmış Windows mutex'i; süreç çökse de işletim sistemi bırakır, eski kilit dosyası olmaz): ikinci başlatma (çift tıklama, .bat ya da Run anahtarı) açık pencereyi öne getirir (bulamazsa "zaten çalışıyor" der) ve çıkar. Pencereyi kapatmak uygulamayı kapatır, küçültmek çalışmaya devam ettirir. Başlatıcının kendisi bir hatayla düşerse de `pc/local/crash.log` + hata penceresi çıkar (aşağıya bak).
 
 ## Kullanım
 
@@ -55,7 +58,7 @@ getirir (bulamazsa "zaten çalışıyor" der). Pencereyi kapatmak uygulamayı ka
 
 ## Hata durumunda
 
-`start.bat` konsolsuz (pythonw) çalıştığı için uygulama sessizce kapanmaz: başlatma ya da
+Başlatıcılar konsolsuz (pythonw) çalıştığı için uygulama sessizce kapanmaz: başlatma ya da
 çalışma sırasında herhangi bir hata olursa bir hata penceresi açılır ve ayrıntı (jetonlar
 maskelenmiş) şu dosyalara yazılır:
 

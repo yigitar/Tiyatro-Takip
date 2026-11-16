@@ -40,19 +40,18 @@ def pythonw_path(repo: Path = REPO) -> Path | None:
 
 
 def autostart_command(repo: Path = REPO, python: Path | str | None = None) -> str:
-    """Command line stored in the Run key: pythonw (no console window) running ``pc.app``
-    with the project folder as the working directory. The Run key cannot set a working
-    directory, so the one-liner changes into it first and then runs the module exactly as
-    ``python -m pc.app`` would (``pc.app`` is not importable from anywhere else)."""
+    """Command line stored in the Run key: the project's windowless ``pythonw.exe`` running
+    ``pc/tiyatro_takip.pyw`` (the same launcher as the double-click / start.bat; it sets
+    the working directory itself, since a Run key cannot)."""
     python = Path(python) if python else pythonw_path(repo)
     if python is None:
         raise OSError("pythonw.exe bulunamadı")
-    folder = str(repo)
-    if "'" in folder or '"' in folder:
+    if '"' in str(repo):
         raise OSError("proje klasörü yolunda tırnak işareti var")
-    code = (f"import os,sys,runpy;os.chdir(r'{folder}');sys.path.insert(0,r'{folder}');"
-            f"runpy.run_module('pc.app',run_name='__main__')")
-    return f'"{python}" -c "{code}"'
+    script = repo / "pc" / "tiyatro_takip.pyw"
+    if not script.is_file():
+        raise OSError(f"başlatıcı bulunamadı: {script}")
+    return f'"{python}" "{script}"'
 
 
 def autostart_value(reg=None, key: str = RUN_KEY, name: str = RUN_VALUE) -> str | None:

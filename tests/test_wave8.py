@@ -177,17 +177,15 @@ class FakeReg:
         self.writes.append(("del", name))
 
 
-def test_autostart_command_is_windowless_pythonw_in_the_project_dir():
+def test_autostart_command_is_windowless_pythonw_running_the_launcher():
     py = REPO / ".venv" / "Scripts" / "pythonw.exe"
     cmd = W.autostart_command(REPO, py)
-    assert cmd.startswith(f'"{py}" -c "') and "pythonw.exe" in cmd
+    assert cmd == f'"{py}" "{REPO / "pc" / "tiyatro_takip.pyw"}"'
     assert "python.exe" not in cmd.replace("pythonw.exe", "")
-    assert f"os.chdir(r'{REPO}')" in cmd and "run_module('pc.app'" in cmd
-    assert '"' not in cmd[cmd.index("-c ") + 4:-1]      # one well-formed quoted argument
 
 
 def test_autostart_refuses_a_path_that_would_break_the_command(tmp_path):
-    bad = tmp_path / "it's"
+    bad = tmp_path / 'it"s'
     with pytest.raises(OSError):
         W.autostart_command(bad, tmp_path / "pythonw.exe")
 
@@ -197,7 +195,7 @@ def test_autostart_toggle_writes_then_removes_the_value_and_reflects_the_registr
     assert W.autostart_enabled(reg) is False
     assert W.set_autostart(True, reg=reg, python=REPO / "pythonw.exe") is True
     assert W.autostart_enabled(reg) is True
-    assert reg.values[W.RUN_VALUE].startswith('"') and "pc.app" in reg.values[W.RUN_VALUE]
+    assert reg.values[W.RUN_VALUE].startswith('"') and "tiyatro_takip.pyw" in reg.values[W.RUN_VALUE]
     assert W.set_autostart(False, reg=reg) is False
     assert reg.values == {} and W.autostart_enabled(reg) is False
     W.set_autostart(False, reg=reg)                      # already absent: no error
@@ -212,7 +210,7 @@ def test_autostart_against_the_real_registry_on_a_throwaway_key():
     try:
         assert W.autostart_enabled(key=key, name=name) is False
         assert W.set_autostart(True, key=key, name=name, python=REPO / "pythonw.exe") is True
-        assert "pc.app" in W.autostart_value(key=key, name=name)
+        assert "tiyatro_takip.pyw" in W.autostart_value(key=key, name=name)
         assert W.set_autostart(False, key=key, name=name) is False
     finally:
         try:
