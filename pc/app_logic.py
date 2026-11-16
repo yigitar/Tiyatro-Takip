@@ -412,11 +412,12 @@ def meta_parts(row) -> list[Cell]:
         parts.append(Cell(f"Kaynak: {row.source}"))
     parts.append(Cell(f"Kitle: {row.audience or 'Bilgi yok'}", "audience" in der or not row.audience))
     parts.append(Cell(f"Tür: {row.genre or 'Bilgi yok'}", "genre" in der or not row.genre))
-    if not row.is_event:
-        if row.duration:
-            parts.append(Cell(f"Süre: {row.duration}"))
-        if row.age:
-            parts.append(Cell(f"Yaş: {row.age}"))
+    if row.duration:           # event rows: only when the source states it
+        parts.append(Cell(f"Süre: {row.duration}"))
+    if row.age:
+        parts.append(Cell(f"Yaş: {row.age}"))
+    if row.is_event and row.price:
+        parts.append(Cell(f"Ücret: {row.price}"))
     return parts
 
 

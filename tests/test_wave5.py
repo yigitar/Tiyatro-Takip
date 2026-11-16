@@ -167,7 +167,7 @@ def mixed(ui):
 
 
 def fact_texts(ui):
-    return [w.cget("text") for w in ui.detail_body.winfo_children()[-1].winfo_children()]
+    return [w.cget("text") for w in ui.event_facts_grid.winfo_children()]
 
 
 def test_diger_kaynaklar_tab_is_gone_and_events_are_in_the_one_list(mixed):

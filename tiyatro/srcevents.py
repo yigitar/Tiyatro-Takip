@@ -26,6 +26,7 @@ from urllib.parse import urljoin
 
 from tiyatro.models import ISTANBUL, Config, Event
 from tiyatro.notify import DAYS, MONTHS, SOURCE_LABELS, SRC_TEXT
+from tiyatro.srcinfo import facts_of, info_from_lines, info_hash, info_view
 from tiyatro.tags import (other_event_label, resolve_audience,
                           resolve_genre)
 from tiyatro.timeutil import parse_iso
@@ -217,6 +218,7 @@ class Listing:
     full: bool | None = None
     detail_ok: bool = False             # the detail page was read in this scan
     follow_default: bool = False        # wave 6: nothing is followed until the user says so
+    info: dict | None = None            # wave 15: stated Özet/Oyuncular/Yapım/Süre/Yaş/Ücret ({} = read, nothing; None = not read)
 
 
 def genre_of(kind: str, title: str) -> str:
@@ -308,9 +310,11 @@ def _cap(text: str) -> str:
     return " ".join(w[:1].upper() + w[1:] if w else w for w in _norm_space(text).split(" "))
 
 
-def _make_bk(start: datetime, title: str, kind: str, venue: str, url: str) -> Listing:
+def _make_bk(start: datetime, title: str, kind: str, venue: str, url: str,
+             info: dict | None = None) -> Listing:
     eid = f"bk:{start:%Y%m%d-%H%M}-{_slug(title)}"
-    return Listing(BASISKELE, eid, title, kind, start, venue, url, follow_default=False)
+    return Listing(BASISKELE, eid, title, kind, start, venue, url, follow_default=False,
+                   info=info if info is not None else {})
 
 
 def parse_article(html_text: str, url: str, published: datetime | None
@@ -355,7 +359,7 @@ def parse_article(html_text: str, url: str, published: datetime | None
             for hh, mm in times:
                 start = _at(d, hh, mm)
                 if start is not None and title:
-                    add(_make_bk(start, title, kind, venue, url))
+                    add(_make_bk(start, title, kind, venue, url, facts_of(line)))
             continue
         # narrative sentence: "4 Kasım Salı günü saat 14.00’te sahnelenecek “Çöp Atlas” adlı çocuk tiyatrosu"
         hits = list(_NARRATIVE.finditer(fline))
@@ -382,7 +386,8 @@ def parse_article(html_text: str, url: str, published: datetime | None
                     if km:
                         hits_kind = _cap(km.group(1))
                         break
-            add(_make_bk(events_here[0], events_here[1], hits_kind, "", url))
+            clause = re.split(r"\.(?:\s|$)", line[nm.start():seg_end], maxsplit=1)[0]
+            add(_make_bk(events_here[0], events_here[1], hits_kind, "", url, facts_of(clause)))
     opens_at, pending = parse_opening("\n".join(lines), years)
     return sorted(events.values(), key=lambda e: (e.start, e.id)), opens_at, pending
 
@@ -424,6 +429,27 @@ class VkvDetail:
     opens_at: datetime | None = None
     opens_pending: bool = False
     full: bool = False
+    info: dict | None = None   # None: the content block could not be located (keep what is stored)
+
+
+_PAGE_DATE = re.compile(rf"^\d{{1,2}}\s+(?:{_MONTH_RE})\s+\d{{4}}\s+(?:{_DAY_RE})\b")
+
+
+def vkv_info(html_text: str) -> dict | None:
+    """Stated info of a VKV detail page: the paragraphs between the date line and the photo
+    gallery (reservation / contact sentences removed), cast / crew from labelled lines.
+    None when the date line is not found (page changed or garbled)."""
+    lines = html_lines(html_text or "")
+    head = next((n for n, ln in enumerate(lines) if _PAGE_DATE.match(fold(ln))), None)
+    if head is None:
+        return None
+    block = []
+    for ln in lines[head + 1:head + 41]:
+        low = fold(ln)
+        if "fotograf galeri" in low or low in ("galeri", "paylas"):
+            break
+        block.append(ln)
+    return info_from_lines(block)
 
 
 def parse_vkv_detail(html_text: str, start: datetime | None) -> VkvDetail:
@@ -435,7 +461,8 @@ def parse_vkv_detail(html_text: str, start: datetime | None) -> VkvDetail:
     opens, pending = parse_opening(text, years)
     if opens is not None and start is not None and opens > start:
         opens, pending = None, False  # implausible: after the event itself
-    return VkvDetail(opens, pending, "dolmus" in fold(text) and "rezervasyon" in fold(text))
+    return VkvDetail(opens, pending, "dolmus" in fold(text) and "rezervasyon" in fold(text),
+                     vkv_info(html_text))
 
 
 # ---- following -----------------------------------------------------------------------
@@ -549,6 +576,10 @@ def fold_listings(state: dict, config: Config, source: str, listings: list[Listi
             rec["full"] = bool(ls.full)
         if ls.detail_ok:
             rec["last_detail_at"] = now.isoformat()
+        if ls.info is not None and ls.detail_ok:
+            digest = info_hash(ls.info)       # rewrite only when the page content changed
+            if rec.get("info_hash") != digest:
+                rec["info"], rec["info_hash"] = ls.info, digest
         start = _dt(rec.get("start"))
         if start is not None and start < now - timedelta(hours=3):
             continue  # past event: bookkeeping only
@@ -657,6 +688,7 @@ def event_views(state: dict | None, config: Config | None, now: datetime) -> lis
             "kind": str(rec.get("kind") or ""), "venue": str(rec.get("venue") or ""),
             "url": str(rec.get("url") or ""), "opens_at": _dt(rec.get("opens_at")),
             "opens_pending": rec.get("opens_pending"),
+            "info": info_view(rec),
             "reservation": reservation_text(rec, now),
             "summary": reservation_summary(rec, now), "full": bool(rec.get("full")),
             "followed": default if choice is None else bool(choice)})
@@ -731,6 +763,7 @@ def scan_basiskele(fetch_fn, cache: dict | None, now: datetime) -> SourceScan:
 def _apply_detail(ls: Listing, detail: VkvDetail) -> None:
     ls.opens_at, ls.opens_pending, ls.full, ls.detail_ok = (
         detail.opens_at, detail.opens_pending if detail.opens_at else None, detail.full, True)
+    ls.info = detail.info
 
 
 def scan_vkv(fetch_fn, now: datetime, sleep=lambda _s: None) -> SourceScan:

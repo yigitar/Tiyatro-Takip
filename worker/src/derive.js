@@ -245,5 +245,42 @@ export function eventFields(rec, id, now) {
     rez: rez.text,
     derived: derived.sort(),
     nearest: Number.isFinite(start) ? start : null,
+    ...eventInfo(rec),
+  };
+}
+
+/** pc/tiyatro/tags.clean_summary: LF only, odd spaces mapped, blank-line runs collapsed to one, trimmed. */
+export function cleanSummary(text) {
+  if (typeof text !== "string") return "";
+  const t = text.replace(/\r\n?/g, "\n").replace(/[      ⁠]/g, " ")
+    .replace(/[​‌‍﻿]/g, "");
+  const out = [];
+  for (const raw of t.split("\n")) {
+    const line = raw.trim();
+    if (!line && (!out.length || !out[out.length - 1])) continue;
+    out.push(line);
+  }
+  while (out.length && !out[out.length - 1]) out.pop();
+  return out.join("\n");
+}
+
+/**
+ * Özet / Oyuncular / Yapım / Süre / Yaş / Ücret a source event record states (tiyatro/srcinfo.info_view):
+ * type-checked, empty values when unknown. Never derived.
+ */
+export function eventInfo(rec) {
+  const raw = isObj(rec?.info) ? rec.info : {};
+  const str = (v) => (typeof v === "string" ? v.trim() : "");
+  const int = (v) => (Number.isInteger(v) ? v : null);
+  const dur = int(raw.duration_min);
+  const age = int(raw.age_limit);
+  return {
+    ozet: cleanSummary(typeof raw.summary === "string" ? raw.summary : ""),
+    oyuncular: (Array.isArray(raw.cast) ? raw.cast : []).map(str).filter(Boolean),
+    yapim: isObj(raw.credits)
+      ? Object.entries(raw.credits).map(([k, v]) => [str(k), str(v)]).filter(([k, v]) => k && v) : [],
+    sure: dur === null ? "" : `${dur} dk`,
+    yas: age === null ? "" : `${age}+`,
+    ucret: str(raw.price),
   };
 }

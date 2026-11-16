@@ -63,6 +63,12 @@ def check(config: dict, state: dict, nows: list[datetime]) -> int:
             assert item["rez"] == row.rez_text, where
             assert set(item["derived"]) == set(row.derived) & set(KEYS), where
             assert item["followed"] == row.active, where
+            if row.is_event:   # wave 15: Özet / Oyuncular / Yapım / Süre / Yaş / Ücret as stated
+                assert item["ozet"] == row.summary, where
+                assert item["oyuncular"] == row.cast, where
+                assert [tuple(c) for c in item["yapim"]] == list(row.credits), where
+                assert (item["sure"], item["yas"], item["ucret"]) == (
+                    row.duration, row.age, row.price), where
             compared += 1
     return compared
 
@@ -138,3 +144,18 @@ def test_non_theatre_event_gets_diger_tur_on_both_sides():
     assert "genre" in items["bk:20261126-1500-atolye"]["derived"]
     assert items["bk:20261126-1700-tiyatro-atolyesi"]["tur"] == ""
     assert items["bk:20261120-1100-satir-arasi-ebeveynlik"]["tur"] == ""
+
+
+def test_event_info_fields_match_including_odd_whitespace_and_bad_types():
+    config, state = _fixture()
+    items = {i["id"]: i for i in worker_items(config, state, [NOW])[0]}
+    rows = {r.slug: r for r in python_rows(config, state, NOW)}
+    full = items["vkv:541"]
+    assert full["ozet"] == "Ceviz Adam sahnede.\n\nIkinci paragraf" == rows["vkv:541"].summary
+    assert full["oyuncular"] == ["Ayşe Yılmaz", "Mehmet Kaya"] == rows["vkv:541"].cast
+    assert full["yapim"] == [["Yönetmen", "Ali Veli"]]
+    assert (full["sure"], full["yas"], full["ucret"]) == ("60 dk", "4+", "Ücretsiz")
+    # ("summary" in Row.derived marks the list's status column, not the Özet text)
+    bad = items["vkv:542"]                                   # hand-edited wrong types: all empty
+    assert (bad["ozet"], bad["oyuncular"], bad["yapim"], bad["sure"], bad["yas"], bad["ucret"]) == (
+        "", [], [], "", "", "")

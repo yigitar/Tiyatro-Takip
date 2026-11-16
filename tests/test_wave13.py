@@ -182,7 +182,7 @@ def test_dragging_a_border_resizes_that_column_without_sorting(ui):
         assert t._layout()[0][t.order.index("title")] == t.min_width("title")
         assert sorts == []
         drag(t, border(t, "title"), border(t, "title") + 5000)      # far right: capped
-        assert t._layout()[0][t.order.index("title")] == int(700 * t.scale)
+        assert t._layout()[0][t.order.index("title")] == int(round(700 * t.scale))
         assert ui_json(ui)["columns"]["widths"]["title"] == 700
     finally:
         ui.root.withdraw()
@@ -220,7 +220,7 @@ def test_double_click_on_a_border_fits_the_column_to_its_content(ui):
         assert t._layout()[0][t.order.index("age")] >= t.min_width("age")
         t.insert("", "end", iid="huge", values=["x" * 3000] * len(t.keys))
         t.autofit("title")
-        assert t._user_w["title"] == int(700 * t.scale)
+        assert t._user_w["title"] == int(round(700 * t.scale))
     finally:
         ui.root.withdraw()
 

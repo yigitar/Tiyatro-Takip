@@ -587,6 +587,34 @@ function listScreen(config, state, pageArg, now) {
   };
 }
 
+const NO_SOURCE_INFO = "Kaynakta bilgi yok";
+const EVENT_SUMMARY_CHARS = 600;
+const CREDITS_CHARS = 300;
+
+/**
+ * Süre/Yaş/Ücret (only when stated), Özet, Oyuncular, Yapım of a source event, as the page states them
+ * (normal text, nothing derived); a section the source did not provide says "Kaynakta bilgi yok".
+ */
+function eventInfoLines(it) {
+  const lines = [];
+  const stated = [it.sure && `Süre: ${esc(it.sure)}`, it.yas && `Yaş: ${esc(it.yas)}`,
+    it.ucret && `Ücret: ${esc(it.ucret)}`].filter(Boolean);
+  if (stated.length) lines.push(stated.join(" · "));
+  const ozet = trunc(it.ozet.replace(/\s+/g, " ").trim(), EVENT_SUMMARY_CHARS);
+  lines.push(`📝 Özet: ${ozet ? esc(ozet) : NO_SOURCE_INFO}`);
+  lines.push(castLine(it.oyuncular) || `Oyuncular: ${NO_SOURCE_INFO}`);
+  const shown = [];
+  let used = 0;
+  for (const [k, v] of it.yapim) {            // whole entries only: never cut inside an escaped entity
+    const raw = `${trunc(k, 30)}: ${trunc(v, 60)}`;
+    if (used + raw.length > CREDITS_CHARS) break;
+    used += raw.length;
+    shown.push(esc(raw));
+  }
+  lines.push(`Yapım: ${shown.length ? shown.join(" · ") : NO_SOURCE_INFO}`);
+  return lines;
+}
+
 /** Event screen: source, derived fields, follow switch and the page link. */
 function eventScreen(config, state, id, now, pageArg) {
   const hh = eventIndex(state).hashOf.get(id);
@@ -598,6 +626,7 @@ function eventScreen(config, state, id, now, pageArg) {
   if (rec.start) lines.push(`Etkinlik: ${esc(fmt(rec.start))}`);
   if (it.venue) lines.push(`Mekan: ${esc(trunc(it.venue, 80))}`);
   lines.push(...fieldLines(it));
+  lines.push(...eventInfoLines(it));
   lines.push(`Takip: ${it.followed ? "☑ takipte" : "☐ takipte değil (yeni etkinlikler varsayılan olarak takipte değildir)"}`);
   const flag = it.followed ? 0 : 1;
   return {

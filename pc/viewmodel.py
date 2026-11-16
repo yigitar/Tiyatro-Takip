@@ -296,6 +296,7 @@ def event_row(view: dict, now: datetime | None = None) -> Row:
     audience = view["audience"] or resolve_audience(view["kind"], (), None, view["title"])
     tags = derived_tags([], audience, local.hour if local else None)
     contact = list(srcevents.VKV_CONTACT_LINES) if view["source"] == srcevents.VKV else []
+    info = view.get("info") or {}      # only what the source states: never in ``derived``
     rez_text, rez_key, rez_derived = _event_rez(view, now)
     derived: set[str] = {"target"}   # "—": targets do not exist for source events
     if local:
@@ -315,6 +316,9 @@ def event_row(view: dict, now: datetime | None = None) -> Row:
         seans=when_text(start) if start else "", venue=view["venue"],
         reservation_opens=when_text(opens) if opens else "", contact=contact,
         event_full=bool(view["full"]),
+        summary=clean_summary(info.get("summary")), cast=list(info.get("cast") or []),
+        credits=list(info.get("credits") or []), duration=info.get("duration") or "",
+        age=info.get("age") or "", price=info.get("price") or "",
         zaman=time_of_day([local.hour]) if local else "",
         target_count=0, target_text="—",
         session_starts=[start] if start else [], sessions_text=sessions_summary(

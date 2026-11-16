@@ -372,3 +372,37 @@ test("wave 10: non-theatre source events get Diğer – tür only when certain",
   assert.equal(eventGenre("", "Oyunculuk Atölyesi Müzikali"), "Müzikal");
   assert.deepEqual(eventFields({ title: "Seramik Atölyesi", kind: "" }, "bk:1", Date.now()).derived.includes("genre"), true);
 });
+
+// Wave 15: Özet / Oyuncular / Yapım of source events, as the source states them.
+test("event screen shows Özet / Oyuncular / Yapım from the record, escaped and cut safely", () => {
+  const s = evState();
+  s.source_events["vkv:541"].info = {
+    summary: "Ceviz Adam <sahnede>.\r\n\r\n\r\n  İkinci & paragraf", cast: ["Ayşe Yılmaz", "Mehmet Kaya"],
+    credits: { "Yönetmen": "Can <Özkan>", "Yazan": "Zeynep Demir" }, duration_min: 60, age_limit: 4, price: "Ücretsiz",
+  };
+  const r = render(`e:${h("vkv:541")}`, makeConfig(), s, NOW);
+  assert.ok(r.text.includes("Süre: 60 dk · Yaş: 4+ · Ücret: Ücretsiz"), r.text);
+  assert.ok(r.text.includes("📝 Özet: Ceviz Adam &lt;sahnede&gt;. İkinci &amp; paragraf"), r.text);
+  assert.ok(r.text.includes("Oyuncular: Ayşe Yılmaz, Mehmet Kaya"), r.text);
+  assert.ok(r.text.includes("Yapım: Yönetmen: Can &lt;Özkan&gt; · Yazan: Zeynep Demir"), r.text);
+  assert.ok(!r.text.includes("Kaynakta bilgi yok"));
+  assert.ok(bytes(r.text) < 4096);
+});
+
+test("event screen says Kaynakta bilgi yok for every section the source did not provide", () => {
+  const r = render(`e:${h("bk:20300206-1400-cop-atlas")}`, makeConfig(), evState(), NOW);
+  assert.ok(r.text.includes("📝 Özet: Kaynakta bilgi yok"), r.text);
+  assert.ok(r.text.includes("Oyuncular: Kaynakta bilgi yok"));
+  assert.ok(r.text.includes("Yapım: Kaynakta bilgi yok"));
+  assert.ok(!r.text.includes("Süre:") && !r.text.includes("Ücret:"));
+});
+
+test("a huge summary and cast cannot push the event screen over the Telegram limit", () => {
+  const s = evState();
+  s.source_events["vkv:541"].info = { summary: "çok uzun cümle ".repeat(2000),
+    cast: Array.from({ length: 200 }, (_, i) => `Oyuncu Numara${i} Soyad`),
+    credits: Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`Rol${i}`, "Çok Uzun Bir Kişi Adı ".repeat(5)])) };
+  const r = render(`e:${h("vkv:541")}`, makeConfig(), s, NOW);
+  assert.ok(bytes(r.text) < 4096, bytes(r.text));
+  assert.ok(r.text.includes("…") && r.text.includes("(+194)"));
+});

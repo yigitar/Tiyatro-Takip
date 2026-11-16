@@ -55,6 +55,7 @@ RELOAD_MS = 60_000
 ACTIVITY_MS = 2000
 MAX_POPUPS = 3
 NO_INFO = "Bilgi yok"
+SOURCE_NO_INFO = "Kaynakta bilgi yok"   # source events: the page gave nothing (grey)
 DETAIL_CHROME_PX = 30  # title + border of the "Oyun ayrıntısı" frame
 COLUMNS = L.LIST_COLUMNS      # (key, heading, width): one table for plays and source events
 NEW_COLOR = "#6d28d9"         # name of an item the user has not opened yet (bold)
@@ -1225,7 +1226,8 @@ class App:
         """Detail of a Başiskele / VKV event: source, event date, reservation opening,
         contact block (VKV), follow switch, page link."""
         sig = (L.row_values(row), row.seans, row.reservation_opens, row.venue,
-               tuple(row.contact), row.url, row.active)
+               tuple(row.contact), row.url, row.active, row.summary, tuple(row.cast),
+               tuple(row.credits), row.duration, row.age, row.price)
         if sig == self._detail_sig and not force:
             return
         self._detail_sig = sig
@@ -1273,6 +1275,7 @@ class App:
                   for i, line in enumerate(row.contact)]
         if row.contact and row.url:
             facts.append(("Etkinlik sayfası", row.url, False))
+        self.event_facts_grid = grid
         self.event_fact_labels = []
         for i, (name, value, derived) in enumerate(facts):
             ttk.Label(grid, text=name, font=self.bold_font).grid(row=i, column=0, sticky="nw",
@@ -1281,7 +1284,26 @@ class App:
             lbl = ttk.Label(grid, text=value, wraplength=700, justify="left", **extra)
             lbl.grid(row=i, column=1, sticky="w", pady=1)
             self.event_fact_labels.append(lbl)
+        self._build_event_info(body, row)
         self._refit()
+
+    def _build_event_info(self, body, row) -> None:
+        """Özet / Oyuncular / Yapım of a source event, exactly what the source page states
+        (normal text; nothing is derived). A section the source does not provide says so in
+        grey ("Kaynakta bilgi yok") instead of staying blank. Fixed wrap width like the facts
+        above, no per-pixel re-wrapping."""
+        box = ttk.Frame(body)
+        box.pack(fill="x", padx=8, pady=(2, 8))
+        self.event_info_labels = {}
+        credits = chr(10).join(credit_lines(row.credits))
+        for name, text in (("Özet", clean_summary(row.summary)),
+                           ("Oyuncular", ", ".join(row.cast)), ("Yapım", credits)):
+            ttk.Label(box, text=name, font=self.bold_font).pack(anchor="w", pady=(6, 0))
+            extra = {} if text else {"foreground": L.GRAY}
+            lbl = ttk.Label(box, text=text or SOURCE_NO_INFO, wraplength=700, justify="left",
+                            **extra)
+            lbl.pack(anchor="w")
+            self.event_info_labels[name] = lbl
 
     def _detail_body(self) -> ttk.Frame:
         """Empty, scrollable content frame of the detail pane (small windows stay usable)."""
