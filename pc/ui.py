@@ -46,6 +46,7 @@ LEGEND_BG, LEGEND_EDGE = "#f8fafc", "#cbd5e1"
 CARD_BG, CARD_MIN_PX = "white", 250
 SIDE_BG, SIDE_W = "#f1f4f8", 280   # sidebar background / width (96 dpi px)
 NARROW_PX = 1000    # window narrower than this: the sidebar becomes a strip on top
+SESSION_ROWS_MAX = 8      # session table shows up to this many rows, then scrolls
 DETAIL_SB_PX = 17   # scrollbar slot always reserved in the detail width (no feedback)
 STACK_PX = 820      # detail pane narrower than this stacks its columns
 POLL_MS = 200
@@ -1075,13 +1076,14 @@ class App:
             self.add_buttons[kind] = btn
 
         sess = ttk.Frame(left)
-        sess.pack(fill="both", expand=True, padx=8, pady=6)
+        sess.pack(fill="x", padx=8, pady=6)      # exactly as tall as its rows: no stretching
         self._session_links: dict[str, str] = {}
         self.session_tree = GridTable(
             sess, (("when", "Seans", 160), ("status", "Durum", 100),
                    ("opens", "Satış açılışı", 170), ("link", "Bağlantı", 96)),
             on_cell=self._session_click, sortable=False, row_px=L.ROW_PX, head_px=L.HEADING_PX,
-            stretch=("when", "opens"), height_rows=min(max(len(sessions), 2), 8))
+            stretch=("when", "opens"), height_rows=min(max(len(sessions), 2), SESSION_ROWS_MAX),
+            hscroll=False)
         missing = False
         for n, s in enumerate(sessions):
             text, url, note = L.session_link(s, row.url)
@@ -1093,10 +1095,11 @@ class App:
         if not sessions:
             self.session_tree.insert("", "end", iid="none", cells=[
                 L.Cell("yaklaşan seans yok"), L.Cell(""), L.Cell(""), L.Cell("")])
-        sess_sb = AutoScrollbar(sess, orient="vertical", command=self.session_tree.yview)
-        self.session_tree.configure(yscrollcommand=sess_sb.set)
-        sess_sb.pack(side="right", fill="y")
-        self.session_tree.pack(side="left", fill="both", expand=True)
+        if len(sessions) > SESSION_ROWS_MAX:    # decided by the row count, never after paint
+            sess_sb = ttk.Scrollbar(sess, orient="vertical", command=self.session_tree.yview)
+            self.session_tree.configure(yscrollcommand=sess_sb.set)
+            sess_sb.pack(side="right", fill="y")
+        self.session_tree.pack(side="left", fill="x", expand=True)
         self.session_note = ttk.Label(left, text="Seans bağlantısı olmayan satırda düğme oyun "
                                       "sayfasını açar (\"Oyun ↗\")." if missing else "",
                                       foreground=L.GRAY)

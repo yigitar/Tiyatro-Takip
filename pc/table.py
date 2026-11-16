@@ -76,7 +76,7 @@ class GridTable(ttk.Frame):
     def __init__(self, master, columns, *, stretch=(), on_sort=None, on_cell=None,
                  row_px: int = 22, head_px: int = 26, height_rows: int | None = None,
                  sortable: bool = True, zebra: bool = True, customizable: bool = False,
-                 on_layout=None):
+                 on_layout=None, hscroll: bool = True):
         super().__init__(master)
         # 1.0 at 96 dpi; the window is DPI aware (pc.winsetup), Tk reports the real DPI
         self.scale = max(1.0, float(self.winfo_fpixels("1i")) / 96.0)
@@ -131,7 +131,8 @@ class GridTable(ttk.Frame):
         self.hbar = AutoScrollbar(self, orient="horizontal", command=self._xview)
         self.header.pack(side="top", fill="x")
         self.body.pack(side="top", fill="both", expand=True)
-        self.hbar.pack(side="bottom", fill="x")
+        if hscroll:        # a fixed-size table (sessions) has none: it would toggle after paint
+            self.hbar.pack(side="bottom", fill="x")
         self.body.configure(yscrollcommand=self._on_yscroll, xscrollcommand=self._on_xscroll)
 
         self.body.bind("<Configure>", self._on_configure)
