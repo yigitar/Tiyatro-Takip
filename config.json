@@ -16,7 +16,20 @@
   "on-ikinci-gece-kocaeli-bb": {
    "active": true,
    "tag_overrides": {},
-   "targets": []
+   "targets": [
+    {
+     "id": "y",
+     "name": "Yetişkin",
+     "people": 2,
+     "rule": {
+      "days": null,
+      "exclude_dates": [],
+      "from_time": null,
+      "overrides": {},
+      "to_time": null
+     }
+    }
+   ]
   }
  },
  "sources": [
