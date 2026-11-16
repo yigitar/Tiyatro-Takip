@@ -202,9 +202,7 @@ def test_event_detail_has_page_button_and_says_there_are_no_session_pages(ui):
     assert ui.event_page_btn.cget("text").startswith("Etkinlik sayfası")
     ui.event_page_btn.invoke()
     assert ui.opened == ["https://example.test/vkv:541"]
-    labels = [w.cget("text") for f in ui.detail_body.winfo_children()
-              for w in ([f] + list(f.winfo_children())) if w.winfo_class() == "TLabel"]
-    assert any("seans başına ayrı sayfa yok" in t for t in labels)
+    assert "seans başına ayrı sayfa yok" in ui.event_no_page_label.cget("text")
     assert ui.follow_help.cget("text").startswith("Takip açıkken")
     ui.active_chk.invoke()
     ui.pump()

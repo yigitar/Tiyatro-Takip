@@ -142,6 +142,46 @@ def enable_dpi_awareness(api=None) -> str:
         return ""
 
 
+# ---- icon / taskbar identity ------------------------------------------------------------------
+APP_USER_MODEL_ID = "TiyatroTakip.PC"
+ASSETS = Path(__file__).resolve().parent / "assets"
+ICON_ICO = ASSETS / "tiyatro.ico"
+ICON_PNG = ASSETS / "tiyatro.png"
+
+
+def set_app_user_model_id(app_id: str = APP_USER_MODEL_ID, api=None) -> bool:
+    """Own taskbar identity, so the taskbar shows our icon instead of pythonw's. Call before
+    the first window. Never raises; False when unavailable (not Windows, old Windows)."""
+    try:
+        if api is None:
+            import ctypes
+            api = ctypes.windll.shell32
+        return api.SetCurrentProcessExplicitAppUserModelID(app_id) in (0, None)   # S_OK
+    except Exception:
+        return False
+
+
+def apply_window_icon(root, ico: Path = ICON_ICO, png: Path = ICON_PNG) -> str:
+    """Window / taskbar icon of a Tk root: the multi-size .ico on Windows (iconbitmap), else /
+    as a fallback the PNG (wm_iconphoto). Missing file or Tk error: no icon, no exception.
+    Returns "ico", "png" or ""."""
+    try:
+        if os.name == "nt" and ico.is_file():
+            root.iconbitmap(default=str(ico))
+            return "ico"
+    except Exception:
+        pass
+    try:
+        if png.is_file():
+            import tkinter as tk
+            root._tiyatro_icon = tk.PhotoImage(master=root, file=str(png))   # keep a reference
+            root.wm_iconphoto(True, root._tiyatro_icon)
+            return "png"
+    except Exception:
+        pass
+    return ""
+
+
 # ---- single instance helper -------------------------------------------------------------------
 def focus_existing_window(title: str, api=None) -> bool:
     """Bring the already running app window (top level Tk window titled ``title``) to the
