@@ -219,6 +219,7 @@ class Listing:
     detail_ok: bool = False             # the detail page was read in this scan
     follow_default: bool = False        # wave 6: nothing is followed until the user says so
     info: dict | None = None            # wave 15: stated Özet/Oyuncular/Yapım/Süre/Yaş/Ücret ({} = read, nothing; None = not read)
+    venue_derived: bool = False         # wave 17: venue resolved from "aynı merkezde" (not stated for this event)
 
 
 def genre_of(kind: str, title: str) -> str:
@@ -311,10 +312,55 @@ def _cap(text: str) -> str:
 
 
 def _make_bk(start: datetime, title: str, kind: str, venue: str, url: str,
-             info: dict | None = None) -> Listing:
+             info: dict | None = None, venue_derived: bool = False) -> Listing:
     eid = f"bk:{start:%Y%m%d-%H%M}-{_slug(title)}"
     return Listing(BASISKELE, eid, title, kind, start, venue, url, follow_default=False,
-                   info=info if info is not None else {})
+                   info=info if info is not None else {}, venue_derived=venue_derived)
+
+
+# ---- venue / performer of narrative sentences (wave 17) ----------------------------------------
+_CAP = "A-ZÇĞİÖŞÜ"
+_WORD = rf"[{_CAP}][\wçğıöşüÇĞİÖŞÜ.]*"
+# "Türkiye Yüzyılı Gençlik Merkezi’nde" / "Kitaphane’de" / "... Kafe & Restoran’da": capitalised
+# words directly before a locative suffix (-de/-da/-te/-ta, -nde/-nda after a possessive)
+_VENUE_RE = re.compile(rf"((?:{_WORD}\s+(?:&\s+)?){{0,7}}{_WORD})[’'](?:n?de|n?da|te|ta)(?![\wçğıöşü])")
+_NOT_VENUE = {"basiskele", "kocaeli", "turkiye", "izmit", "istanbul", "ankara"}
+_SAME_PLACE = re.compile(r"(?:yine\s+)?ayn[ıi]\s+(?:merkez|salon|mekan|sahne|yer|bina|tiyatro)\w*", re.I)
+_COMPANY_RE = re.compile(
+    rf"((?:{_WORD}\s+){{0,5}}(?:Tiyatrosu|Tiyatroları|Tiyatro|Topluluğu|Sahnesi|Kumpanyası|Ekibi))"
+    rf"(?:[’']\w+)?\s+taraf[ıi]ndan")
+_SENTENCE_END = re.compile(r"(?<![\d])\.\s+(?=\S)")
+
+
+def _sentence_spans(line: str) -> list[tuple[int, int]]:
+    spans, start = [], 0
+    for m in _SENTENCE_END.finditer(line):
+        spans.append((start, m.end()))
+        start = m.end()
+    spans.append((start, len(line)))
+    return spans
+
+
+def _venues_in(text: str) -> list[str]:
+    """Distinct venues a text states with a locative phrase, in order (district / city names
+    alone are not venues; a weekday / month word glued in front is dropped)."""
+    out: list[str] = []
+    for m in _VENUE_RE.finditer(text):
+        words = _norm_space(m.group(1)).split(" ")
+        while len(words) > 1 and fold(words[0]) in {*_MONTH_NUM, *_DAY_NAMES, "ayni"}:
+            words = words[1:]
+        name = " ".join(words)
+        if not name or fold(name) in _NOT_VENUE:
+            continue
+        if name not in out:
+            out.append(name)
+    return out
+
+
+def _company_in(text: str) -> str:
+    """The performing company a sentence names ("X Tiyatroları tarafından"); "" unless exactly one."""
+    found = {_norm_space(m.group(1)) for m in _COMPANY_RE.finditer(text)}
+    return found.pop() if len(found) == 1 else ""
 
 
 def parse_article(html_text: str, url: str, published: datetime | None
@@ -330,6 +376,7 @@ def parse_article(html_text: str, url: str, published: datetime | None
     base = (published or datetime.now(ISTANBUL)).year
     years = [base, base + 1, base - 1]
     events: dict[str, Listing] = {}
+    prev_venues: list[str] = []      # venues stated by the last sentence of the previous line
 
     def add(listing: Listing | None):
         if listing is not None and listing.id not in events:
@@ -339,6 +386,7 @@ def parse_article(html_text: str, url: str, published: datetime | None
         fline = fold(line)  # 1:1 character map: offsets are valid for ``line`` too
         lm = _LINE_RE.match(fline)
         if lm is not None:
+            prev_venues = []
             d = resolve_date(int(lm.group(1)), _MONTH_NUM[lm.group(2)],
                              _DAY_NAMES.get(lm.group(3)), years)
             if d is None:
@@ -363,6 +411,9 @@ def parse_article(html_text: str, url: str, published: datetime | None
             continue
         # narrative sentence: "4 Kasım Salı günü saat 14.00’te sahnelenecek “Çöp Atlas” adlı çocuk tiyatrosu"
         hits = list(_NARRATIVE.finditer(fline))
+        spans = _sentence_spans(line)
+        sent_venues = [_venues_in(line[a:b]) for a, b in spans]
+        parsed = []                      # the events of this line, with the text they were read from
         for n, nm in enumerate(hits):
             seg_end = hits[n + 1].start() if n + 1 < len(hits) else len(line)
             segment = line[nm.end():seg_end]
@@ -376,7 +427,6 @@ def parse_article(html_text: str, url: str, published: datetime | None
                 continue
             kind_m = _KIND_PHRASE.search(segment[q.end():])
             kind = _cap(kind_m.group(1)) if kind_m else ""
-            events_here = (start, _norm_space(q.group(1)), kind)
             hits_kind = kind
             if not hits_kind:  # coordinated titles share the kind stated after the last one
                 for later in hits[n + 1:]:
@@ -387,7 +437,27 @@ def parse_article(html_text: str, url: str, published: datetime | None
                         hits_kind = _cap(km.group(1))
                         break
             clause = re.split(r"\.(?:\s|$)", line[nm.start():seg_end], maxsplit=1)[0]
-            add(_make_bk(events_here[0], events_here[1], hits_kind, "", url, facts_of(clause)))
+            si = next(i for i, (a, b) in enumerate(spans) if a <= nm.start() < b)
+            own = _venues_in(line[nm.end():min(seg_end, spans[si][1])])
+            parsed.append({"si": si, "start": start, "title": _norm_space(q.group(1)),
+                           "kind": hits_kind, "clause": clause, "own": own[0] if own else "",
+                           "same": bool(_SAME_PLACE.search(line[nm.end():min(seg_end, spans[si][1])]))})
+        for k, item in enumerate(parsed):
+            venue, derived = item["own"], False
+            if not venue:       # one venue stated after coordinated titles of one sentence is shared
+                later = {p["own"] for p in parsed[k + 1:] if p["si"] == item["si"] and p["own"]}
+                if len(later) == 1 and len(sent_venues[item["si"]]) == 1:
+                    venue = later.pop()
+            if not venue and item["same"]:      # "yine aynı merkezde": only the preceding sentence counts
+                before = prev_venues if item["si"] == 0 else sent_venues[item["si"] - 1]
+                if len(before) == 1:
+                    venue, derived = before[0], True
+            info = facts_of(item["clause"])
+            company = _company_in(line[spans[item["si"]][0]:spans[item["si"]][1]])
+            if company:
+                info["credits"] = {"Sahneleyen": company}
+            add(_make_bk(item["start"], item["title"], item["kind"], venue, url, info, derived))
+        prev_venues = sent_venues[-1] if sent_venues else []
     opens_at, pending = parse_opening("\n".join(lines), years)
     return sorted(events.values(), key=lambda e: (e.start, e.id)), opens_at, pending
 
@@ -502,7 +572,8 @@ def reservation_text(rec: dict, now: datetime) -> str:
 
 def _payload(rec: dict, extra: dict | None = None) -> dict:
     p = {"source": rec["source"], "event_id": rec["id"], "title": rec["title"],
-         "kind": rec.get("kind") or "", "start": rec.get("start"), "venue": rec.get("venue") or "",
+         "kind": rec.get("kind") or "", "start": rec.get("start"),
+         "venue": "" if rec.get("venue_derived") is True else rec.get("venue") or "",
          "url": rec.get("url") or "", "opens_at": rec.get("opens_at")}
     if rec["source"] == VKV:
         p["contact"] = list(VKV_CONTACT_LINES)
@@ -555,7 +626,7 @@ def fold_listings(state: dict, config: Config, source: str, listings: list[Listi
         if is_new:
             rec = store[ls.id] = {"id": ls.id, "source": source, "first_seen": now.isoformat(),
                                   "full": None, "opens_at": None, "opens_pending": None}
-        rec.update(title=ls.title, kind=ls.kind, venue=ls.venue, url=ls.url,
+        rec.update(title=ls.title, kind=ls.kind, venue=ls.venue, venue_derived=bool(ls.venue_derived), url=ls.url,
                    start=_iso(ls.start), last_seen=now.isoformat(),
                    audience=audience_for(ls.kind, ls.title),
                    genre=genre_of(ls.kind, ls.title))
@@ -686,6 +757,7 @@ def event_views(state: dict | None, config: Config | None, now: datetime) -> lis
             "audience": audience_for(str(rec.get("kind") or ""), str(rec.get("title") or "")),
             "genre": genre_of(str(rec.get("kind") or ""), str(rec.get("title") or "")),
             "kind": str(rec.get("kind") or ""), "venue": str(rec.get("venue") or ""),
+            "venue_derived": rec.get("venue_derived") is True,
             "url": str(rec.get("url") or ""), "opens_at": _dt(rec.get("opens_at")),
             "opens_pending": rec.get("opens_pending"),
             "info": info_view(rec),
