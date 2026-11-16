@@ -17,6 +17,8 @@ $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $python = Join-Path $repo '.venv\Scripts\pythonw.exe'
 $launcher = Join-Path $repo 'pc\tiyatro_takip.pyw'
 $icon = Join-Path $repo 'pc\assets\tiyatro.ico'
+$localIcon = Join-Path $repo 'pc\assets\local\tiyatro.ico'   # git-ignored; preferred when present
+if (Test-Path -LiteralPath $localIcon) { $icon = $localIcon }
 foreach ($needed in @($python, $launcher, $icon)) {
     if (-not (Test-Path -LiteralPath $needed)) { throw "Missing: $needed" }
 }

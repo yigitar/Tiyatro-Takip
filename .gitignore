@@ -22,3 +22,6 @@ pc/local/
 # stray debug dumps
 p.out
 *.out
+
+# local-only icon (third-party image, unknown licence)
+pc/assets/local/

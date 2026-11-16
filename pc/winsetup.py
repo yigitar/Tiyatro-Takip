@@ -145,8 +145,21 @@ def enable_dpi_awareness(api=None) -> str:
 # ---- icon / taskbar identity ------------------------------------------------------------------
 APP_USER_MODEL_ID = "TiyatroTakip.PC"
 ASSETS = Path(__file__).resolve().parent / "assets"
-ICON_ICO = ASSETS / "tiyatro.ico"
+ICON_ICO = ASSETS / "tiyatro.ico"          # committed (generated) icon = the fallback
 ICON_PNG = ASSETS / "tiyatro.png"
+ICO_SIGNATURE = bytes((0, 0, 1, 0))
+
+
+def icon_files(assets: Path = ASSETS) -> tuple[Path, Path]:
+    """(ico, png) to use: the git-ignored local icon in ``assets/local`` when its .ico exists
+    and starts with the ICO signature, otherwise the committed generated icon."""
+    local_ico, local_png = assets / "local" / "tiyatro.ico", assets / "local" / "tiyatro.png"
+    try:
+        if local_ico.is_file() and local_ico.read_bytes()[:4] == ICO_SIGNATURE:
+            return local_ico, (local_png if local_png.is_file() else assets / "tiyatro.png")
+    except OSError:
+        pass
+    return assets / "tiyatro.ico", assets / "tiyatro.png"
 
 
 def set_app_user_model_id(app_id: str = APP_USER_MODEL_ID, api=None) -> bool:
@@ -161,10 +174,13 @@ def set_app_user_model_id(app_id: str = APP_USER_MODEL_ID, api=None) -> bool:
         return False
 
 
-def apply_window_icon(root, ico: Path = ICON_ICO, png: Path = ICON_PNG) -> str:
+def apply_window_icon(root, ico: Path | None = None, png: Path | None = None) -> str:
     """Window / taskbar icon of a Tk root: the multi-size .ico on Windows (iconbitmap), else /
     as a fallback the PNG (wm_iconphoto). Missing file or Tk error: no icon, no exception.
     Returns "ico", "png" or ""."""
+    if ico is None or png is None:
+        d_ico, d_png = icon_files()
+        ico, png = ico or d_ico, png or d_png
     try:
         if os.name == "nt" and ico.is_file():
             root.iconbitmap(default=str(ico))
