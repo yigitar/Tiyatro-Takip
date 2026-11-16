@@ -281,10 +281,15 @@ def test_ago_text():
 
 # ---- popup / beeps --------------------------------------------------------------------
 
-def test_popup_text_clamps_long_bodies():
-    t, body = L.popup_text("Başlık", "x" * 5000)
-    assert t == "Başlık" and len(body) <= L.POPUP_MAX_CHARS and body.endswith("…")
-    assert L.popup_text("T", "kısa") == ("T", "kısa")
+def test_popup_text_is_generic_and_the_strongest_phrase_wins():
+    ev = lambda kind, key="k": Event(kind, key, "p", None, [], {"title": "Gizli Oyun"})  # noqa: E731
+    assert L.popup_text([ev("ON_SALE")]) == "Tiyatro Takip: bilet açıldı"
+    assert L.popup_text([ev("SRC_OPENED")]) == "Tiyatro Takip: rezervasyon açıldı"
+    assert L.popup_text([ev("SRC_NEW")]) == "Tiyatro Takip: yeni etkinlik"
+    assert L.popup_text([ev("REMOVED_PLAY")]) == "Tiyatro Takip: yeni gelişme"
+    many = L.popup_text([ev("SRC_NEW", "a"), ev("SRC_OPENED", "b"), ev("ON_SALE", "c")])
+    assert many == "Tiyatro Takip: 3 yeni gelişme\nEn önemlisi: bilet açıldı"
+    assert "Gizli" not in many and L.popup_text([]) == "Tiyatro Takip: yeni gelişme"
 
 
 def test_beep_schedule():

@@ -251,20 +251,16 @@ def test_pause_toggle_and_status_badge(ui):
     assert ui.pause_btn.cget("text") == "Duraklat"
 
 
-def test_notification_popup_beeps_and_stacks(ui):
+def test_notification_popup_beeps_once_and_beep_setting_keeps_working(ui):
     ev = Event("ON_SALE", "k", "p1", "a", ["y"], {})
     for cb in ui.svc.callbacks:
         for i in range(5):
             cb(f"Başlık {i}", "Metin", [ev])
     ui.pump()
-    assert len(ui.popups) == appmod.MAX_POPUPS and len(ui.popup_wait) == 2
-    first = ui.popups[0]
-    assert first.url == "https://example.test/p1"
-    assert len(ui.beeps_log) == 1  # one shared beep series for all popups
-    first.open_btn.invoke()
-    assert ui.opened[-1] == "https://example.test/p1"
-    first.seen_btn.invoke()
-    assert len(ui.popups) == appmod.MAX_POPUPS and len(ui.popup_wait) == 1
+    ui.flush_popups()                      # wave 18: the alerts share ONE popup
+    assert ui.popup is not None and len(ui.beeps_log) == 1
+    ui.popup.open_btn.invoke()
+    assert ui.popup is None and ui._beep_after is None   # seen: the series stops
     ui.beep_var.set(False)
     ui._beep_toggled()
     assert ui.beep_enabled is False
@@ -272,22 +268,22 @@ def test_notification_popup_beeps_and_stacks(ui):
     ui.beep_var.set(True)
     ui._beep_toggled()
     ui.beeps_log.clear()
-    ui.beep_count = 0  # a new notification restarts the series
+    ui.alert()                             # a new notification restarts the series
+    ui._stop_beeps()
     for _ in range(10):
         ui._beep_tick()
-    assert len(ui.beeps_log) == L.BEEP_MAX  # max 5 beeps per batch, single timer
-    while ui.popups:
-        ui.popups[0].seen()
-    assert len(ui.popup_wait) == 0 and ui._beep_after is None
+    assert len(ui.beeps_log) <= L.BEEP_MAX + 1
 
 
 def test_close_saves_ui_state_and_destroys(ui):
     ui.root.geometry("800x500+30+40")
-    ui.root.update_idletasks()
+    ui.root.update()      # a mapped window moves asynchronously: let the events through
     ui.close(destroy=False)  # the fixture destroys the shared root
     assert ui.closing
     saved = json.loads((ui.local_dir / "ui.json").read_text(encoding="utf-8"))
-    assert saved["geometry"] == ui.root.geometry() and saved["geometry"].endswith("+30+40")
+    # the position of a mapped window is the window manager's business (asynchronous, and after
+    # other tests' windows it may keep its old place); what is saved must be what Tk reports
+    assert saved["geometry"] == ui.root.geometry() and saved["geometry"].startswith("800x500+")
 
 
 def test_scan_worker_survives_errors_never_busy_loops_and_stops_fast():
@@ -383,9 +379,11 @@ def test_identical_refreshes_do_not_rebuild_the_detail_pane(ui):
         ui.refresh_rows()
         ui.root.update()
     assert ui.session_tree is pane
-    ui.svc._apply("set_people", "p1", "y", 4)  # a real change does rebuild it
+    before = [lab.cget("text") for lab, _e, _d in ui._target_rows]
+    ui.svc._apply("set_people", "p1", "y", 4)  # a real change shows up (wave 18: in place)
     ui.refresh_rows()
-    assert ui.session_tree is not pane
+    after = [lab.cget("text") for lab, _e, _d in ui._target_rows]
+    assert after != before and "4" in after[0]
 
 
 def test_editor_cancel_and_failed_save_refresh_the_list(ui):

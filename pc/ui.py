@@ -14,7 +14,6 @@ import sys
 import threading
 import tkinter as tk
 import webbrowser
-from collections import deque
 from datetime import datetime
 from pathlib import Path
 from tkinter import font as tkfont
@@ -54,11 +53,21 @@ POLL_MS = 200
 STATUS_MS = 5000
 RELOAD_MS = 60_000
 ACTIVITY_MS = 2000
-MAX_POPUPS = 3
 NO_INFO = "Bilgi yok"
 SOURCE_NO_INFO = "Kaynakta bilgi yok"   # the source gave nothing (grey), same for every row
 FIELD_NAMES = {"summary": "Özet", "cast": "Oyuncular", "credits": "Yapım", "duration": "Süre",
                "age": "Yaş", "genre": "Tür"}
+# attributes that belong to one built detail view (plays and events each keep their own)
+VIEW_ATTRS = (
+    "_detail_parts", "_detail_stack", "_detail_w", "_detail_window", "_summary_fit",
+    "_target_labels", "follow_help", "event_no_page_label", "event_page_btn", "session_note",
+    "add_buttons", "target_buttons", "title_label", "open_btn", "meta_label", "active_var",
+    "active_chk", "_session_sb", "_session_sb_on", "_session_note_on", "_session_links",
+    "_session_missing", "session_tree", "_targets_parent", "_target_pool", "_target_rows",
+    "_target_none", "_target_none_on", "_targets_shown", "_none_style", "event_facts_grid",
+    "_fact_pool", "_facts_shown", "event_fact_labels", "_event_name_w", "summary_text",
+    "_prov_widget", "provenance_label", "event_info_labels", "cast_label", "credits_label",
+    "_text_fg", "detail_canvas", "detail_vsb", "detail_body")
 DETAIL_CHROME_PX = 30  # title + border of the "Oyun ayrıntısı" frame
 COLUMNS = L.LIST_COLUMNS      # (key, heading, width): one table for plays and source events
 NEW_COLOR = "#6d28d9"         # name of an item the user has not opened yet (bold)
@@ -164,44 +173,61 @@ class Tooltip:
 
 
 class Popup(tk.Toplevel):
-    """One desktop notification: topmost, never grabs focus (beeps: ``App.alert``)."""
+    """The alert popup: a plain native window (standard frame, title bar and close button, ttk
+    widgets, system font) with ONE generic line and an "Aç" button. Topmost, never takes the
+    keyboard focus, closes itself after ``L.POPUP_SECONDS``; a click anywhere (or "Aç") brings
+    the main window up. The beeps are the app's (``App.alert``)."""
 
-    def __init__(self, app, title: str, text: str, url: str):
+    def __init__(self, app, text: str):
         super().__init__(app.root)
-        self.app, self.url = app, url
-        title, text = L.popup_text(title, text)
-        self.title(title)
+        self.withdraw()
+        self.app = app
+        self.title(L.POPUP_TITLE)
         self.attributes("-topmost", True)
+        self.resizable(False, False)
+        frame = ttk.Frame(self, padding=12)
+        frame.pack(fill="both", expand=True)
+        self.label = ttk.Label(frame, text=text, justify="left", width=34)
+        self.label.pack(anchor="w")
+        self.open_btn = ttk.Button(frame, text="Aç", command=self.open_main)
+        self.open_btn.pack(anchor="e", pady=(10, 0))
+        for widget in (self, frame, self.label):
+            widget.bind("<Button-1>", lambda _e: self.open_main(), add="+")
+        self.protocol("WM_DELETE_WINDOW", self.dismiss)
+        self._timer = None
+        self.place()
+        self.focus_ok = winsetup.set_no_activate(self)    # before it is shown
+        self.deiconify()
+        self.restart_timer()
+
+    def place(self) -> None:
+        """Bottom-right corner of the work area (above the taskbar)."""
+        self.update_idletasks()
+        left, top, right, bottom = winsetup.work_area(self.app.root)
+        w, h, gap = self.winfo_reqwidth(), self.winfo_reqheight(), self.app.px(12)
+        self.geometry(f"+{max(left, right - w - gap)}+{max(top, bottom - h - gap)}")
+
+    def set_text(self, text: str) -> None:
+        if self.label.cget("text") != text:
+            self.label.configure(text=text)
+            self.place()
+
+    def restart_timer(self) -> None:
+        if self._timer is not None:
+            self.after_cancel(self._timer)
+        self._timer = self.after(L.POPUP_SECONDS * 1000, lambda: self.dismiss(user=False))
+
+    def open_main(self) -> None:
+        self.app.show_main()
+        self.dismiss()
+
+    def dismiss(self, user: bool = True) -> None:
+        """Close. A click / the close button also stops the beep series; the timeout does not."""
+        self.app.popup_closed(self, user)
         try:
-            self.attributes("-toolwindow", True)
+            self.destroy()
         except tk.TclError:
             pass
-        self.resizable(False, False)
-        ttk.Label(self, text=title, font=app.bold_font, wraplength=400).pack(
-            anchor="w", padx=10, pady=(10, 4))
-        box = ttk.Frame(self)
-        box.pack(fill="both", expand=True, padx=10)
-        self.body = tk.Text(box, width=52, height=min(12, max(3, text.count("\n") + 3)),
-                            wrap="word", relief="flat", background=self.cget("background"))
-        self.body.insert("1.0", text)
-        self.body.configure(state="disabled")
-        self.body.pack(side="left", fill="both", expand=True)
-        bar = ttk.Frame(self)
-        bar.pack(fill="x", padx=10, pady=10)
-        self.open_btn = ttk.Button(bar, text="Sayfayı aç", command=self.open_page,
-                                   state="normal" if url else "disabled")
-        self.open_btn.pack(side="left")
-        self.seen_btn = ttk.Button(bar, text="Gördüm", command=self.seen)
-        self.seen_btn.pack(side="right")
-        self.protocol("WM_DELETE_WINDOW", self.seen)
-
-    def open_page(self) -> None:
-        if self.url:
-            self.app.open_url(self.url)
-
-    def seen(self) -> None:
-        self.app.popup_closed(self)
-        self.destroy()
 
 
 class TargetEditor(tk.Toplevel):
@@ -365,8 +391,19 @@ class App:
         self.rows_by_slug: dict = {}
         self.selected: str | None = None
         self._detail_sig = None
-        self.popups: list[Popup] = []
-        self.popup_wait: deque = deque()
+        self._detail_struct_key = None
+        self._detail_kind = None            # which kind (plays / events) the current view shows
+        self._detail_views: dict = {}       # kind -> its stashed view attributes
+        self._detail_slug = None
+        self.detail_body = None
+        self._detail_parts = None
+        self.detail_fills = self.detail_builds = 0   # detail updates in place / full builds
+        self.rows_skipped = self.rows_rebuilt = 0   # list refreshes that did / did not rebuild
+        self.popup: Popup | None = None          # the one alert popup (wave 18)
+        self._popup_events: dict = {}            # alerts collected for it, by event key
+        self._popup_flush = None
+        self._beep_dismissed = False
+        self.popup_coalesce_ms = L.POPUP_COALESCE_MS
         self.beep_count = 0
         self._beep_after = None
         self._pending: set = set()
@@ -965,20 +1002,27 @@ class App:
         self._render_rows()
 
     def _render_rows(self) -> None:
+        """Sort, then (re)fill the list. A refresh whose rows are cell-for-cell what the table
+        already shows (the usual case: a poll that found nothing new) rebuilds nothing."""
         rows = L.sort_rows(self._default_rows, self.sort)
         for key, label, _w in COLUMNS:
             self.tree.heading(key, text=L.heading_text(label, key, self.sort))
         self.rows = rows
         self.rows_by_slug = {r.slug: r for r in rows}
-        top = self.tree.yview()[0]
-        self.tree.delete(*self.tree.get_children())
-        for r in rows:
-            self.tree.insert("", "end", iid=r.slug, cells=L.row_cells(r), tags=L.row_tags(r))
-        if self.selected in self.rows_by_slug:
-            self.tree.selection_set(self.selected)
+        specs = [(r.slug, L.row_cells(r), L.row_tags(r)) for r in rows]
+        if self.tree.matches(specs):
+            self.rows_skipped += 1
         else:
-            self.selected = None
-        self.tree.yview_moveto(top)
+            self.rows_rebuilt += 1
+            top = self.tree.yview()[0]
+            self.tree.delete(*self.tree.get_children())
+            for slug, cells, tags in specs:
+                self.tree.insert("", "end", iid=slug, cells=cells, tags=tags)
+            if self.selected in self.rows_by_slug:
+                self.tree.selection_set(self.selected)
+            else:
+                self.selected = None
+            self.tree.yview_moveto(top)
         self.show_detail()
 
     def _cell_click(self, iid: str, key: str) -> None:
@@ -1024,6 +1068,10 @@ class App:
         for child in self.detail.winfo_children():
             child.destroy()
         self.detail_body = None
+        self._detail_parts = None
+        self._detail_struct_key = None
+        self._detail_kind = None
+        self._detail_views = {}
         ttk.Label(self.detail, text="Bir oyun seçin.").pack(padx=10, pady=10, anchor="w")
 
     def show_detail(self, force: bool = False) -> None:
@@ -1049,6 +1097,11 @@ class App:
         if sig == self._detail_sig and not force:
             return
         self._detail_sig = sig
+        struct = self._detail_struct(row, sessions)
+        if not self._pending and self._activate_view(struct):
+            self._fill_detail(row, sessions)       # same widgets, new texts: no destroy / create
+            return
+        self._detail_struct_key = struct
         body = self._detail_body()
         parts = {name: ttk.Frame(body) for name in ("left", "side", "summary", "people")}
         parts["facts"] = ttk.LabelFrame(parts["side"], text="Bilgiler")
@@ -1058,6 +1111,7 @@ class App:
         self.follow_help = self.event_no_page_label = self.event_page_btn = None
         self.session_note = None
         self.add_buttons, self.target_buttons, self._target_labels = {}, {}, []
+        self.detail_builds += 1
         self._build_header(parts["left"], row)
         if row.is_event:
             self._build_event_links(parts["left"], row)
@@ -1072,39 +1126,107 @@ class App:
         self._arrange_detail()
         self._refit()
 
+    def _stash_view(self) -> None:
+        """Park the current detail view (hidden, widgets kept) under its kind."""
+        if self._detail_kind is None or self.detail_body is None \
+                or not self.detail_body.winfo_exists():
+            return
+        self._detail_views[self._detail_kind] = {a: getattr(self, a, None) for a in VIEW_ATTRS}
+        self.detail_vsb.suspend()
+        self.detail_canvas.pack_forget()
+
+    def _activate_view(self, kind) -> bool:
+        """Make the parked (or current) view of ``kind`` the visible one; False when there is none
+        yet (it has to be built once)."""
+        if self._detail_kind == kind and self._detail_parts is not None \
+                and self.detail_body is not None and self.detail_body.winfo_exists():
+            return True
+        view = self._detail_views.get(kind)
+        if view is None or not view["detail_body"].winfo_exists():
+            return False
+        self._stash_view()
+        for attr, value in view.items():
+            setattr(self, attr, value)
+        self._detail_kind = kind
+        self._detail_struct_key = kind
+        self.detail_vsb.resume()
+        self.detail_canvas.pack(side="left", fill="both", expand=True)
+        return True
+
+    def _detail_struct(self, row, sessions) -> tuple:
+        """What decides which widgets a detail needs: only its kind. Everything else (session
+        rows, targets, facts, provenance line) is a pool whose unused members are hidden, so a
+        row of the same kind is shown by changing texts, commands and visibility
+        (``_fill_detail``) instead of destroying and creating ~50 widgets."""
+        return row.is_event
+
+    def _fill_detail(self, row, sessions) -> None:
+        """Re-use the open detail for ``row`` (same structure): update every dynamic text,
+        command and state in place, then recompute the wrap lengths."""
+        self.detail_fills += 1
+        if self._detail_slug != row.slug:
+            self.detail_canvas.yview_moveto(0)
+        self._detail_slug = row.slug
+        self._fill_header(row)
+        if row.is_event:
+            self._fill_event_links(row)
+        else:
+            self._fill_sessions(row, sessions)
+            self._fill_targets(row)
+        self._fill_facts(row)
+        self._fill_info(row)
+        width = self._detail_avail_px()
+        self._apply_detail_layout(self._detail_parts, self.detail_body, width,
+                                  width < self.px(STACK_PX))
+        self._refit()
+
     def _build_header(self, left, row) -> None:
         """Title + page button, meta line, the follow switch (plays also get target buttons)."""
         head = ttk.Frame(left)
         head.pack(fill="x", padx=8, pady=4)
-        ttk.Label(head, text=row.title, font=self.bold_font).pack(side="left")
-        self.open_btn = ttk.Button(head, text="Sayfayı aç",
-                                   command=lambda: row.url and self.open_url(row.url),
-                                   state="normal" if row.url else "disabled")
+        self.title_label = ttk.Label(head, text=row.title, font=self.bold_font)
+        self.title_label.pack(side="left")
+        self.open_btn = ttk.Button(head, text="Sayfayı aç")
         self.open_btn.pack(side="right")
         self.meta_label = RichLabel(left, self.italic_font, DERIVED_COLOR,
                                     wraplength=self.px(300))
-        self.meta_label.set_parts(L.meta_parts(row))
         self.meta_label.pack(padx=8, anchor="w")
         acts = ttk.Frame(left)
         acts.pack(fill="x", padx=8, pady=(2, 0))
         self.active_var = tk.BooleanVar(value=row.active)
+        self.active_chk = ttk.Checkbutton(acts, text="Aktif (takip ediliyor)",
+                                          variable=self.active_var)
+        self.active_chk.pack(side="left")
+        if not row.is_event:
+            for kind, label in (("y", "Yetişkin hedefi ekle"), ("c", "Çocuk hedefi ekle")):
+                btn = ttk.Button(acts, text=label)
+                btn.pack(side="left", padx=6)
+                self.add_buttons[kind] = btn
+        self._detail_slug = row.slug
+        self._fill_header(row)
+
+    def _fill_header(self, row) -> None:
+        if self.title_label.cget("text") != row.title:
+            self.title_label.configure(text=row.title)
+        self.open_btn.configure(command=lambda: row.url and self.open_url(row.url),
+                                state="normal" if row.url else "disabled")
+        self.meta_label.set_parts(L.meta_parts(row))
+        self.active_var.set(row.active)
         setter = "set_event_follow" if row.is_event else "set_active"
-        self.active_chk = ttk.Checkbutton(
-            acts, text="Aktif (takip ediliyor)", variable=self.active_var,
-            command=lambda: self.edit(getattr(self.service, setter), row.slug, self.active_var.get(),
+        self.active_chk.configure(
+            command=lambda: self.edit(getattr(self.service, setter), row.slug,
+                                      self.active_var.get(),
                                       key=("ef" if row.is_event else "active", row.slug),
                                       widget=self.active_chk))
-        self.active_chk.pack(side="left")
         if row.is_event:
             return
         cfg_watch = self.service.config.plays.get(row.slug) if self.service.config else None
         have = {t.id for t in (cfg_watch.targets if cfg_watch else [])}
-        for kind, label in (("y", "Yetişkin hedefi ekle"), ("c", "Çocuk hedefi ekle")):
-            btn = ttk.Button(acts, text=label, state="disabled" if kind in have else "normal")
-            btn.configure(command=lambda k=kind, b=btn: self.edit(
-                self.service.ensure_target, row.slug, k, key=("add", row.slug, k), widget=b))
-            btn.pack(side="left", padx=6)
-            self.add_buttons[kind] = btn
+        for kind, btn in self.add_buttons.items():
+            btn.configure(
+                state="disabled" if kind in have else "normal",
+                command=lambda k=kind, b=btn: self.edit(
+                    self.service.ensure_target, row.slug, k, key=("add", row.slug, k), widget=b))
 
     def _build_event_links(self, left, row) -> None:
         """Events have no per-session pages: the follow help and one page button."""
@@ -1113,78 +1235,135 @@ class App:
         self.follow_help.pack(padx=8, anchor="w")
         links = ttk.Frame(left)
         links.pack(fill="x", padx=8, pady=(4, 0))
-        self.event_page_btn = ttk.Button(links, text="Etkinlik sayfası ↗",
-                                         command=lambda: row.url and self.open_url(row.url),
-                                         state="normal" if row.url else "disabled")
+        self.event_page_btn = ttk.Button(links, text="Etkinlik sayfası ↗")
         self.event_page_btn.pack(side="left")
         self.event_no_page_label = SelectableLabel(links, text=NO_SESSION_PAGE,
                                                    foreground=L.GRAY, wraplength=self.px(300))
         self.event_no_page_label.pack(side="left", padx=8)
+        self._fill_event_links(row)
+
+    def _fill_event_links(self, row) -> None:
+        self.event_page_btn.configure(command=lambda: row.url and self.open_url(row.url),
+                                      state="normal" if row.url else "disabled")
 
     def _build_sessions(self, left, row, sessions) -> None:
         sess = ttk.Frame(left)
         sess.pack(fill="x", padx=8, pady=6)      # exactly as tall as its rows: no stretching
-        self._session_links: dict[str, str] = {}
         self.session_tree = GridTable(
             sess, (("when", "Seans", 160), ("status", "Durum", 100),
                    ("opens", "Satış açılışı", 170), ("link", "Bağlantı", 96)),
             on_cell=self._session_click, sortable=False, row_px=L.ROW_PX, head_px=L.HEADING_PX,
-            stretch=("when", "opens"), height_rows=min(max(len(sessions), 2), SESSION_ROWS_MAX),
-            hscroll=False)
+            stretch=("when", "opens"), height_rows=2, hscroll=False)
+        self.session_tree.pack(side="left", fill="x", expand=True)
+        self._session_sb = ttk.Scrollbar(sess, orient="vertical",
+                                         command=self.session_tree.yview)
+        self._session_sb_on = False
+        self.session_note = SelectableLabel(left, text="", foreground=L.GRAY,
+                                            wraplength=self.px(300))
+        self._session_note_on = False
+        self._fill_sessions(row, sessions)
+
+    def _fill_sessions(self, row, sessions) -> None:
+        tree = self.session_tree
+        self._session_links: dict[str, str] = {}
         missing = False
+        specs = []
         for n, s in enumerate(sessions):
             text, url, note = L.session_link(s, row.url)
             missing = missing or bool(note)
             self._session_links[str(n)] = url
-            self.session_tree.insert("", "end", iid=str(n), cells=[
+            specs.append((str(n), [
                 L.Cell(s.when), L.Cell(f"{s.icon} {s.status}"), L.Cell(s.opens),
-                L.Cell(text or L.BLANK, False, "link" if url else "text")])
+                L.Cell(text or L.BLANK, False, "link" if url else "text")], ()))
         if not sessions:
-            self.session_tree.insert("", "end", iid="none", cells=[
-                L.Cell("yaklaşan seans yok"), L.Cell(""), L.Cell(""), L.Cell("")])
-        if len(sessions) > SESSION_ROWS_MAX:    # decided by the row count, never after paint
-            sess_sb = ttk.Scrollbar(sess, orient="vertical", command=self.session_tree.yview)
-            self.session_tree.configure(yscrollcommand=sess_sb.set)
-            sess_sb.pack(side="right", fill="y")
-        self.session_tree.pack(side="left", fill="x", expand=True)
-        self.session_note = SelectableLabel(
-            left, text="Seans bağlantısı olmayan satırda düğme oyun sayfasını açar (\"Oyun ↗\")."
-            if missing else "", foreground=L.GRAY, wraplength=self.px(300))
-        if missing:
-            self.session_note.pack(side="top", anchor="w", padx=8)
+            specs.append(("none", [L.Cell("yaklaşan seans yok"), L.Cell(""), L.Cell(""),
+                                   L.Cell("")], ()))
+        if not tree.matches(specs):
+            tree.delete(*tree.get_children())
+            for iid, cells, _tags in specs:
+                tree.insert("", "end", iid=iid, cells=cells)
+        tree.set_height_rows(min(max(len(sessions), 2), SESSION_ROWS_MAX))
+        tree.yview_moveto(0)
+        over = len(sessions) > SESSION_ROWS_MAX   # decided by the row count, never after paint
+        if over != self._session_sb_on:
+            self._session_sb_on = over
+            if over:
+                tree.configure(yscrollcommand=self._session_sb.set)
+                self._session_sb.pack(side="right", fill="y", before=tree)
+            else:
+                tree.configure(yscrollcommand=lambda *_a: None)
+                self._session_sb.pack_forget()
+        self.session_note.configure(
+            text="Seans bağlantısı olmayan satırda düğme oyun sayfasını açar (\"Oyun ↗\")."
+            if missing else "")
+        if missing != self._session_note_on:
+            self._session_note_on = missing
+            if missing:
+                self.session_note.pack(side="top", anchor="w", padx=8)
+            else:
+                self.session_note.pack_forget()
 
     def _build_targets(self, targets, row) -> None:
-        target_labels = self._target_labels
+        self._targets_parent = targets
+        self._target_pool = []     # (line, label, edit button, delete button); grows, never shrinks
+        self._target_rows = []     # the visible ones
+        self._target_none = ttk.Label(targets, justify="left")
+        self._target_none_on = False
+        self._targets_shown = 0
+        self._none_style = (str(self._target_none.cget("font")),
+                            str(self._target_none.cget("foreground")))
+        self._fill_targets(row)
+
+    def _fill_targets(self, row) -> None:
         watch = self.service.config.plays.get(row.slug) if self.service.config else None
-        if watch is None or not watch.targets:
-            implicit = watch is not None and watch.active
-            text = L.NO_TARGET_TEXT if implicit else "Hedef yok."
-            # "tüm seanslar" is our default, not data: italic grey-blue
-            lab = ttk.Label(targets, text=text, justify="left", **(
-                {"font": self.italic_font, "foreground": DERIVED_COLOR} if implicit else {}))
-            lab.pack(anchor="w", padx=6, pady=4)
-            target_labels.append(lab)
-        for t in (watch.targets if watch else []):
-            line = ttk.Frame(targets)
-            line.pack(fill="x", padx=6, pady=2)
-            lab = ttk.Label(line, text=L.target_summary_text(t), wraplength=self.px(260),
-                            justify="left")
+        targets = list(watch.targets) if watch else []
+        while len(self._target_pool) < len(targets):
+            line = ttk.Frame(self._targets_parent)
+            lab = ttk.Label(line, wraplength=self.px(260), justify="left")
             lab.pack(side="left", fill="x", expand=True)
-            target_labels.append(lab)
             delete = ttk.Button(line, text="Sil", width=5)
+            delete.pack(side="right")
+            edit = ttk.Button(line, text="Düzenle", width=8)
+            edit.pack(side="right", padx=4)
+            self._target_pool.append((line, lab, edit, delete))
+        none = self._target_none
+        if targets:
+            if self._target_none_on:
+                none.pack_forget()
+                self._target_none_on = False
+        else:
+            implicit = watch is not None and watch.active
+            # "tüm seanslar" is our default, not data: italic grey-blue
+            none.configure(text=L.NO_TARGET_TEXT if implicit else "Hedef yok.",
+                           font=self.italic_font if implicit else self._none_style[0],
+                           foreground=DERIVED_COLOR if implicit else self._none_style[1])
+            if not self._target_none_on:
+                none.pack(anchor="w", padx=6, pady=4)
+                self._target_none_on = True
+        self.target_buttons = {}
+        self._target_rows = []
+        for n, (line, lab, edit, delete) in enumerate(self._target_pool):
+            if n >= len(targets):
+                if n < self._targets_shown:
+                    line.pack_forget()
+                continue
+            t = targets[n]
+            text = L.target_summary_text(t)
+            if lab.cget("text") != text:
+                lab.configure(text=text)
             delete.configure(command=lambda tid=t.id, nm=t.name, b=delete:
                              self.delete_target(row.slug, tid, nm, b))
-            delete.pack(side="right")
-            edit = ttk.Button(line, text="Düzenle", width=8,
-                              command=lambda tt=t: self.open_editor(row.slug, tt.id))
-            edit.pack(side="right", padx=4)
+            edit.configure(command=lambda tt=t: self.open_editor(row.slug, tt.id))
+            if n >= self._targets_shown:
+                line.pack(fill="x", padx=6, pady=2)
             self.target_buttons[t.id] = edit
+            self._target_rows.append((lab, edit, delete))
+        self._targets_shown = len(targets)
+        self._target_labels[:] = ([none] if not targets else []) + [r[0] for r in self._target_rows]
 
-    def _build_facts(self, parent, row) -> None:
-        """"Bilgiler": the same labelled block for every row. A value the source did not give is
+    def _facts(self, row) -> list[tuple[str, str, bool]]:
+        """Rows of "Bilgiler" as (name, value, derived). A value the source did not give is
         "Bilgi yok" (italic); a derived one (resolved venue, our reading of the opening) is italic."""
-        grid = ttk.Frame(parent)
-        grid.pack(fill="x", padx=8, pady=6)
         der = row.derived
         if row.is_event:
             when = ("Etkinlik tarihi", row.seans or NO_INFO, not row.seans)
@@ -1200,18 +1379,46 @@ class App:
         facts += [("İletişim" if i == 0 else "", line, False) for i, line in enumerate(row.contact)]
         if row.url:
             facts.append(("Etkinlik sayfası", row.url, False))
+        return facts
+
+    def _build_facts(self, parent, row) -> None:
+        """"Bilgiler": the same labelled block for every row (a pool of name / value pairs)."""
+        grid = ttk.Frame(parent)
+        grid.pack(fill="x", padx=8, pady=6)
         self.event_facts_grid = grid
-        self.event_fact_labels, name_labels = [], []
-        for i, (name, value, derived) in enumerate(facts):
-            nl = ttk.Label(grid, text=name, font=self.bold_font)
-            nl.grid(row=i, column=0, sticky="nw", padx=(0, 12), pady=1)
-            name_labels.append(nl)
-            lbl = SelectableLabel(grid, text=value, wraplength=self.px(300),
+        self._fact_pool = []       # (name label, value label); grows, never shrinks
+        self._facts_shown = 0
+        self.event_fact_labels = []
+        self._event_name_w = 0
+        self._fill_facts(row)
+
+    def _fill_facts(self, row) -> None:
+        facts = self._facts(row)
+        while len(self._fact_pool) < len(facts):
+            i = len(self._fact_pool)
+            nl = ttk.Label(self.event_facts_grid, text="", font=self.bold_font)
+            lbl = SelectableLabel(self.event_facts_grid, text="", wraplength=self.px(300),
                                   italic_font=self.italic_font, derived_color=DERIVED_COLOR)
-            lbl.set_text(value, derived=derived)
+            nl.grid(row=i, column=0, sticky="nw", padx=(0, 12), pady=1)
             lbl.grid(row=i, column=1, sticky="w", pady=1)
-            self.event_fact_labels.append(lbl)
-        self._event_name_w = max((nl.winfo_reqwidth() for nl in name_labels), default=0)
+            self._fact_pool.append((nl, lbl))
+        for n, (nl, lbl) in enumerate(self._fact_pool):
+            if n >= len(facts):
+                if n < self._facts_shown:
+                    nl.grid_remove()
+                    lbl.grid_remove()
+                continue
+            name, value, derived = facts[n]
+            if nl.cget("text") != name:
+                nl.configure(text=name)    # (a pool row keeps its name when the kind is the same)
+            lbl.set_text(value, derived=derived)
+            if n >= self._facts_shown:
+                nl.grid()
+                lbl.grid()
+        self._facts_shown = len(facts)
+        self.event_fact_labels = [lbl for _nl, lbl in self._fact_pool[:len(facts)]]
+        self._event_name_w = max((nl.winfo_reqwidth() for nl, _l in self._fact_pool[:len(facts)]),
+                                 default=0)
 
     def _credit_segments(self, row) -> list[tuple[str, bool]]:
         """Yapım as (text, derived) segments: two entries per line ("Yazan: A  ·  Yönetmen: B");
@@ -1229,42 +1436,56 @@ class App:
         the same-named Biletinial play is italic grey-blue with a provenance line."""
         parts = self._detail_parts
         summary_box, people = parts["summary"], parts["people"]
-        borrowed = row.borrowed
         ttk.Label(summary_box, text="Özet", font=self.bold_font).pack(
             anchor="w", padx=8, pady=(6, 0))
         frame = ttk.Frame(summary_box)
         frame.pack(fill="x", padx=8)
-        text = clean_summary(row.summary)
         self.summary_text = box = SelectableText(
             frame, box=True, italic_font=self.italic_font, derived_color=DERIVED_COLOR)
         sb = ttk.Scrollbar(frame, orient="vertical", command=box.yview)
         box.configure(yscrollcommand=sb.set)
-        box.set_text(text or SOURCE_NO_INFO, derived=bool(text) and "summary" in borrowed)
-        if not text:
-            box.configure(foreground=L.GRAY)
         box.pack(side="left", fill="both", expand=True)
         box.configure(width=1)                  # width comes from the column
         box.scrolls = lambda: bool(sb.winfo_ismapped())
-        # as tall as the text needs, up to ~40 % of the pane (then it scrolls)
-        self._summary_fit = autosize_text(
-            box, lambda: max(6, int(self.pane.winfo_height() * 0.4 / 17)),
-            on_change=self._refit, scrollbar=sb, also_fonts=[self.italic_font])
-        self.provenance_label = None
-        if row.borrowed_from:
-            names = [FIELD_NAMES[k] for k in FIELD_NAMES if k in borrowed]
-            self.provenance_label = SelectableLabel(
-                summary_box, italic_font=self.italic_font, derived_color=DERIVED_COLOR,
-                wraplength=self.px(300))
-            self.provenance_label.set_text(
-                f"Biletinial kaydından (aynı ad): {', '.join(names)} — “{row.borrowed_from}”",
-                derived=True)
-            self.provenance_label.pack(anchor="w", padx=8, pady=(2, 0))
+        self._prov_widget = SelectableLabel(
+            summary_box, italic_font=self.italic_font, derived_color=DERIVED_COLOR,
+            wraplength=self.px(300))
+        self.provenance_label = None     # the widget while the provenance line is shown
         self.event_info_labels = {"Özet": box}
         for name, widget_attr in (("Oyuncular", "cast_label"), ("Yapım", "credits_label")):
             ttk.Label(people, text=name, font=self.bold_font).pack(
                 anchor="w", padx=8, pady=(6, 0))
             lbl = SelectableLabel(people, wraplength=self.px(300),
                                   italic_font=self.italic_font, derived_color=DERIVED_COLOR)
+            lbl.pack(anchor="w", padx=8)
+            setattr(self, widget_attr, lbl)
+            self.event_info_labels[name] = lbl
+        self._text_fg = {w: str(w.cget("foreground")) for w in self.event_info_labels.values()}
+        self._fill_info(row)
+        # as tall as the text needs, up to ~40 % of the pane (then it scrolls)
+        self._summary_fit = autosize_text(
+            box, lambda: max(6, int(self.pane.winfo_height() * 0.4 / 17)),
+            on_change=self._refit, scrollbar=sb, also_fonts=[self.italic_font])
+
+    def _fill_info(self, row) -> None:
+        borrowed = row.borrowed
+        box = self.summary_text
+        text = clean_summary(row.summary)
+        box.set_text(text or SOURCE_NO_INFO, derived=bool(text) and "summary" in borrowed)
+        box.configure(width=1, foreground=self._text_fg[box] if text else L.GRAY)   # width: the column
+        box.yview_moveto(0)
+        if row.borrowed_from:
+            names = [FIELD_NAMES[k] for k in FIELD_NAMES if k in borrowed]
+            self._prov_widget.set_text(
+                f"Biletinial kaydından (aynı ad): {', '.join(names)} — “{row.borrowed_from}”",
+                derived=True)
+            if self.provenance_label is None:
+                self._prov_widget.pack(anchor="w", padx=8, pady=(2, 0))
+                self.provenance_label = self._prov_widget
+        elif self.provenance_label is not None:
+            self._prov_widget.pack_forget()
+            self.provenance_label = None
+        for name, lbl in (("Oyuncular", self.cast_label), ("Yapım", self.credits_label)):
             if name == "Oyuncular":
                 value = ", ".join(row.cast)
                 segments = [(value, "cast" in borrowed)]
@@ -1273,12 +1494,10 @@ class App:
                 segments = self._credit_segments(row)
             if value:
                 lbl.set_segments(segments)
+                lbl.configure(foreground=self._text_fg[lbl])
             else:
                 lbl.set_text(SOURCE_NO_INFO)
                 lbl.configure(foreground=L.GRAY)
-            lbl.pack(anchor="w", padx=8)
-            setattr(self, widget_attr, lbl)
-            self.event_info_labels[name] = lbl
 
     def _detail_avail_px(self) -> int:
         """Width the detail content gets: the detail frame minus the (always reserved)
@@ -1374,22 +1593,36 @@ class App:
             self.open_url(url)
 
     def _detail_body(self) -> ttk.Frame:
-        """Empty, scrollable content frame of the detail pane (small windows stay usable)."""
-        for child in self.detail.winfo_children():
-            child.destroy()
-        canvas = tk.Canvas(self.detail, highlightthickness=0, borderwidth=0)
-        vsb = AutoScrollbar(self.detail, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=vsb.set)
-        vsb.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
-        body = ttk.Frame(canvas)
-        window = canvas.create_window((0, 0), window=body, anchor="nw")
-        body.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
-        self._detail_window = window
+        """Empty, scrollable content frame of the detail pane (small windows stay usable). A view
+        of the same kind keeps its canvas, scrollbar and frame (only their children go); a new
+        kind gets its own and the previous one is parked, not destroyed."""
+        body = self.detail_body
+        if (body is not None and body.winfo_exists()
+                and self._detail_kind == self._detail_struct_key):
+            for child in body.winfo_children():
+                child.destroy()
+            self.detail_canvas.yview_moveto(0)
+        else:
+            self._stash_view()
+            keep = {id(w) for v in self._detail_views.values()
+                    for w in (v["detail_canvas"], v["detail_vsb"])}
+            for child in self.detail.winfo_children():
+                if id(child) not in keep:
+                    child.destroy()        # e.g. the "Bir oyun seçin." placeholder
+            canvas = tk.Canvas(self.detail, highlightthickness=0, borderwidth=0)
+            vsb = AutoScrollbar(self.detail, orient="vertical", command=canvas.yview)
+            canvas.configure(yscrollcommand=vsb.set)
+            vsb.pack(side="right", fill="y")
+            canvas.pack(side="left", fill="both", expand=True)
+            body = ttk.Frame(canvas)
+            window = canvas.create_window((0, 0), window=body, anchor="nw")
+            body.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+            self._detail_window = window
+            canvas.bind("<Configure>", self._detail_canvas_resized)
+            self.detail_canvas, self.detail_vsb, self.detail_body = canvas, vsb, body
+            self._detail_kind = self._detail_struct_key
         self._detail_parts, self._detail_stack, self._detail_w = None, None, None
         self._summary_fit, self._target_labels = None, ()
-        canvas.bind("<Configure>", self._detail_canvas_resized)
-        self.detail_canvas, self.detail_vsb, self.detail_body = canvas, vsb, body
         return body
 
     def _detail_canvas_resized(self, _event) -> None:
@@ -1575,28 +1808,46 @@ class App:
         self.root.after(RELOAD_MS, self._reload_timer)
 
     # ---- notifications --------------------------------------------------------------------------
-    def show_popup(self, title: str, text: str, events) -> None:
-        url = L.event_url(events, {r.slug: r.url for r in self.rows})
-        self.popup_wait.append((title, text, url))
-        self._drain_popups()
+    def show_popup(self, _title: str, _text: str, events) -> None:
+        """Alerts from the service. Their own title / text are ignored (they carry names and
+        dates); alerts that arrive together are collected for ``popup_coalesce_ms`` and shown as
+        ONE popup (distinct by event key)."""
+        for ev in events:
+            self._popup_events.setdefault(ev.key or f"#{len(self._popup_events)}", ev)
+        if self._popup_flush is None and not self.closing:
+            self._popup_flush = self.root.after(self.popup_coalesce_ms, self.flush_popups)
 
-    def _drain_popups(self) -> None:
-        while self.popup_wait and len(self.popups) < MAX_POPUPS:
-            title, text, url = self.popup_wait.popleft()
-            pop = Popup(self, title, text, url)
-            self.popups.append(pop)
-            self._place_popups()
-            self.alert()
+    def flush_popups(self) -> None:
+        """Show (or refresh) the single popup for everything collected since the last flush."""
+        self._popup_flush = None
+        if self.closing or not self._popup_events:
+            return
+        text = L.popup_text(self._popup_events.values())
+        if self.popup is not None and self.popup.winfo_exists():
+            self.popup.set_text(text)
+            self.popup.restart_timer()
+        else:
+            self.popup = Popup(self, text)
+        self.alert()
+
+    def show_main(self) -> None:
+        """Bring the main window to the front (also from the minimised state)."""
+        self.root.deiconify()
+        self.root.lift()
+        self.root.attributes("-topmost", True)
+        self.root.after(200, lambda: self.root.attributes("-topmost", False))
+        self.root.focus_force()
 
     def alert(self) -> None:
         """A new notification: restart the beep series (one shared timer for all popups)."""
         self.beep_count = 0
+        self._beep_dismissed = False
         if self._beep_after is None:
             self._beep_tick()
 
     def _beep_tick(self) -> None:
         self._beep_after = None
-        if self.closing or not self.popups \
+        if self.closing or self._beep_dismissed \
                 or not L.should_beep(self.beep_count, self.beep_enabled, False):
             return
         self.beep_count += 1
@@ -1611,22 +1862,13 @@ class App:
                 pass
             self._beep_after = None
 
-    def popup_closed(self, pop: Popup) -> None:
-        if pop in self.popups:
-            self.popups.remove(pop)
-        if not self.popups and not self.popup_wait:
+    def popup_closed(self, pop: Popup, user: bool = True) -> None:
+        if pop is self.popup:
+            self.popup = None
+            self._popup_events = {}       # the next alerts start a new popup
+        if user:                          # seen: stop the beeps (a timeout leaves the series running)
+            self._beep_dismissed = True
             self._stop_beeps()
-        self._place_popups()
-        self._drain_popups()
-
-    def _place_popups(self) -> None:
-        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-        y = sh - 70
-        for pop in self.popups:
-            pop.update_idletasks()
-            w, h = pop.winfo_reqwidth(), pop.winfo_reqheight()
-            y -= h + 10
-            pop.geometry(f"+{max(0, sw - w - 16)}+{max(0, y)}")
 
     def _beep_toggled(self) -> None:
         self.beep_enabled = bool(self.beep_var.get())
@@ -1723,9 +1965,9 @@ class App:
         self.save_ui()
         if self._awake_on:   # give the power state back (also reset by Windows on exit)
             self._apply_keep_awake(False)
-        for pop in list(self.popups):
+        if self.popup is not None:
             try:
-                pop.destroy()
+                self.popup.destroy()
             except tk.TclError:
                 pass
         if self.worker is not None:

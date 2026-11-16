@@ -24,7 +24,6 @@ from tiyatro.models import ISTANBUL, Target
 from tiyatro.timeutil import parse_iso
 
 GREEN, AMBER, RED, GRAY = "#1a7f37", "#b36b00", "#c62828", "#6b7280"
-POPUP_MAX_CHARS = 1500
 BEEP_INTERVAL_S = 20
 BEEP_MAX = 5
 DEFAULT_PORT = 47615
@@ -510,10 +509,31 @@ def status_view(status: dict, now: datetime, refresh_failures=()) -> StatusView:
 
 # ---- popup / beeps -------------------------------------------------------------------------
 
-def popup_text(title: str, text: str) -> tuple[str, str]:
-    if len(text) > POPUP_MAX_CHARS:
-        text = text[:POPUP_MAX_CHARS - 1].rstrip() + "…"
-    return title, text
+POPUP_TITLE = "Tiyatro Takip"
+POPUP_SECONDS = 30            # the popup closes itself after this long (the beeps are separate)
+POPUP_COALESCE_MS = 3000      # alerts arriving within this window share one popup
+# Wave 18: a popup shows NOTHING but a generic phrase (the user may be sharing the screen).
+# kind -> (priority, phrase); the lowest priority number wins when several alerts coincide.
+POPUP_WORDING = {
+    "ON_SALE": (0, "bilet açıldı"), "OPENED_SOLD_OUT": (0, "bilet açıldı"),
+    "SRC_OPENED": (1, "rezervasyon açıldı"), "SRC_REOPENED": (1, "rezervasyon açıldı"),
+    "OPENING_SOON": (2, "açılış yaklaşıyor"), "SRC_SOON": (2, "açılış yaklaşıyor"),
+    "NEW_PLAY": (3, "yeni etkinlik"), "SRC_NEW": (3, "yeni etkinlik"),
+    "NEW_SESSIONS": (3, "yeni etkinlik"),
+}
+POPUP_OTHER = (4, "yeni gelişme")
+
+
+def popup_text(events) -> str:
+    """Text of the one popup for ``events`` (distinct alerts): "Tiyatro Takip: bilet açıldı" for
+    one alert; for several "Tiyatro Takip: 3 yeni gelişme" and the strongest phrase below it
+    (bilet açıldı > rezervasyon açıldı > açılış yaklaşıyor > yeni etkinlik > yeni gelişme).
+    Never a title, date, link, count of people or contact."""
+    events = list(events)
+    best = min((POPUP_WORDING.get(e.kind, POPUP_OTHER) for e in events), default=POPUP_OTHER)
+    if len(events) <= 1:
+        return f"{POPUP_TITLE}: {best[1]}"
+    return f"{POPUP_TITLE}: {len(events)} yeni gelişme\nEn önemlisi: {best[1]}"
 
 
 def should_beep(count: int, enabled: bool, dismissed: bool) -> bool:

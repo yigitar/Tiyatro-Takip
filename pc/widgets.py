@@ -15,15 +15,28 @@ class AutoScrollbar(ttk.Scrollbar):
         super().__init__(master, **kw)
         self._pack_opts: dict | None = None
         self.shown = False
+        self._suspended = False
 
     def pack(self, **kw):  # noqa: A003 - Tk API name
         self._pack_opts = kw
         self.shown = True
         super().pack(**kw)
 
+    def suspend(self) -> None:
+        """Take the bar off the screen (its view is hidden) without forgetting whether it was shown."""
+        self._suspended = True
+        super().pack_forget()
+
+    def resume(self) -> None:
+        self._suspended = False
+        if self.shown and self._pack_opts is not None:
+            super().pack(**self._pack_opts)
+
     def set(self, first, last):
         fits = float(first) <= 0.0 and float(last) >= 1.0
-        if self._pack_opts is not None:
+        if self._suspended:
+            self.shown = not fits
+        elif self._pack_opts is not None:
             if fits and self.shown:
                 self.pack_forget()
                 self.shown = False
@@ -33,17 +46,40 @@ class AutoScrollbar(ttk.Scrollbar):
         super().set(first, last)
 
 
+_WORD_PX: dict = {}
+
+
+def _word_width(font, word: str) -> int:
+    """``font.measure(word)`` cached per font (every call is a Tcl round trip; a detail pane
+    wraps the same few hundred words again and again). Keyed by the font's actual settings
+    (looked up once per font object), so copies of one font share their measurements."""
+    spec = getattr(font, "_wrap_spec", None)
+    if spec is None:
+        spec = tuple(sorted(font.actual().items()))
+        try:
+            font._wrap_spec = spec
+        except AttributeError:
+            pass
+    key = (spec, word)
+    hit = _WORD_PX.get(key)
+    if hit is None:
+        if len(_WORD_PX) > 40000:
+            _WORD_PX.clear()
+        hit = _WORD_PX[key] = font.measure(word)
+    return hit
+
+
 def wrapped_lines(text, font, width_px: int) -> int:
     """Number of display lines ``text`` takes when word-wrapped to ``width_px`` (greedy,
     like a Tk Text with ``wrap="word"``). Measured with the font instead of Tk's
     ``count -displaylines``, which blocks on a widget that is not mapped yet."""
     width_px = max(int(width_px), 20)
-    space = font.measure(" ")
+    space = _word_width(font, " ")
     total = 0
     for paragraph in str(text).split(chr(10)):
         lines, used = 1, 0
         for word in paragraph.split():
-            w = font.measure(word)
+            w = _word_width(font, word)
             if used and used + space + w > width_px:
                 lines, used = lines + 1, 0
             while w > width_px:           # a word longer than the line is broken
@@ -149,6 +185,7 @@ class SelectableText(tk.Text):
             self.tag_configure("derived", font=italic_font,
                                **({"foreground": derived_color} if derived_color else {}))
         self._plain = ""
+        self._segments: list | None = None
         self._autosize = autosize        # False: the caller sets width / height (scrolling dialogs)
         self._wrap_px = int(wraplength or 0)
         self._menu: tk.Menu | None = None
@@ -168,6 +205,9 @@ class SelectableText(tk.Text):
     def set_segments(self, segments) -> None:
         """``segments``: iterable of (text, derived: bool); derived ones are italic grey-blue."""
         segments = [(str(t), bool(d)) for t, d in segments]
+        if segments == self._segments:       # same text: nothing to repaint or re-measure
+            return
+        self._segments = segments
         tk.Text.configure(self, state="normal")
         self.delete("1.0", "end")
         for text, derived in segments:

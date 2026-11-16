@@ -345,6 +345,16 @@ _KIND_PHRASE = re.compile(
     r"g[oö]sterisi))", re.I)
 
 
+class _Hit:
+    """A "<day> <month> <weekday> günü saat HH.MM" mention (or "Aynı gün saat HH.MM" with the date
+    of the previous sentence: ``derived_date``)."""
+    __slots__ = ("start", "end", "day", "month", "weekday", "hour", "minute", "derived_date")
+
+    def __init__(self, start, end, day, month, weekday, hour, minute, derived_date=False):
+        self.start, self.end, self.day, self.month, self.weekday = start, end, day, month, weekday
+        self.hour, self.minute, self.derived_date = hour, minute, derived_date
+
+
 def _cap(text: str) -> str:
     return " ".join(w[:1].upper() + w[1:] if w else w for w in _norm_space(text).split(" "))
 
@@ -367,6 +377,11 @@ _SAME_PLACE = re.compile(r"(?:yine\s+)?ayn[ıi]\s+(?:merkez|salon|mekan|sahne|ye
 _COMPANY_RE = re.compile(
     rf"((?:{_WORD}\s+){{0,5}}(?:Tiyatrosu|Tiyatroları|Tiyatro|Topluluğu|Sahnesi|Kumpanyası|Ekibi))"
     rf"(?:[’']\w+)?\s+taraf[ıi]ndan")
+# Wave 18: "Aynı gün saat 20.00’de ..." (the date is the one explicit date of the sentence right
+# before, same line) and an unquoted series title ("... ise Kitaphane Kültür Söyleşileri kapsamında")
+_SAME_DAY = re.compile(r"(?<![a-z0-9])ayni\s+gun\s+saat\s+(\d{1,2})[.:](\d{2})")
+_SERIES = re.compile(
+    rf"^(?:[’'][a-zçğıöşü]+)?[\s,]*(?:ise\s+)?((?:{_WORD}\s+){{1,4}}{_WORD})\s+kapsam[ıi]nda(?![\wçğıöşü])")
 _SENTENCE_END = re.compile(r"(?<![\d])\.\s+(?=\S)")
 
 
@@ -448,38 +463,52 @@ def parse_article(html_text: str, url: str, published: datetime | None
                     add(_make_bk(start, title, kind, venue, url, facts_of(line)))
             continue
         # narrative sentence: "4 Kasım Salı günü saat 14.00’te sahnelenecek “Çöp Atlas” adlı çocuk tiyatrosu"
-        hits = list(_NARRATIVE.finditer(fline))
         spans = _sentence_spans(line)
+        hits = [_Hit(m.start(), m.end(), int(m.group(1)), _MONTH_NUM[m.group(2)],
+                     _DAY_NAMES.get(m.group(3)), int(m.group(4)), int(m.group(5)))
+                for m in _NARRATIVE.finditer(fline)]
+        explicit = list(hits)
+        for sm in _SAME_DAY.finditer(fline):
+            si0 = next(i for i, (a, b) in enumerate(spans) if a <= sm.start() < b)
+            before = [h for h in explicit if si0 > 0 and spans[si0 - 1][0] <= h.start < spans[si0 - 1][1]]
+            if len(before) == 1:        # exactly one explicit date in the immediately preceding sentence
+                b0 = before[0]
+                hits.append(_Hit(sm.start(), sm.end(), b0.day, b0.month, b0.weekday,
+                                 int(sm.group(1)), int(sm.group(2)), derived_date=True))
+        hits.sort(key=lambda h: h.start)
         sent_venues = [_venues_in(line[a:b]) for a, b in spans]
         parsed = []                      # the events of this line, with the text they were read from
         for n, nm in enumerate(hits):
-            seg_end = hits[n + 1].start() if n + 1 < len(hits) else len(line)
-            segment = line[nm.end():seg_end]
+            seg_end = hits[n + 1].start if n + 1 < len(hits) else len(line)
+            segment = line[nm.end:seg_end]
             q = _QUOTED.search(segment)
-            if q is None:
-                continue
-            d = resolve_date(int(nm.group(1)), _MONTH_NUM[nm.group(2)],
-                             _DAY_NAMES.get(nm.group(3)), years)
-            start = _at(d, int(nm.group(4)), int(nm.group(5))) if d else None
+            title_text, title_end = (q.group(1), q.end()) if q else (None, 0)
+            if q is None:       # no quoted title: only "<Series Name> kapsamında" right after the time
+                sm = _SERIES.match(segment)
+                if sm is None:
+                    continue
+                title_text, title_end = sm.group(1), sm.end()
+            d = resolve_date(nm.day, nm.month, nm.weekday, years)
+            start = _at(d, nm.hour, nm.minute) if d else None
             if start is None:
                 continue
-            kind_m = _KIND_PHRASE.search(segment[q.end():])
+            kind_m = _KIND_PHRASE.search(segment[title_end:])
             kind = _cap(kind_m.group(1)) if kind_m else ""
             hits_kind = kind
             if not hits_kind:  # coordinated titles share the kind stated after the last one
                 for later in hits[n + 1:]:
-                    seg2 = line[later.end():]
+                    seg2 = line[later.end:]
                     q2 = _QUOTED.search(seg2)
                     km = _KIND_PHRASE.search(seg2[q2.end():]) if q2 else None
                     if km:
                         hits_kind = _cap(km.group(1))
                         break
-            clause = re.split(r"\.(?:\s|$)", line[nm.start():seg_end], maxsplit=1)[0]
-            si = next(i for i, (a, b) in enumerate(spans) if a <= nm.start() < b)
-            own = _venues_in(line[nm.end():min(seg_end, spans[si][1])])
-            parsed.append({"si": si, "start": start, "title": _norm_space(q.group(1)),
+            clause = re.split(r"\.(?:\s|$)", line[nm.start:seg_end], maxsplit=1)[0]
+            si = next(i for i, (a, b) in enumerate(spans) if a <= nm.start < b)
+            own = _venues_in(line[nm.end:min(seg_end, spans[si][1])])
+            parsed.append({"si": si, "start": start, "title": _norm_space(title_text),
                            "kind": hits_kind, "clause": clause, "own": own[0] if own else "",
-                           "same": bool(_SAME_PLACE.search(line[nm.end():min(seg_end, spans[si][1])]))})
+                           "same": bool(_SAME_PLACE.search(line[nm.end:min(seg_end, spans[si][1])]))})
         for k, item in enumerate(parsed):
             venue, derived = item["own"], False
             if not venue:       # one venue stated after coordinated titles of one sentence is shared

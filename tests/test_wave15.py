@@ -93,11 +93,13 @@ def test_rapid_switch_between_one_and_eight_sessions(ui):
     ui.select_slug("m1")
     Recorder(ui).run(0.4)
     ui.root.unbind_all("<Configure>")
+    for slug in ("m8", "m1", "m8", "m1"):
+        ui.select_slug(slug)
+        ui.root.update()
     rec = Recorder(ui)
     try:
-        for slug in ("m8", "m1", "m8", "m1", "m8"):
-            ui.select_slug(slug)
-            ui.root.update()
+        ui.select_slug("m8")      # wave 18: the table is reused, each switch resizes it; the
+        ui.root.update()          # LAST selection must settle once
         rec.run(1.0)
         _check(ui, rec, "rapid 1<->8")
         assert ui.selected == "m8"

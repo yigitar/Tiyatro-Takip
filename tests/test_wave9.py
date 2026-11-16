@@ -137,10 +137,13 @@ def test_many_new_events_in_one_scan_go_out_as_one_digest(monkeypatch):
     again = _state_with(st)
     runner._queue_events(again, ev, False, NOW, "pc")
     assert again["outbox"][0]["key"] == state["outbox"][0]["key"]
-    # three or fewer stay individual messages
+    # wave 18: two or more new events of one scan are one digest; a single one stays individual
     few = _state_with(st)
     runner._queue_events(few, ev[:3], False, NOW, "github")
-    assert [e["key"] for e in few["outbox"]] == [e.key for e in ev[:3]]
+    assert len(few["outbox"]) == 1 and few["outbox"][0]["key"].startswith("NEWFOLD:")
+    one = _state_with(st)
+    runner._queue_events(one, ev[:1], False, NOW, "github")
+    assert [e["key"] for e in one["outbox"]] == [ev[0].key]
 
 
 def _state_with(st):

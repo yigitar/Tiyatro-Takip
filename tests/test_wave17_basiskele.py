@@ -84,3 +84,80 @@ def test_record_stores_venue_and_derived_flag_and_notice_hides_derived_venue():
     assert S._payload(rec)["venue"] == TYGM
     view = S.event_views(state, cfg(), datetime(2026, 11, 16, tzinfo=ISTANBUL))[0]
     assert view["venue"] == TYGM and view["venue_derived"] is False
+
+
+# ---- wave 18: sentences the parser used to drop ---------------------------------------------
+
+def test_wave18_real_article_live_fixture_parses_every_theatre_and_series_event():
+    html = (FIX / "bk_art_12879_live_2026-11-16.html").read_text(encoding="utf-8")
+    assert S.parse_article(html, "u", PUB)[0] == S.parse_article(
+        (FIX / "bk_art_2026_11.html").read_text(encoding="utf-8"), "u", PUB)[0]
+    ev = parse(html)
+    pm = ev["Püsküllü Muamma"]
+    assert (pm.start.day, pm.start.hour, pm.start.minute) == (20, 20, 0)
+    assert pm.venue == TYGM and not pm.venue_derived       # venue stated in its own sentence
+    ks = ev["Kitaphane Kültür Söyleşileri"]
+    assert (ks.start.day, ks.start.hour) == (25, 20)
+    # the unchanged ones
+    assert ev["Satır Arası Ebeveynlik"].start.day == 20 and ev["Kediler Sokağı"].start.hour == 15
+    # still dropped (no quoted title, no "kapsamında" right after the time): Evlilik Okulu
+    assert not any("Evlilik" in t for t in ev)
+    assert len(ev) == 8
+
+
+def test_same_day_needs_exactly_one_explicit_date_in_the_previous_sentence():
+    one = para("20 Kasım Cuma günü saat 11.00’de Kitaphane’de “Aa” programı olacak.",
+               "Aynı gün saat 20.00’de Merkez Salonu’nda “Bb” oyunu oynanacak.")
+    ev = parse(one)
+    assert ev["Bb"].start.day == 20 and ev["Bb"].start.hour == 20
+    two = para("20 Kasım Cuma günü saat 15.00’te “Aa”, 22 Kasım Pazar günü saat 16.00’da ise “Cc” "
+               "adlı çocuk tiyatroları sahnelenecek.",
+               "Aynı gün saat 20.00’de “Bb” oyunu oynanacak.")
+    assert "Bb" not in parse(two)                  # two dates before: ambiguous, nothing guessed
+    first = para("Aynı gün saat 20.00’de “Bb” oyunu oynanacak.")
+    assert parse(first) == {}
+    gap = para("20 Kasım Cuma günü saat 15.00’te “Aa” oyunu olacak.", "Başka bir cümle.",
+               "Aynı gün saat 20.00’de “Bb” oyunu oynanacak.")
+    assert "Bb" not in parse(gap)                  # only the immediately preceding sentence
+
+
+def test_series_title_only_directly_after_the_time_and_before_kapsaminda():
+    ok = para("25 Kasım Çarşamba günü saat 20.00’de ise Kitaphane Kültür Söyleşileri kapsamında "
+              "kitapseverler bir araya gelecek.")
+    assert list(parse(ok)) == ["Kitaphane Kültür Söyleşileri"]
+    far = para("25 Kasım Çarşamba günü saat 20.00’de herkes gelecek, ayrıca Kültür Söyleşileri "
+               "kapsamında ikram olacak.")
+    assert parse(far) == {}
+    lower = para("25 Kasım Çarşamba günü saat 20.00’de söyleşi kapsamında bir araya gelinecek.")
+    assert parse(lower) == {}
+
+
+def test_newly_parsed_events_of_a_known_article_send_one_digest_not_silent():
+    from datetime import timedelta
+    from tiyatro import runner
+    from tiyatro.config import default_config
+    from tiyatro.notify import format_message
+    from tiyatro.state import empty_state
+    html_old = para("1 Kasım Pazar günü saat 16.00’da “Aa” adlı çocuk tiyatrosu olacak. "
+                    "20 Kasım Cuma günü saat 11.00’de Kitaphane’de “Cc” programı olacak. "
+                    "Aynı gün saat 20.00’de Merkez’de “Bb” oyunu olacak. "
+                    "25 Kasım Çarşamba günü saat 20.00’de ise Kitaphane Söyleşileri kapsamında gelinecek.")
+    html_new = html_old
+    base = [l for l in S.parse_article(html_old, "u", PUB)[0] if l.title in ("Aa", "Cc")]
+    now = datetime(2026, 11, 2, 12, 0, tzinfo=ISTANBUL)
+    st, cfg = empty_state(), default_config()
+    st.setdefault("source_events", {})
+    assert S.fold_listings(st, cfg, "basiskele", base, now) == []           # silent baseline
+    allev = S.parse_article(html_new, "u", PUB)[0]
+    found = S.fold_listings(st, cfg, "basiskele", allev, now + timedelta(minutes=5))
+    assert sorted(e.payload["title"] for e in found) == ["Bb", "Kitaphane Söyleşileri"]
+    st.setdefault("outbox", [])
+    st.setdefault("emitted", {})
+    runner._queue_events(st, found, False, now, "github")
+    assert len(st["outbox"]) == 1 and st["outbox"][0]["key"].startswith("NEWFOLD:")
+    [text] = format_message(runner._entry_events(st["outbox"][0]), {}, cfg)
+    assert "(2)" in text and "Bb" in text
+    # a single new event stays an ordinary notice
+    st2 = {"outbox": [], "emitted": {}}
+    runner._queue_events(st2, found[:1], False, now, "github")
+    assert not st2["outbox"][0]["key"].startswith("NEWFOLD:")

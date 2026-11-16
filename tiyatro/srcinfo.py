@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import functools
 import re
 
 from tiyatro.parser import SUMMARY_MAX, _cap_summary, _cast_name, tr_title
@@ -143,11 +144,16 @@ def info_view(rec: dict) -> dict:
 BORROWABLE = ("summary", "cast", "credits", "duration", "age", "genre")
 
 
+@functools.lru_cache(maxsize=4096)
+def _norm_str(text: str) -> str:
+    folded = _fold(text).replace("İ", "i")
+    return " ".join(re.sub(r"[^0-9a-z]+", " ", folded).split())
+
+
 def norm_title(text) -> str:
     """Title for an exact-name comparison: Turkish letters folded, lower case, punctuation
     dropped, spaces collapsed ("UNUTMAK!" == "Unutmak"). Empty when nothing alphanumeric is left."""
-    folded = _fold(str(text or "")).replace("İ", "i")
-    return " ".join(re.sub(r"[^0-9a-z]+", " ", folded).split())
+    return _norm_str(str(text or ""))
 
 
 def play_match(state: dict | None, title) -> tuple[str, dict] | None:

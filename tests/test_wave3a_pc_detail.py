@@ -81,6 +81,7 @@ def test_detail_pane_is_scrollable_and_rebuilds_only_on_change(ui):
     ui.refresh_rows()
     assert ui.session_tree is pane  # same details -> no rebuild
     _give_details(ui)
+    fills = ui.detail_fills
     ui.refresh_rows()
-    assert ui.session_tree is not pane  # details are part of the signature
+    assert ui.detail_fills == fills + 1   # details are part of the signature: updated (in place)
     assert "konu özetidir" in ui.summary_text.get("1.0", "end")

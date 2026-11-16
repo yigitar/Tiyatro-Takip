@@ -90,7 +90,7 @@ from tiyatro.config import config_from_dict, default_config
 from tiyatro.fetcher import fetch
 from tiyatro.heartbeat import github_run_status, pc_status, read_heartbeat
 from tiyatro.models import ISTANBUL, Config, Event, Play, Session, Status
-from tiyatro.notify import (DISCOVERY_KINDS, FOLD_NEW_PLAYS_ABOVE, MONTHS, Telegram,
+from tiyatro.notify import (DISCOVERY_KINDS, FOLD_NEW_PLAYS_ABOVE, MONTHS, fold_discoveries, Telegram,
                             default_transport, format_message)
 from tiyatro.parser import ParseError, parse_play, parse_venue
 from tiyatro.portals import item_key, parse_portal
@@ -294,7 +294,7 @@ def _queue_events(state: dict, events: list[Event], first_scan: bool, now: datet
                   who: str) -> None:
     found = [e for e in events if e.kind in DISCOVERY_KINDS
              and not (first_scan and e.kind == "NEW_PLAY")]
-    folded = found if len(found) > FOLD_NEW_PLAYS_ABOVE else []
+    folded = found if fold_discoveries(found) else []
     if folded:  # e.g. a new monthly program: one digest instead of a flood of messages
         _enqueue(state, fold_key(folded), folded, now, who)
     for ev in events:

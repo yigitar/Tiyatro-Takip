@@ -37,6 +37,8 @@ MIN_COL_PX = 44             # narrowest a column can be dragged/shrunk (96 dpi);
 MAX_COL_PX = 700            # widest a dragged / auto-fitted column gets (96 dpi)
 EDGE_PX = 5                 # half width of the header border hit area (96 dpi)
 DRAG_PX = 4                 # press-and-move distance (96 dpi) before a header press becomes a drag
+OVERSCAN_ROWS = 10          # rows drawn above / below the visible ones (scrolling needs no redraw)
+REDRAW_MARGIN = 4           # redraw when the view gets this close to the edge of the drawn rows
 RESET_LABEL = "Sütunları varsayılana sıfırla"
 
 
@@ -105,6 +107,12 @@ class GridTable(ttk.Frame):
         self._user_yscroll = None
         self._width = 0
         self._dirty = False
+        self._dirty_head = False
+        self._drawn: tuple[int, int] | None = None    # (first, last+1) row indices on the canvas
+        self._layout_cache: tuple | None = None
+        self._measure_cache: dict = {}
+        self._cursors = {"body": "", "header": ""}
+        self.draws = 0                                # statistics (tests / profiling)
         base = tkfont.nametofont("TkDefaultFont")
         spec = base.actual()
         self._fonts = {}
@@ -173,8 +181,9 @@ class GridTable(ttk.Frame):
 
     def heading(self, column, option=None, **kw):
         if "text" in kw:
-            self._labels[column] = kw["text"]
-            self._request_draw()
+            if self._labels.get(column) != kw["text"]:
+                self._labels[column] = kw["text"]
+                self._request_draw(head=True)
         if kw:
             return None
         info = {"text": self._labels.get(column, ""), "command": self._command(column)}
@@ -194,7 +203,7 @@ class GridTable(ttk.Frame):
         self._reindex()
         if self._selected in gone:
             self._selected = None
-        self._request_draw()
+        self._request_draw(body_only=True)
 
     def insert(self, parent, index, iid=None, values=(), tags=(), cells=None):
         from pc.app_logic import Cell
@@ -202,8 +211,19 @@ class GridTable(ttk.Frame):
         cells = list(cells) if cells is not None else [Cell(str(v)) for v in values]
         self._rows.append(_Row(iid, cells, tags if isinstance(tags, (tuple, list)) else (tags,)))
         self._index[iid] = len(self._rows) - 1
-        self._request_draw()
+        self._request_draw(body_only=True)
         return iid
+
+    def matches(self, specs) -> bool:
+        """True when the table already holds exactly these rows: ``specs`` is a sequence of
+        ``(iid, cells, tags)``. Lets a caller skip a rebuild whose result would be identical."""
+        rows = self._rows
+        if len(rows) != len(specs):
+            return False
+        for row, (iid, cells, tags) in zip(rows, specs):
+            if row.iid != iid or row.tags != tuple(tags) or row.cells != cells:
+                return False
+        return True
 
     def item(self, iid, option=None):
         row = self._rows[self._index[iid]]
@@ -213,7 +233,7 @@ class GridTable(ttk.Frame):
     def set_tags(self, iid, tags):
         if iid in self._index:
             self._rows[self._index[iid]].tags = tuple(tags)
-            self._request_draw()
+            self._request_draw(body_only=True)
 
     def cell(self, iid, column):
         return self._rows[self._index[iid]].cells[self.keys.index(column)]
@@ -226,13 +246,13 @@ class GridTable(ttk.Frame):
         if iid not in self._index:
             return
         self._selected = iid
-        self._request_draw()
+        self._request_draw(body_only=True)
         self.event_generate("<<TreeviewSelect>>")
 
     def selection_remove(self, *items):
         if self._selected in items:
             self._selected = None
-            self._request_draw()
+            self._request_draw(body_only=True)
             self.event_generate("<<TreeviewSelect>>")
 
     def see(self, iid):
@@ -247,6 +267,12 @@ class GridTable(ttk.Frame):
         elif top + self.row_px > first + view > 1:
             self.body.yview_moveto(max(0, top + self.row_px - view) / total)
 
+    def set_height_rows(self, rows: int) -> None:
+        """Requested height of the body in rows (a fixed-size table such as the sessions one)."""
+        height = max(1, rows) * self.row_px
+        if int(self.body.cget("height")) != height:
+            self.body.configure(height=height)
+
     def yview(self, *args):
         return self.body.yview(*args)
 
@@ -257,7 +283,7 @@ class GridTable(ttk.Frame):
                       column=None):
         self._tags[tag] = {"bold": bold, "italic": italic, "foreground": foreground,
                            "background": background, "column": column}
-        self._request_draw()
+        self._request_draw(body_only=True)
 
     # ---- geometry -----------------------------------------------------------------------------
     def _reindex(self):
@@ -271,11 +297,22 @@ class GridTable(ttk.Frame):
     def _base_label(self, key: str) -> str:
         return self._labels.get(key, "").rstrip(" ▲▼")
 
+    def _measure(self, font, text: str) -> int:
+        """``font.measure`` with a cache (each call is a Tcl round trip; the table's fonts never
+        change)."""
+        cache = self._measure_cache
+        hit = cache.get((id(font), text))
+        if hit is None:
+            if len(cache) > 20000:
+                cache.clear()
+            hit = cache[(id(font), text)] = font.measure(text)
+        return hit
+
     def min_width(self, key: str) -> int:
         """Narrowest width of a column: header text (with room for a sort arrow), at least
         ``MIN_COL_PX``; never above the column's default width."""
         hfont = self._fonts[(True, False)]
-        need = hfont.measure(self._base_label(key)) + 2 * self.pad + int(round(14 * self.scale))
+        need = self._measure(hfont, self._base_label(key)) + 2 * self.pad + int(round(14 * self.scale))
         return min(self._base[key], max(int(round(MIN_COL_PX * self.scale)), need))
 
     def column_widths(self, available: int) -> list[int]:
@@ -322,10 +359,17 @@ class GridTable(ttk.Frame):
         avail = self.body.winfo_width()
         if avail <= 1:   # not laid out yet (or unmapped): default widths, no squeezing
             avail = sum(self._base[k] for k in self.order)
+        order = self.order
+        key = (avail, tuple(order), tuple(sorted(self._user_w.items())),
+               tuple(self._labels.get(k, "") for k in order))
+        cache = self._layout_cache
+        if cache is not None and cache[0] == key:
+            return cache[1], cache[2]
         widths = self.column_widths(avail)
         xs = [0]
         for w in widths:
             xs.append(xs[-1] + w)
+        self._layout_cache = (key, widths, xs)
         return widths, xs
 
     # ---- column layout (order / width / visibility) ------------------------------------------
@@ -392,14 +436,14 @@ class GridTable(ttk.Frame):
             return
         idx = self.keys.index(key)
         hfont = self._fonts[(True, False)]
-        want = hfont.measure(self._base_label(key) + " ▼")
+        want = self._measure(hfont, self._base_label(key) + " ▼")
         for row in self._rows:
             cell = row.cells[idx]
             if cell.kind == "check":
                 continue
             font = self._fonts[("link", False)] if cell.kind == "link" \
                 else self._row_style(row, key, cell)[0]
-            want = max(want, font.measure(cell.text))
+            want = max(want, self._measure(font, cell.text))
         width = want + 2 * self.pad + 2
         self._user_w[key] = min(max(width, self.min_width(key)),
                                 int(round(MAX_COL_PX * self.scale)))
@@ -413,13 +457,20 @@ class GridTable(ttk.Frame):
     def _on_configure(self, event):
         if event.width != self._width:
             self._width = event.width
-            self._request_draw()
+            self._request_draw(head=True)
+        elif self._drawn is not None and self._outside_drawn():
+            self._request_draw(body_only=True)   # taller: more rows became visible
 
     # ---- drawing ------------------------------------------------------------------------------
-    def _request_draw(self):
+    def _request_draw(self, head: bool = False, body_only: bool = False):
+        """Coalesced redraw when idle. Header and body are repainted together unless the
+        caller knows only the body changed (``body_only``: selection, hover, rows, tags).
+        ``head=True`` is the explicit header change (labels, widths, order)."""
+        if not body_only or head:
+            self._dirty_head = True
         if not self._dirty:
             self._dirty = True
-            self.after_idle(self.draw)
+            self.after_idle(self._idle_draw)
 
     def _fit(self, text: str, font, width: int) -> str:
         key = (text, id(font), width)
@@ -428,8 +479,8 @@ class GridTable(ttk.Frame):
             return hit
         room = max(width - 2 * self.pad, 4)
         out = text
-        if font.measure(text) > room:
-            while out and font.measure(out + "…") > room:
+        if self._measure(font, text) > room:
+            while out and self._measure(font, out + "…") > room:
                 out = out[:-1]
             out = out + "…" if out else ""
         if len(self._fit_cache) > 20000:
@@ -453,24 +504,66 @@ class GridTable(ttk.Frame):
             italic, fg = True, DERIVED_COLOR
         return self._fonts[(bold, italic)], fg, bg
 
+    def _visible_range(self) -> tuple[int, int]:
+        """Row indices (first, last + 1) the body shows now; everything while the canvas is not
+        laid out yet (height 1)."""
+        n = len(self._rows)
+        height = self.body.winfo_height()
+        if height <= 1:
+            return 0, n
+        first = max(0, int(self.body.canvasy(0) // self.row_px))
+        last = min(n, int((self.body.canvasy(0) + height) // self.row_px) + 1)
+        return first, max(first, last)
+
+    def _outside_drawn(self) -> bool:
+        """True when the visible rows come closer than ``REDRAW_MARGIN`` rows to the edge of the
+        drawn range (and more rows exist beyond it): a redraw is due before blank rows show."""
+        if self._drawn is None:
+            return True
+        n = len(self._rows)
+        v0, v1 = self._visible_range()
+        d0, d1 = self._drawn
+        return ((v0 < d0 + REDRAW_MARGIN and d0 > 0)
+                or (v1 > d1 - REDRAW_MARGIN and d1 < n))
+
+    def _idle_draw(self):
+        head_dirty, self._dirty_head = self._dirty_head, False
+        self._paint(head_dirty)
+
     def draw(self):
+        """Repaint header and body now."""
+        self._dirty_head = False
+        self._paint(True)
+
+    def _paint(self, head_dirty: bool):
         self._dirty = False
         if not self.winfo_exists():
             return
+        self.draws += 1
         widths, xs = self._layout()
         total_w = max(xs[-1], self.body.winfo_width())
         body, head = self.body, self.header
-        body.delete("all")
-        head.delete("all")
-        hfont = self._fonts[(True, False)]
         order = self.order
+        if head_dirty:
+            head.delete("all")
+            hfont = self._fonts[(True, False)]
+            for i, key in enumerate(order):
+                head.create_rectangle(xs[i], 0, xs[i + 1], self.head_px, fill=HEAD_BG,
+                                      outline=GRID_COLOR)
+                head.create_text(xs[i] + self.pad, self.head_px // 2, anchor="w", font=hfont,
+                                 text=self._fit(self._labels.get(key, ""), hfont, widths[i]))
+            head.configure(scrollregion=(0, 0, total_w, self.head_px))
+        body.delete("all")
         slot = {k: self.keys.index(k) for k in order}
-        for i, key in enumerate(order):
-            head.create_rectangle(xs[i], 0, xs[i + 1], self.head_px, fill=HEAD_BG,
-                                  outline=GRID_COLOR)
-            head.create_text(xs[i] + self.pad, self.head_px // 2, anchor="w", font=hfont,
-                             text=self._fit(self._labels.get(key, ""), hfont, widths[i]))
-        for n, row in enumerate(self._rows):
+        n_rows = len(self._rows)
+        # scrollregion first: it clamps the view, so the visible range below is the final one
+        body.configure(scrollregion=(0, 0, total_w, max(n_rows * self.row_px,
+                                                        body.winfo_height())))
+        v0, v1 = self._visible_range()
+        lo, hi = max(0, v0 - OVERSCAN_ROWS), min(n_rows, v1 + OVERSCAN_ROWS)
+        self._drawn = (lo, hi)
+        for n in range(lo, hi):
+            row = self._rows[n]
             y0 = n * self.row_px
             y1 = y0 + self.row_px
             base_bg = next((self._tags[t]["background"] for t in row.tags
@@ -498,9 +591,6 @@ class GridTable(ttk.Frame):
                 else:
                     body.create_text(xs[i] + self.pad, mid, anchor="w", font=font, fill=fg,
                                      text=self._fit(cell.text, font, widths[i]))
-        body.configure(scrollregion=(0, 0, total_w, max(len(self._rows) * self.row_px,
-                                                        body.winfo_height())))
-        head.configure(scrollregion=(0, 0, total_w, self.head_px))
         if self._hs and self._hs["mode"] == "drag":
             self._overlay(self._hs["x"])
 
@@ -523,6 +613,8 @@ class GridTable(ttk.Frame):
     def _on_yscroll(self, first, last):
         if self._user_yscroll is not None:
             self._user_yscroll(first, last)
+        if not self._dirty and self._drawn is not None and self._outside_drawn():
+            self._request_draw(body_only=True)
 
     def _on_xscroll(self, first, last):
         self.hbar.set(first, last)
@@ -553,16 +645,21 @@ class GridTable(ttk.Frame):
     def _motion(self, event):
         iid, key = self._hit(event)
         hand = bool(iid and key and self.cell(iid, key).kind in ("link", "check"))
-        self.body.configure(cursor="hand2" if hand else "")
+        self._set_cursor(self.body, "body", "hand2" if hand else "")
         hot = (iid, key) if hand and self.cell(iid, key).kind == "link" else None
         if hot != self._hover:   # underline the hovered link only
             self._hover = hot
-            self._request_draw()
+            self._request_draw(body_only=True)
+
+    def _set_cursor(self, widget, name: str, cursor: str) -> None:
+        if self._cursors[name] != cursor:       # configure only on a change (it is a Tcl call)
+            self._cursors[name] = cursor
+            widget.configure(cursor=cursor)
 
     def _leave(self, _event):
         if self._hover is not None:
             self._hover = None
-            self._request_draw()
+            self._request_draw(body_only=True)
 
     def _click(self, event):
         self.body.focus_set()
@@ -622,11 +719,11 @@ class GridTable(ttk.Frame):
         if self._hs:
             return
         kind, _i = self._head_hit(event)
-        self.header.configure(cursor="sb_h_double_arrow" if kind == "border" else "")
+        self._set_cursor(self.header, "header", "sb_h_double_arrow" if kind == "border" else "")
 
     def _head_leave(self, _event):
         if not self._hs:
-            self.header.configure(cursor="")
+            self._set_cursor(self.header, "header", "")
 
     def _head_press(self, event):
         self._hs = None
@@ -667,7 +764,7 @@ class GridTable(ttk.Frame):
         if (hs["mode"] == "press" and self._customizable
                 and abs(x - hs["x0"]) >= max(3, int(round(DRAG_PX * self.scale)))):
             hs["mode"] = "drag"
-            self.header.configure(cursor="fleur")
+            self._set_cursor(self.header, "header", "fleur")
         if hs["mode"] == "drag":
             _widths, xs = self._layout()
             hs["drop"] = min(range(len(xs)), key=lambda p: abs(xs[p] - x))
@@ -677,7 +774,7 @@ class GridTable(ttk.Frame):
         hs, self._hs = self._hs, None
         self.header.delete("ovl")
         self.body.delete("ovl")
-        self.header.configure(cursor="")
+        self._set_cursor(self.header, "header", "")
         if not hs:
             return
         if hs["mode"] == "resize":

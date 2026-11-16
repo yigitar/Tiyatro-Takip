@@ -254,6 +254,48 @@ def focus_existing_window(title: str, api=None) -> bool:
         return False
 
 
+def work_area(root=None, user32=None) -> tuple[int, int, int, int]:
+    """(left, top, right, bottom) of the primary work area (the screen minus the taskbar); the
+    whole screen when Windows cannot say."""
+    if root is not None:
+        full = (0, 0, root.winfo_screenwidth(), root.winfo_screenheight())
+    else:
+        full = (0, 0, 1280, 720)
+    if user32 is None and sys.platform != "win32":
+        return full
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = user32 or ctypes.windll.user32
+        rect = wintypes.RECT()
+        if user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):   # SPI_GETWORKAREA
+            return rect.left, rect.top, rect.right, rect.bottom
+    except Exception:
+        pass
+    return full
+
+
+NO_ACTIVATE = 0x08000000      # WS_EX_NOACTIVATE
+_GWL_EXSTYLE = -20
+
+
+def set_no_activate(window, user32=None) -> bool:
+    """Show ``window`` without ever taking the keyboard focus (WS_EX_NOACTIVATE): clicking it
+    still works, typing elsewhere is not interrupted. False when not possible (not Windows)."""
+    if user32 is None and sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        user32 = user32 or ctypes.windll.user32
+        window.update_idletasks()
+        hwnd = user32.GetParent(window.winfo_id()) or window.winfo_id()
+        style = user32.GetWindowLongW(hwnd, _GWL_EXSTYLE)
+        user32.SetWindowLongW(hwnd, _GWL_EXSTYLE, style | NO_ACTIVATE)
+        return bool(user32.GetWindowLongW(hwnd, _GWL_EXSTYLE) & NO_ACTIVATE)
+    except Exception:
+        return False
+
+
 def is_windows() -> bool:
     return os.name == "nt"
 

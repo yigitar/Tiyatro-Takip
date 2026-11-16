@@ -161,6 +161,16 @@ def _discovery_line(p: dict, label: str, what: str) -> str:
 DISCOVERY_KINDS = ("NEW_PLAY", "SRC_NEW")
 
 
+def fold_discoveries(found) -> bool:
+    """One digest instead of single notices: more than ``FOLD_NEW_PLAYS_ABOVE`` discoveries, or
+    (wave 18) two or more new source EVENTS from one scan, e.g. events a parser improvement
+    newly reads out of an article that was already known: the user wants to learn about them,
+    but as ONE message."""
+    found = list(found)
+    return len(found) > FOLD_NEW_PLAYS_ABOVE or (
+        len(found) >= 2 and all(e.kind == "SRC_NEW" for e in found))
+
+
 def _source_label(p: dict) -> str:
     return SOURCE_LABELS.get(p.get("source")) or str(p.get("source") or "Kaynak")
 
@@ -341,7 +351,7 @@ def format_message(events: list[Event], plays: dict[str, Play], config: Config) 
     for item in entries_src:
         if item[0] == "ev":
             entries.append(_entry(item[1], plays, config, item[2]))
-        elif len(item[1]) > FOLD_NEW_PLAYS_ABOVE:
+        elif fold_discoveries(item[1]):
             lines = [f"🆕 Yeni oyun/etkinlikler bulundu ({len(item[1])})"]
             for e in item[1]:
                 url = e.payload.get("url")
