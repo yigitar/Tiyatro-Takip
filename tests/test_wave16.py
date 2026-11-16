@@ -100,10 +100,10 @@ def test_no_fixed_700px_wrap_and_rewraps_on_resize(ui):
     ui.select_slug("vkv:541")
     for _ in range(5):
         ui.root.update()
-    wide = int(ui.event_info_labels["Özet"].cget("wraplength"))
+    wide = ui.event_info_labels["Özet"].winfo_width()      # the Özet box takes its column width
     _show(ui, 1010, 1015)
     for _ in range(5):
         ui.root.update()
-    narrow = int(ui.event_info_labels["Özet"].cget("wraplength"))
+    narrow = ui.event_info_labels["Özet"].winfo_width()
     assert wide not in (700,) and narrow not in (700,)
     assert wide != narrow

@@ -392,7 +392,8 @@ def row_cells(row) -> list[Cell]:
         Cell("Oyun ↗" if row.url else BLANK, False, "link" if row.url else "text"),
         Cell(row.source),
         text("audience", row.audience), text("genre", row.genre), text("zaman", row.zaman),
-        Cell(row.duration or BLANK), Cell(row.age or BLANK), Cell(row.price or BLANK),
+        Cell(row.duration or BLANK, "duration" in getattr(row, "borrowed", ())),
+        Cell(row.age or BLANK, "age" in getattr(row, "borrowed", ())), Cell(row.price or BLANK),
         Cell(row.sessions_text or BLANK, not row.sessions_text),
         text("rez", row.rez_text), text("target", row.target_text),
         Cell(row.status_summary, "summary" in der),
@@ -404,26 +405,25 @@ def row_values(row) -> tuple[str, ...]:
 
 
 def meta_parts(row) -> list[Cell]:
-    """Detail header segments: Kitle / Tür (derived ones flagged), Süre, Yaş (event rows:
-    Kaynak first, no Süre/Yaş). Each segment is rendered as its own label."""
+    """Detail header segments, the same for plays and source events: Kaynak, Kitle, Tür (derived
+    ones flagged), then Süre / Yaş / Ücret when known (italic when taken from the same-named
+    Biletinial play). Each segment is rendered with its own style."""
     der = row.derived
-    parts = []
-    if row.is_event:
-        parts.append(Cell(f"Kaynak: {row.source}"))
-    parts.append(Cell(f"Kitle: {row.audience or 'Bilgi yok'}", "audience" in der or not row.audience))
-    parts.append(Cell(f"Tür: {row.genre or 'Bilgi yok'}", "genre" in der or not row.genre))
-    if row.duration:           # event rows: only when the source states it
-        parts.append(Cell(f"Süre: {row.duration}"))
+    borrowed = getattr(row, "borrowed", frozenset())
+    parts = [Cell(f"Kaynak: {row.source}"),
+             Cell(f"Kitle: {row.audience or 'Bilgi yok'}", "audience" in der or not row.audience),
+             Cell(f"Tür: {row.genre or 'Bilgi yok'}", "genre" in der or not row.genre)]
+    if row.duration:
+        parts.append(Cell(f"Süre: {row.duration}", "duration" in borrowed))
     if row.age:
-        parts.append(Cell(f"Yaş: {row.age}"))
-    if row.is_event and row.price:
+        parts.append(Cell(f"Yaş: {row.age}", "age" in borrowed))
+    if row.price:
         parts.append(Cell(f"Ücret: {row.price}"))
     return parts
 
 
 def meta_line(row) -> str:
-    """Detail header: "Kitle: Çocuk  ·  Tür: Komedi  ·  Süre: 90 dk  ·  Yaş: 7+"
-    (event rows: "Kaynak: VKV  ·  Kitle: …  ·  Tür: …")."""
+    """Detail header: "Kaynak: Biletinial  ·  Kitle: Çocuk  ·  Tür: Komedi  ·  Süre: 90 dk  ·  Yaş: 7+"."""
     return "  ·  ".join(c.text for c in meta_parts(row))
 
 

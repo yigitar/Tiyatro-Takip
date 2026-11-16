@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from pc import winsetup
+from tests.test_pc_app_smoke import tk_root  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -140,15 +141,17 @@ def test_icon_files_prefers_valid_local_icon(tmp_path):
 
 
 def test_apply_window_icon_uses_fallback_when_local_missing(monkeypatch, tmp_path):
-    seen = {}
+    seen = {"calls": []}
 
     class Root:
-        def iconbitmap(self, **kw): seen.update(kw)
+        def iconbitmap(self, *a, **kw): seen["calls"].append((a, kw))
         def wm_iconphoto(self, *a): pass
     monkeypatch.setattr(winsetup, "icon_files", lambda assets=None: (winsetup.ICON_ICO, winsetup.ICON_PNG))
     if winsetup.os.name == "nt":
         assert winsetup.apply_window_icon(Root()) == "ico"
-        assert Path(seen["default"]) == winsetup.ICON_ICO
+        (a1, k1), (a2, k2) = seen["calls"]          # this window (WM_SETICON) AND the default for Toplevels
+        assert Path(a1[0]) == winsetup.ICON_ICO and not k1
+        assert Path(k2["default"]) == winsetup.ICON_ICO
     assert winsetup.ICON_ICO.is_file() and winsetup.ICON_PNG.is_file()      # committed fallback exists
 
 
@@ -160,3 +163,20 @@ def test_local_icon_is_git_ignored_and_not_tracked():
     tracked = subprocess.run(["git", "ls-files", "pc/assets"], cwd=ROOT, capture_output=True, text=True).stdout.split()
     assert not any("/local/" in t for t in tracked)
     assert any(t.endswith("tiyatro.ico") for t in tracked)
+
+
+def test_real_root_window_gets_per_window_icon_handles(tk_root):
+    import ctypes
+    if winsetup.os.name != "nt":
+        pytest.skip("Windows only")
+    top = tk_root.__class__.__mro__ and __import__("tkinter").Toplevel(tk_root)
+    try:
+        assert winsetup.apply_window_icon(top) == "ico"
+        top.update()
+        hwnd = ctypes.windll.user32.GetParent(top.winfo_id())
+        send = ctypes.windll.user32.SendMessageW
+        send.restype = ctypes.c_void_p
+        send.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]
+        assert send(hwnd, 0x7F, 0, 0) and send(hwnd, 0x7F, 1, 0)      # WM_GETICON small / big
+    finally:
+        top.destroy()

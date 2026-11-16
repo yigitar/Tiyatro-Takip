@@ -57,7 +57,7 @@ def test_a_whitespace_only_summary_shows_bilgi_yok(ui):
     ui.svc._state["plays"]["p1"]["summary"] = " \r\n \r\n "
     ui.refresh_rows()
     ui.select_slug("p1")
-    assert ui.summary_text.get("1.0", "end-1c") == "Bilgi yok"
+    assert ui.summary_text.get("1.0", "end-1c") == "Kaynakta bilgi yok"
 
 
 # ---- layout: sidebar left, tabs right ---------------------------------------------------------

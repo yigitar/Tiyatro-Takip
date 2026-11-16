@@ -33,7 +33,8 @@ from pc.service import RefreshError
 from pc.settings import DEFAULT_LOCAL_DIR, SettingsError, load_settings
 from pc.table import DERIVED_COLOR, GridTable
 from pc.viewmodel import APP_TITLE, DAY_SHORT, credit_lines
-from pc.widgets import AutoScrollbar, Flow, LinkButton, RichLabel, autosize_text
+from pc.widgets import (AutoScrollbar, Flow, LinkButton, RichLabel, SelectableLabel,
+                        SelectableText, add_copy_menu, autosize_text)
 from tiyatro import sources as S
 from tiyatro.config import config_to_dict
 from tiyatro.models import ISTANBUL
@@ -55,7 +56,9 @@ RELOAD_MS = 60_000
 ACTIVITY_MS = 2000
 MAX_POPUPS = 3
 NO_INFO = "Bilgi yok"
-SOURCE_NO_INFO = "Kaynakta bilgi yok"   # source events: the page gave nothing (grey)
+SOURCE_NO_INFO = "Kaynakta bilgi yok"   # the source gave nothing (grey), same for every row
+FIELD_NAMES = {"summary": "Özet", "cast": "Oyuncular", "credits": "Yapım", "duration": "Süre",
+               "age": "Yaş", "genre": "Tür"}
 DETAIL_CHROME_PX = 30  # title + border of the "Oyun ayrıntısı" frame
 COLUMNS = L.LIST_COLUMNS      # (key, heading, width): one table for plays and source events
 NEW_COLOR = "#6d28d9"         # name of an item the user has not opened yet (bold)
@@ -583,27 +586,25 @@ class App:
                            font=self.small_font, anchor="nw", justify="left")
             cap.grid(row=n, column=0, sticky="nw", padx=(pad, self.px(6)),
                      pady=(top, self.px(1)))
-            lbl = tk.Label(st, text="—", background=STRIP_BG, foreground=VALUE_COLOR,
-                           font=self.value_font, anchor="nw", justify="left",
-                           wraplength=self.px(140))
-            lbl.grid(row=n, column=1, sticky="we", padx=(0, pad), pady=(top, self.px(1)))
+            lbl = SelectableLabel(st, text="—", background=STRIP_BG, foreground=VALUE_COLOR,
+                                  font=self.value_font, wraplength=self.px(140))
+            lbl.grid(row=n, column=1, sticky="w", padx=(0, pad), pady=(top, self.px(1)))
             self.status_labels[key] = lbl
             self._status_captions.append(cap)
         st.bind("<Configure>", self._rewrap_status)
         self.paused_badge = tk.Label(st, text="DURAKLATILDI", background=L.RED,
                                      foreground="white", padx=8, pady=2, font=self.value_font)
-        self.warn_label = tk.Label(st, text="", foreground=L.AMBER, background=STRIP_BG,
-                                   anchor="w", justify="left", wraplength=self.px(240))
-        self.warn_label.grid(row=7, column=0, columnspan=2, sticky="we", padx=pad)
+        self.warn_label = SelectableLabel(st, text="", foreground=L.AMBER, background=STRIP_BG,
+                                          wraplength=self.px(240))
+        self.warn_label.grid(row=7, column=0, columnspan=2, sticky="w", padx=pad)
         self.err_label = tk.Label(st, text="", foreground=L.RED, cursor="hand2",
                                   background=STRIP_BG, anchor="w", justify="left",
                                   wraplength=self.px(240))
         self.err_label.grid(row=8, column=0, columnspan=2, sticky="we", padx=pad)
         self.msg_var = tk.StringVar()
-        self.msg_label = tk.Label(st, textvariable=self.msg_var, background=STRIP_BG,
-                                  foreground=VALUE_COLOR, anchor="w", justify="left",
-                                  wraplength=self.px(240))
-        self.msg_label.grid(row=9, column=0, columnspan=2, sticky="we", padx=pad)
+        self.msg_label = SelectableLabel(st, textvariable=self.msg_var, background=STRIP_BG,
+                                         foreground=VALUE_COLOR, wraplength=self.px(240))
+        self.msg_label.grid(row=9, column=0, columnspan=2, sticky="w", padx=pad)
         for lab in (self.warn_label, self.err_label, self.msg_label):
             lab.grid_remove()           # shown only while they have text
         # Actions: progress bar (only while refreshing) above the two buttons.
@@ -622,6 +623,7 @@ class App:
         self.pause_btn.grid(row=1, column=1, sticky="we", padx=(self.px(6), 0))
         self._err_text = ""
         Tooltip(self.err_label, lambda: self._err_text)
+        add_copy_menu(self.err_label, lambda: self._err_text or self.err_label.cget("text"))
         self.err_label.bind("<Button-1>", lambda _e: self._err_text and self.mb.showinfo(
             APP_TITLE, self._err_text))
 
@@ -890,19 +892,19 @@ class App:
                         foreground=L.GRAY)
         icon.grid(row=0, column=1, sticky="w", padx=(self.px(6), self.px(2)),
                   pady=(self.px(4), 0))
-        title = tk.Label(frame, text="", font=self.value_font, background=CARD_BG,
-                         foreground=VALUE_COLOR, anchor="w", justify="left")
-        title.grid(row=0, column=2, sticky="we", pady=(self.px(4), 0), padx=(0, self.px(4)))
+        title = SelectableLabel(frame, text="", font=self.value_font, background=CARD_BG,
+                                foreground=VALUE_COLOR)
+        title.grid(row=0, column=2, sticky="w", pady=(self.px(4), 0), padx=(0, self.px(4)))
         # "Kaynağı aç" / "Portalı aç" sit on the title row, right-aligned beside the name.
         links = tk.Frame(frame, background=CARD_BG)
         links.grid(row=0, column=3, sticky="e", padx=(0, self.px(4)), pady=(self.px(4), 0))
-        body = tk.Label(frame, text="", background=CARD_BG, foreground=VALUE_COLOR,
-                        anchor="nw", justify="left", wraplength=wrap)
-        body.grid(row=1, column=1, columnspan=3, sticky="we", padx=(self.px(8), self.px(6)),
+        body = SelectableLabel(frame, text="", background=CARD_BG, foreground=VALUE_COLOR,
+                               wraplength=wrap)
+        body.grid(row=1, column=1, columnspan=3, sticky="w", padx=(self.px(8), self.px(6)),
                   pady=(0, self.px(4)))
-        error = tk.Label(frame, text="", background=CARD_BG, foreground=L.RED, anchor="w",
-                         justify="left", wraplength=wrap)
-        error.grid(row=2, column=1, columnspan=3, sticky="we", padx=(self.px(8), self.px(6)),
+        error = SelectableLabel(frame, text="", background=CARD_BG, foreground=L.RED,
+                                wraplength=wrap)
+        error.grid(row=2, column=1, columnspan=3, sticky="w", padx=(self.px(8), self.px(6)),
                    pady=(0, self.px(4)))
         error.grid_remove()
         frame.columnconfigure(2, weight=1)
@@ -1025,28 +1027,53 @@ class App:
         ttk.Label(self.detail, text="Bir oyun seçin.").pack(padx=10, pady=10, anchor="w")
 
     def show_detail(self, force: bool = False) -> None:
+        """Detail of the selected row: ONE template for Biletinial plays and Başiskele / VKV events.
+
+        Left column: title + page button, meta line, Aktif, then (plays) the session table or
+        (events) the follow help + page button, then Özet. Right column: Hedefler (plays only),
+        the "Bilgiler" facts block, then Oyuncular and Yapım. One column when narrow. Every
+        read-only text is selectable. Layout is computed once per selection by
+        ``_arrange_detail`` (no fixed wrap widths)."""
         row = self.rows_by_slug.get(self.selected)
         if row is None:
             self._detail_sig = None
             self._detail_placeholder()
             return
-        if row.is_event:
-            self._show_event_detail(row, force)
-            return
-        sessions = L.session_lines(self.entry(row.slug), self.now())
-        sig = (L.row_values(row), tuple(row.target_lines), row.active,
+        sessions = [] if row.is_event else L.session_lines(self.entry(row.slug), self.now())
+        sig = (row.is_event, L.row_values(row), tuple(row.target_lines), row.active,
                tuple((s.when, s.status, s.opens, s.url) for s in sessions), row.url,
-               row.summary, tuple(row.cast), tuple(row.credits))
+               row.summary, tuple(row.cast), tuple(row.credits), row.seans,
+               row.reservation_opens, row.venue, row.venue_derived, tuple(row.contact),
+               row.duration, row.age, row.price, row.borrowed, row.borrowed_credits,
+               row.borrowed_from)
         if sig == self._detail_sig and not force:
             return
         self._detail_sig = sig
         body = self._detail_body()
-        parts = {name: ttk.Frame(body) for name in ("left", "summary", "people")}
-        parts["targets"] = ttk.LabelFrame(body, text="Hedefler")
+        parts = {name: ttk.Frame(body) for name in ("left", "side", "summary", "people")}
+        parts["facts"] = ttk.LabelFrame(parts["side"], text="Bilgiler")
+        parts["targets"] = None if row.is_event else ttk.LabelFrame(parts["side"], text="Hedefler")
         self._detail_parts = parts
         self._detail_stack = None
-        left = parts["left"]
+        self.follow_help = self.event_no_page_label = self.event_page_btn = None
+        self.session_note = None
+        self.add_buttons, self.target_buttons, self._target_labels = {}, {}, []
+        self._build_header(parts["left"], row)
+        if row.is_event:
+            self._build_event_links(parts["left"], row)
+        else:
+            self._build_sessions(parts["left"], row, sessions)
+        if parts["targets"] is not None:
+            parts["targets"].pack(fill="x", pady=(0, self.px(6)))
+            self._build_targets(parts["targets"], row)
+        parts["facts"].pack(fill="x")
+        self._build_facts(parts["facts"], row)
+        self._build_info(row)
+        self._arrange_detail()
+        self._refit()
 
+    def _build_header(self, left, row) -> None:
+        """Title + page button, meta line, the follow switch (plays also get target buttons)."""
         head = ttk.Frame(left)
         head.pack(fill="x", padx=8, pady=4)
         ttk.Label(head, text=row.title, font=self.bold_font).pack(side="left")
@@ -1054,22 +1081,24 @@ class App:
                                    command=lambda: row.url and self.open_url(row.url),
                                    state="normal" if row.url else "disabled")
         self.open_btn.pack(side="right")
-        self.meta_label = RichLabel(left, self.italic_font, DERIVED_COLOR)
+        self.meta_label = RichLabel(left, self.italic_font, DERIVED_COLOR,
+                                    wraplength=self.px(300))
         self.meta_label.set_parts(L.meta_parts(row))
-        self.meta_label.pack(padx=8, anchor="w", fill="x")
-
+        self.meta_label.pack(padx=8, anchor="w")
         acts = ttk.Frame(left)
         acts.pack(fill="x", padx=8, pady=(2, 0))
         self.active_var = tk.BooleanVar(value=row.active)
+        setter = "set_event_follow" if row.is_event else "set_active"
         self.active_chk = ttk.Checkbutton(
             acts, text="Aktif (takip ediliyor)", variable=self.active_var,
-            command=lambda: self.edit(self.service.set_active, row.slug,
-                                      self.active_var.get(), key=("active", row.slug),
+            command=lambda: self.edit(getattr(self.service, setter), row.slug, self.active_var.get(),
+                                      key=("ef" if row.is_event else "active", row.slug),
                                       widget=self.active_chk))
         self.active_chk.pack(side="left")
+        if row.is_event:
+            return
         cfg_watch = self.service.config.plays.get(row.slug) if self.service.config else None
         have = {t.id for t in (cfg_watch.targets if cfg_watch else [])}
-        self.add_buttons = {}
         for kind, label in (("y", "Yetişkin hedefi ekle"), ("c", "Çocuk hedefi ekle")):
             btn = ttk.Button(acts, text=label, state="disabled" if kind in have else "normal")
             btn.configure(command=lambda k=kind, b=btn: self.edit(
@@ -1077,6 +1106,22 @@ class App:
             btn.pack(side="left", padx=6)
             self.add_buttons[kind] = btn
 
+    def _build_event_links(self, left, row) -> None:
+        """Events have no per-session pages: the follow help and one page button."""
+        self.follow_help = SelectableLabel(left, text=FOLLOW_HELP_EVENT, foreground=L.GRAY,
+                                           wraplength=self.px(300))
+        self.follow_help.pack(padx=8, anchor="w")
+        links = ttk.Frame(left)
+        links.pack(fill="x", padx=8, pady=(4, 0))
+        self.event_page_btn = ttk.Button(links, text="Etkinlik sayfası ↗",
+                                         command=lambda: row.url and self.open_url(row.url),
+                                         state="normal" if row.url else "disabled")
+        self.event_page_btn.pack(side="left")
+        self.event_no_page_label = SelectableLabel(links, text=NO_SESSION_PAGE,
+                                                   foreground=L.GRAY, wraplength=self.px(300))
+        self.event_no_page_label.pack(side="left", padx=8)
+
+    def _build_sessions(self, left, row, sessions) -> None:
         sess = ttk.Frame(left)
         sess.pack(fill="x", padx=8, pady=6)      # exactly as tall as its rows: no stretching
         self._session_links: dict[str, str] = {}
@@ -1102,15 +1147,14 @@ class App:
             self.session_tree.configure(yscrollcommand=sess_sb.set)
             sess_sb.pack(side="right", fill="y")
         self.session_tree.pack(side="left", fill="x", expand=True)
-        self.session_note = ttk.Label(left, text="Seans bağlantısı olmayan satırda düğme oyun "
-                                      "sayfasını açar (\"Oyun ↗\")." if missing else "",
-                                      foreground=L.GRAY)
+        self.session_note = SelectableLabel(
+            left, text="Seans bağlantısı olmayan satırda düğme oyun sayfasını açar (\"Oyun ↗\")."
+            if missing else "", foreground=L.GRAY, wraplength=self.px(300))
         if missing:
             self.session_note.pack(side="top", anchor="w", padx=8)
 
-        targets = parts["targets"]
-        self.target_buttons = {}
-        target_labels = []
+    def _build_targets(self, targets, row) -> None:
+        target_labels = self._target_labels
         watch = self.service.config.plays.get(row.slug) if self.service.config else None
         if watch is None or not watch.targets:
             implicit = watch is not None and watch.active
@@ -1136,11 +1180,105 @@ class App:
             edit.pack(side="right", padx=4)
             self.target_buttons[t.id] = edit
 
-        self._target_labels = target_labels
-        self._build_info(row)
-        self.meta_label.configure(width=1)       # request no width: columns come from _arrange_detail
-        self._arrange_detail()
-        self._refit()
+    def _build_facts(self, parent, row) -> None:
+        """"Bilgiler": the same labelled block for every row. A value the source did not give is
+        "Bilgi yok" (italic); a derived one (resolved venue, our reading of the opening) is italic."""
+        grid = ttk.Frame(parent)
+        grid.pack(fill="x", padx=8, pady=6)
+        der = row.derived
+        if row.is_event:
+            when = ("Etkinlik tarihi", row.seans or NO_INFO, not row.seans)
+            rez = ("Rezervasyon açılışı", row.reservation_opens or row.rez_text or NO_INFO,
+                   not row.reservation_opens and ("rez" in der or not row.rez_text))
+        else:
+            when = ("Seanslar", row.sessions_text or "Yaklaşan seans yok", not row.sessions_text)
+            rez = ("Rezervasyon açılışı", row.rez_text or NO_INFO, "rez" in der or not row.rez_text)
+        facts = [("Kaynak", row.source, False), when, rez,
+                 ("Durum", row.status_summary or NO_INFO,
+                  row.is_event and "summary" in der or not row.status_summary),
+                 ("Mekan", row.venue or NO_INFO, row.venue_derived or not row.venue)]
+        facts += [("İletişim" if i == 0 else "", line, False) for i, line in enumerate(row.contact)]
+        if row.url:
+            facts.append(("Etkinlik sayfası", row.url, False))
+        self.event_facts_grid = grid
+        self.event_fact_labels, name_labels = [], []
+        for i, (name, value, derived) in enumerate(facts):
+            nl = ttk.Label(grid, text=name, font=self.bold_font)
+            nl.grid(row=i, column=0, sticky="nw", padx=(0, 12), pady=1)
+            name_labels.append(nl)
+            lbl = SelectableLabel(grid, text=value, wraplength=self.px(300),
+                                  italic_font=self.italic_font, derived_color=DERIVED_COLOR)
+            lbl.set_text(value, derived=derived)
+            lbl.grid(row=i, column=1, sticky="w", pady=1)
+            self.event_fact_labels.append(lbl)
+        self._event_name_w = max((nl.winfo_reqwidth() for nl in name_labels), default=0)
+
+    def _credit_segments(self, row) -> list[tuple[str, bool]]:
+        """Yapım as (text, derived) segments: two entries per line ("Yazan: A  ·  Yönetmen: B");
+        entries taken from the same-named Biletinial play are italic."""
+        segments: list[tuple[str, bool]] = []
+        for i, (label, value) in enumerate(row.credits):
+            if i:
+                segments.append((chr(10) if i % 2 == 0 else "  ·  ", False))
+            segments.append((f"{label}: {value}", label in row.borrowed_credits))
+        return segments
+
+    def _build_info(self, row) -> None:
+        """Özet (white bordered box, left) and Oyuncular / Yapım (right): the same widgets for
+        plays and events. A missing part says "Kaynakta bilgi yok" in grey; what was taken from
+        the same-named Biletinial play is italic grey-blue with a provenance line."""
+        parts = self._detail_parts
+        summary_box, people = parts["summary"], parts["people"]
+        borrowed = row.borrowed
+        ttk.Label(summary_box, text="Özet", font=self.bold_font).pack(
+            anchor="w", padx=8, pady=(6, 0))
+        frame = ttk.Frame(summary_box)
+        frame.pack(fill="x", padx=8)
+        text = clean_summary(row.summary)
+        self.summary_text = box = SelectableText(
+            frame, box=True, italic_font=self.italic_font, derived_color=DERIVED_COLOR)
+        sb = ttk.Scrollbar(frame, orient="vertical", command=box.yview)
+        box.configure(yscrollcommand=sb.set)
+        box.set_text(text or SOURCE_NO_INFO, derived=bool(text) and "summary" in borrowed)
+        if not text:
+            box.configure(foreground=L.GRAY)
+        box.pack(side="left", fill="both", expand=True)
+        box.configure(width=1)                  # width comes from the column
+        box.scrolls = lambda: bool(sb.winfo_ismapped())
+        # as tall as the text needs, up to ~40 % of the pane (then it scrolls)
+        self._summary_fit = autosize_text(
+            box, lambda: max(6, int(self.pane.winfo_height() * 0.4 / 17)),
+            on_change=self._refit, scrollbar=sb, also_fonts=[self.italic_font])
+        self.provenance_label = None
+        if row.borrowed_from:
+            names = [FIELD_NAMES[k] for k in FIELD_NAMES if k in borrowed]
+            self.provenance_label = SelectableLabel(
+                summary_box, italic_font=self.italic_font, derived_color=DERIVED_COLOR,
+                wraplength=self.px(300))
+            self.provenance_label.set_text(
+                f"Biletinial kaydından (aynı ad): {', '.join(names)} — “{row.borrowed_from}”",
+                derived=True)
+            self.provenance_label.pack(anchor="w", padx=8, pady=(2, 0))
+        self.event_info_labels = {"Özet": box}
+        for name, widget_attr in (("Oyuncular", "cast_label"), ("Yapım", "credits_label")):
+            ttk.Label(people, text=name, font=self.bold_font).pack(
+                anchor="w", padx=8, pady=(6, 0))
+            lbl = SelectableLabel(people, wraplength=self.px(300),
+                                  italic_font=self.italic_font, derived_color=DERIVED_COLOR)
+            if name == "Oyuncular":
+                value = ", ".join(row.cast)
+                segments = [(value, "cast" in borrowed)]
+            else:
+                value = chr(10).join(credit_lines(row.credits))
+                segments = self._credit_segments(row)
+            if value:
+                lbl.set_segments(segments)
+            else:
+                lbl.set_text(SOURCE_NO_INFO)
+                lbl.configure(foreground=L.GRAY)
+            lbl.pack(anchor="w", padx=8)
+            setattr(self, widget_attr, lbl)
+            self.event_info_labels[name] = lbl
 
     def _detail_avail_px(self) -> int:
         """Width the detail content gets: the detail frame minus the (always reserved)
@@ -1153,10 +1291,10 @@ class App:
         return max(1, width - self.px(DETAIL_SB_PX) - self.px(8))
 
     def _arrange_detail(self) -> None:
-        """Detail blocks in two columns when the pane is wide (left: title, meta, Aktif,
-        session table, then Özet; right: Hedefler, then Oyuncular + Yapım), one column
-        when it is narrow. The column widths and every wrap length are computed here from
-        the available width, once; width changes under 2 px, re-entrant calls and
+        """Detail blocks in two columns when the pane is wide (left: title, meta, Aktif, session
+        table / follow help, then Özet; right: Hedefler, Bilgiler, then Oyuncular + Yapım), one
+        column when it is narrow. The column widths and every wrap length are computed here
+        from the available width, once; width changes under 2 px, re-entrant calls and
         unchanged layouts are ignored (idempotent, no oscillation)."""
         parts = getattr(self, "_detail_parts", None)
         body = getattr(self, "detail_body", None)
@@ -1180,200 +1318,60 @@ class App:
         self._detail_stack, self._detail_w = stack, width
         self.detail_canvas.itemconfigure(self._detail_window, width=width)
         if stack:
-            left_w = right_w = width
+            left_w = right_w = width - gap
             body.columnconfigure(0, weight=0, minsize=width)
             body.columnconfigure(1, weight=0, minsize=0)
         else:
             avail = width - 3 * gap
-            left_w = max(avail * 3 // 5, min(parts["left"].winfo_reqwidth(), avail - self.px(220)))
+            left_w = max(avail * 11 // 20, min(parts["left"].winfo_reqwidth(), avail - self.px(260)))
             right_w = avail - left_w
             body.columnconfigure(0, weight=0, minsize=left_w + gap)
             body.columnconfigure(1, weight=0, minsize=right_w + 2 * gap)
         if regrid:
             if stack:
-                for n, name in enumerate(("left", "targets", "summary", "people")):
+                for n, name in enumerate(("left", "side", "summary", "people")):
                     parts[name].grid(row=n, column=0, columnspan=1, sticky="nsew",
                                      padx=(0, gap), pady=(0, self.px(6)))
             else:
                 parts["left"].grid(row=0, column=0, columnspan=1, sticky="nsew",
                                    pady=(0, self.px(6)))
-                parts["targets"].grid(row=0, column=1, columnspan=1, sticky="nsew",
-                                      padx=(gap, gap), pady=(self.px(4), self.px(6)))
+                parts["side"].grid(row=0, column=1, columnspan=1, sticky="nsew",
+                                   padx=(gap, gap), pady=(self.px(4), self.px(6)))
                 parts["summary"].grid(row=1, column=0, columnspan=1, sticky="nsew",
                                       pady=(0, self.px(6)))
                 parts["people"].grid(row=1, column=1, columnspan=1, sticky="nsew",
                                      padx=(gap, gap), pady=(0, self.px(6)))
-        # wrap lengths from the final column width (people / targets sit in the right column)
-        side_w = (width - gap) if stack else right_w
-        people_room = max(self.px(120), side_w - 2 * gap - self.px(12))
+        # wrap lengths from the final column widths
+        margin = 2 * gap + self.px(12)
+        left_room = max(self.px(120), left_w - margin)
+        right_room = max(self.px(120), right_w - margin)
+        for lbl in (self.meta_label, self.follow_help, self.provenance_label,
+                    self.session_note):
+            if lbl is not None and int(lbl.cget("wraplength")) != left_room:
+                lbl.configure(wraplength=left_room)
+        if self.event_no_page_label is not None:
+            self.event_no_page_label.configure(
+                wraplength=max(self.px(100), left_room - self.px(150)))
+        value_room = max(self.px(120), right_room - self._event_name_w - self.px(12))
+        for lbl in self.event_fact_labels:
+            if int(lbl.cget("wraplength")) != value_room:
+                lbl.configure(wraplength=value_room)
         for lbl in (self.cast_label, self.credits_label):
-            if int(lbl.cget("wraplength")) != people_room:
-                lbl.configure(wraplength=people_room)
-        target_room = max(self.px(100), side_w - 2 * gap - self.px(150))
-        for lab in getattr(self, "_target_labels", ()):
+            if int(lbl.cget("wraplength")) != right_room:
+                lbl.configure(wraplength=right_room)
+        target_room = max(self.px(100), right_w - 2 * gap - self.px(150))
+        for lab in self._target_labels:
             if str(lab.cget("wraplength")) != str(target_room):
                 lab.configure(wraplength=target_room)
         fit = getattr(self, "_summary_fit", None)
         if fit is not None:        # Özet height for its final width (left column minus margins)
-            fit(width=((width - gap) if stack else left_w) - 2 * self.px(8))
+            fit(width=left_w - 2 * self.px(8))
         self.detail_canvas.configure(scrollregion=self.detail_canvas.bbox("all"))
 
     def _session_click(self, iid: str, key: str) -> None:
         url = self._session_links.get(iid)
         if key == "link" and url:
             self.open_url(url)
-
-    def _show_event_detail(self, row, force: bool) -> None:
-        """Detail of a Başiskele / VKV event. Left column: title, meta, follow switch, help,
-        page button, then Özet; right column: the facts block (source, dates, venue, contact)
-        then Oyuncular / Yapım. One column when narrow. Layout is computed once per
-        selection by ``_arrange_event`` (no fixed wrap widths)."""
-        sig = (L.row_values(row), row.seans, row.reservation_opens, row.venue,
-               tuple(row.contact), row.url, row.active, row.summary, tuple(row.cast),
-               tuple(row.credits), row.duration, row.age, row.price)
-        if sig == self._detail_sig and not force:
-            return
-        self._detail_sig = sig
-        body = self._detail_body()
-        parts = {name: ttk.Frame(body) for name in ("left", "facts", "summary", "people")}
-        self._detail_parts, self._event_layout = parts, True
-        left = parts["left"]
-        head = ttk.Frame(left)
-        head.pack(fill="x", padx=8, pady=4)
-        ttk.Label(head, text=row.title, font=self.bold_font).pack(side="left")
-        self.open_btn = ttk.Button(head, text="Sayfayı aç",
-                                   command=lambda: row.url and self.open_url(row.url),
-                                   state="normal" if row.url else "disabled")
-        self.open_btn.pack(side="right")
-        self.meta_label = RichLabel(left, self.italic_font, DERIVED_COLOR)
-        self.meta_label.set_parts(L.meta_parts(row))
-        self.meta_label.pack(padx=8, anchor="w", fill="x")
-        self.meta_label.configure(width=1)
-        acts = ttk.Frame(left)
-        acts.pack(fill="x", padx=8, pady=(2, 0))
-        self.active_var = tk.BooleanVar(value=row.active)
-        self.active_chk = ttk.Checkbutton(
-            acts, text="Aktif (takip ediliyor)", variable=self.active_var,
-            command=lambda: self.edit(self.service.set_event_follow, row.slug,
-                                      self.active_var.get(), key=("ef", row.slug),
-                                      widget=self.active_chk))
-        self.active_chk.pack(side="left")
-        self.add_buttons, self.target_buttons = {}, {}
-        self.follow_help = ttk.Label(left, text=FOLLOW_HELP_EVENT, foreground=L.GRAY,
-                                     wraplength=self.px(300), justify="left")
-        self.follow_help.pack(fill="x", padx=8, anchor="w")
-        links = ttk.Frame(left)       # no per-session pages at these sources: one page button
-        links.pack(fill="x", padx=8, pady=(4, 0))
-        self.event_page_btn = ttk.Button(links, text="Etkinlik sayfası ↗",
-                                         command=lambda: row.url and self.open_url(row.url),
-                                         state="normal" if row.url else "disabled")
-        self.event_page_btn.pack(side="left")
-        self.event_no_page_label = ttk.Label(links, text=NO_SESSION_PAGE, foreground=L.GRAY,
-                                             wraplength=self.px(300), justify="left")
-        self.event_no_page_label.pack(side="left", padx=8)
-        grid = ttk.Frame(parts["facts"])
-        grid.pack(fill="x", padx=8, pady=6)
-        der = row.derived
-        facts = [("Kaynak", row.source, False),
-                 ("Etkinlik tarihi", row.seans or "Bilgi yok", not row.seans),
-                 ("Rezervasyon açılışı", row.reservation_opens or "Bilgi yok",
-                  not row.reservation_opens),
-                 ("Durum", row.status_summary or "Bilgi yok", "summary" in der),
-                 ("Mekan", row.venue or "Bilgi yok", not row.venue)]
-        facts += [("İletişim" if i == 0 else "", line, False)
-                  for i, line in enumerate(row.contact)]
-        if row.contact and row.url:
-            facts.append(("Etkinlik sayfası", row.url, False))
-        self.event_facts_grid = grid
-        self.event_fact_labels, name_labels = [], []
-        for i, (name, value, derived) in enumerate(facts):
-            nl = ttk.Label(grid, text=name, font=self.bold_font)
-            nl.grid(row=i, column=0, sticky="nw", padx=(0, 12), pady=1)
-            name_labels.append(nl)
-            extra = {"font": self.italic_font, "foreground": DERIVED_COLOR} if derived else {}
-            lbl = ttk.Label(grid, text=value, wraplength=self.px(300), justify="left", **extra)
-            lbl.grid(row=i, column=1, sticky="w", pady=1)
-            self.event_fact_labels.append(lbl)
-        self._event_name_w = max((nl.winfo_reqwidth() for nl in name_labels), default=0)
-        self._build_event_info(parts, row)
-        self._arrange_event()
-        self._refit()
-
-    def _build_event_info(self, parts, row) -> None:
-        """Özet / Oyuncular / Yapım of a source event, exactly what the source page states
-        (normal text; nothing is derived). A section the source does not provide says so in
-        grey ("Kaynakta bilgi yok"). Wrap widths come from ``_arrange_event``."""
-        self.event_info_labels = {}
-        credits = chr(10).join(credit_lines(row.credits))
-        for name, text, box in (("Özet", clean_summary(row.summary), parts["summary"]),
-                                ("Oyuncular", ", ".join(row.cast), parts["people"]),
-                                ("Yapım", credits, parts["people"])):
-            ttk.Label(box, text=name, font=self.bold_font).pack(
-                anchor="w", padx=8, pady=(6, 0))
-            extra = {} if text else {"foreground": L.GRAY}
-            lbl = ttk.Label(box, text=text or SOURCE_NO_INFO, wraplength=self.px(300),
-                            justify="left", **extra)
-            lbl.pack(anchor="w", padx=8)
-            self.event_info_labels[name] = lbl
-
-    def _arrange_event(self) -> None:
-        """Two columns when wide (left: header block + Özet, right: facts + Oyuncular /
-        Yapım), one column when narrow; every wrap length computed here from the available
-        width, once (same guards as ``_arrange_detail``)."""
-        parts = getattr(self, "_detail_parts", None)
-        body = getattr(self, "detail_body", None)
-        if not parts or body is None or not body.winfo_exists() or self._arranging:
-            return
-        width = self._detail_avail_px()
-        stack = width < self.px(STACK_PX)
-        if (stack == self._detail_stack and self._detail_w is not None
-                and abs(width - self._detail_w) < 2):
-            return
-        self._arranging = True
-        try:
-            gap = self.px(8)
-            regrid = stack != self._detail_stack
-            self._detail_stack, self._detail_w = stack, width
-            self.detail_canvas.itemconfigure(self._detail_window, width=width)
-            if stack:
-                left_w = right_w = width - gap
-                body.columnconfigure(0, weight=0, minsize=width)
-                body.columnconfigure(1, weight=0, minsize=0)
-            else:
-                avail = width - 3 * gap
-                left_w = avail * 9 // 20
-                right_w = avail - left_w
-                body.columnconfigure(0, weight=0, minsize=left_w + gap)
-                body.columnconfigure(1, weight=0, minsize=right_w + 2 * gap)
-            if regrid:
-                pad = (0, self.px(6))
-                if stack:
-                    for n, name in enumerate(("left", "facts", "summary", "people")):
-                        parts[name].grid(row=n, column=0, columnspan=1, sticky="nsew",
-                                         padx=(0, gap), pady=pad)
-                else:
-                    parts["left"].grid(row=0, column=0, columnspan=1, sticky="nsew", pady=pad)
-                    parts["facts"].grid(row=0, column=1, columnspan=1, sticky="nsew",
-                                        padx=(gap, gap), pady=pad)
-                    parts["summary"].grid(row=1, column=0, columnspan=1, sticky="nsew",
-                                          pady=pad)
-                    parts["people"].grid(row=1, column=1, columnspan=1, sticky="nsew",
-                                         padx=(gap, gap), pady=pad)
-            margin = 2 * gap + self.px(12)
-            self.follow_help.configure(wraplength=max(self.px(120), left_w - margin))
-            self.event_no_page_label.configure(
-                wraplength=max(self.px(100), left_w - margin - self.px(150)))
-            value_room = max(self.px(120), right_w - margin - self._event_name_w - self.px(12))
-            for lbl in self.event_fact_labels:
-                lbl.configure(wraplength=value_room)
-            self.event_info_labels["Özet"].configure(wraplength=max(self.px(120), left_w - margin))
-            for name in ("Oyuncular", "Yapım"):
-                self.event_info_labels[name].configure(
-                    wraplength=max(self.px(120), right_w - margin))
-            self.detail_canvas.configure(scrollregion=self.detail_canvas.bbox("all"))
-        finally:
-            self._arranging = False
-        self._refit()
 
     def _detail_body(self) -> ttk.Frame:
         """Empty, scrollable content frame of the detail pane (small windows stay usable)."""
@@ -1389,7 +1387,6 @@ class App:
         body.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
         self._detail_window = window
         self._detail_parts, self._detail_stack, self._detail_w = None, None, None
-        self._event_layout = False
         self._summary_fit, self._target_labels = None, ()
         canvas.bind("<Configure>", self._detail_canvas_resized)
         self.detail_canvas, self.detail_vsb, self.detail_body = canvas, vsb, body
@@ -1404,17 +1401,16 @@ class App:
                 self._detail_w = width
                 self.detail_canvas.itemconfigure(self._detail_window, width=width)
             return
-        if getattr(self, "_event_layout", False):
-            self._arrange_event()
-        else:
-            self._arrange_detail()
+        self._arrange_detail()
 
     def _detail_wheel(self, event) -> None:
         """Mouse wheel over the detail pane scrolls it (not over its own scrolling widgets)."""
         widget = event.widget
         try:
             if widget.winfo_class() in ("Text", "Treeview", "Listbox"):
-                return
+                scrolls = getattr(widget, "scrolls", None)    # selectable texts do not scroll
+                if scrolls is None or scrolls():              # themselves unless they overflow
+                    return
             node = widget
             while node is not None and node is not self.detail:
                 node = node.master
@@ -1432,37 +1428,6 @@ class App:
             return
         if node is self.side_wrap and self.side_vsb.shown:
             self.side_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
-
-    def _build_info(self, row) -> None:
-        """Özet (left, wide) and Oyuncular / Yapım (right) below the session list; "Bilgi
-        yok" when unknown. The summary is shown cleaned (no stray blank lines) and the Text
-        is sized to the cleaned content."""
-        parts = self._detail_parts
-        summary_box, people = parts["summary"], parts["people"]
-        ttk.Label(summary_box, text="Özet", font=self.bold_font).pack(anchor="w", padx=8)
-        box = ttk.Frame(summary_box)
-        box.pack(fill="x", padx=8)
-        self.summary_text = tk.Text(box, height=1, wrap="word", borderwidth=1, relief="solid",
-                                    font="TkDefaultFont")
-        sb = ttk.Scrollbar(box, orient="vertical", command=self.summary_text.yview)
-        self.summary_text.configure(yscrollcommand=sb.set)
-        self.summary_text.insert("1.0", clean_summary(row.summary) or NO_INFO)
-        self.summary_text.configure(state="disabled")
-        self.summary_text.pack(side="left", fill="both", expand=True)
-        # as tall as the text needs, up to ~40 % of the pane (then it scrolls)
-        self.summary_text.configure(width=1)     # width comes from the column
-        self._summary_fit = autosize_text(
-            self.summary_text, lambda: max(6, int(self.pane.winfo_height() * 0.4 / 17)),
-            on_change=self._refit, scrollbar=sb)
-        ttk.Label(people, text="Oyuncular", font=self.bold_font).pack(anchor="w")
-        self.cast_label = ttk.Label(people, text=", ".join(row.cast) or NO_INFO,
-                                    wraplength=self.px(300), justify="left")
-        self.cast_label.pack(anchor="w", fill="x")
-        ttk.Label(people, text="Yapım", font=self.bold_font).pack(anchor="w", pady=(6, 0))
-        self.credits_label = ttk.Label(
-            people, text="\n".join(credit_lines(row.credits)) or NO_INFO,
-            wraplength=self.px(300), justify="left")
-        self.credits_label.pack(anchor="w", fill="x")
 
 
     # ---- config edits -----------------------------------------------------------------------

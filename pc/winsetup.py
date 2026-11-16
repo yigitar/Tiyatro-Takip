@@ -183,7 +183,8 @@ def apply_window_icon(root, ico: Path | None = None, png: Path | None = None) ->
         ico, png = ico or d_ico, png or d_png
     try:
         if os.name == "nt" and ico.is_file():
-            root.iconbitmap(default=str(ico))
+            root.iconbitmap(str(ico))              # this window (WM_SETICON big + small)
+            root.iconbitmap(default=str(ico))      # every later Toplevel (Popup, editors, dialogs)
             return "ico"
     except Exception:
         pass

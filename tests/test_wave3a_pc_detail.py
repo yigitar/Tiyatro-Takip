@@ -55,16 +55,21 @@ def test_detail_shows_summary_cast_and_credits(ui):
     ui.refresh_rows()
     ui.select_slug("p1")
     assert ui.summary_text.get("1.0", "end").strip() == "Bu bir konu özetidir.\n\nİkinci paragraf."
-    assert str(ui.summary_text.cget("state")) == "disabled"  # read-only
+    before = ui.summary_text.get("1.0", "end-1c")           # read-only: keys do not edit it
+    ui.summary_text.focus_force()
+    ui.summary_text.event_generate("<Key>", keysym="x")
+    ui.summary_text.event_generate("<<Paste>>")
+    ui.root.update()
+    assert ui.summary_text.get("1.0", "end-1c") == before
     assert ui.cast_label.cget("text") == "Ali Can, Ece Er (Hamlet)"
     assert ui.credits_label.cget("text") == "Yazan: A B  ·  Yönetmen: C D\nDramaturg: E F"
 
 
-def test_detail_without_details_says_bilgi_yok(ui):
-    ui.select_slug("p2")
-    assert ui.summary_text.get("1.0", "end").strip() == "Bilgi yok"
-    assert ui.cast_label.cget("text") == "Bilgi yok"
-    assert ui.credits_label.cget("text") == "Bilgi yok"
+def test_detail_without_details_says_kaynakta_bilgi_yok(ui):
+    ui.select_slug("p2")      # wave 17: the same placeholder for plays and source events
+    assert ui.summary_text.get("1.0", "end").strip() == "Kaynakta bilgi yok"
+    assert ui.cast_label.cget("text") == "Kaynakta bilgi yok"
+    assert ui.credits_label.cget("text") == "Kaynakta bilgi yok"
 
 
 def test_detail_pane_is_scrollable_and_rebuilds_only_on_change(ui):

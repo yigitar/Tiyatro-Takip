@@ -233,7 +233,8 @@ def test_legend_and_derived_styling_in_the_detail(ui):
     ui.select_slug("p1")                      # age 7 -> Kitle by the age rule = derived
     tags = ui.meta_label.tag_ranges("derived")
     assert tags, "Kitle is derived (age rule) and must be italic"
-    assert ui.meta_label.cget("text").startswith("Kitle: Çocuk  ·  Tür: Komedi")
+    # wave 17: one meta line for plays and events, Kaynak first
+    assert ui.meta_label.cget("text").startswith("Kaynak: Biletinial  ·  Kitle: Çocuk  ·  Tür: Komedi")
     plain = ui.meta_label.get("1.0", "end-1c")
     start, end = str(tags[0]), str(tags[1])
     assert plain[int(start.split(".")[1]):int(end.split(".")[1])] == "Kitle: Çocuk"
