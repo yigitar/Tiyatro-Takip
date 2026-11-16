@@ -187,3 +187,50 @@ def test_real_screenshot_of_the_popup(ui, tmp_path):
         user32.GetWindowRect(hwnd, ctypes.byref(outer))
         assert outer.bottom - outer.top > inner + ui.px(20)      # title bar + borders around it
     pop.dismiss()
+
+
+def test_bottom_right_puts_the_outer_rect_inside_the_work_area_with_margin():
+    work = (0, 0, 3840, 2112)                  # 4K primary, 48 px taskbar
+    outer = (420, 210)                          # frame + title bar included
+    x, y = winsetup.bottom_right(work, outer, 16)
+    assert x + outer[0] == 3840 - 16 and y + outer[1] == 2112 - 16
+    # second monitor to the right: its own work area, not the primary one
+    x, y = winsetup.bottom_right((3840, 0, 5760, 1032), outer, 16)
+    assert x + outer[0] == 5760 - 16 and y + outer[1] == 1032 - 16 and x >= 3840
+    # tiny work area: never above/left of the origin
+    assert winsetup.bottom_right((0, 0, 100, 100), outer, 16) == (0, 0)
+
+
+def test_popup_uses_the_stubbed_work_area_and_the_real_outer_height(ui, monkeypatch):
+    monkeypatch.setattr(winsetup, "work_area", lambda root=None, user32=None: (200, 100, 1200, 800))
+    _fire(ui, [[_ev("ON_SALE", "k")]])
+    ui.flush_popups()
+    pop = ui.popup
+    pop.update()
+    ow, oh = winsetup.outer_size(pop)
+    assert oh > pop.winfo_height() or sys.platform != "win32"   # title bar + frame counted
+    x, y = winsetup.bottom_right((200, 100, 1200, 800), (ow, oh), ui.px(16))
+    pop.place()
+    pop.update()
+    assert (pop.winfo_x(), pop.winfo_y()) == (x, y)
+    assert x + ow <= 1200 - ui.px(16) and y + oh <= 800 - ui.px(16)
+    pop.dismiss()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Win32 GetWindowRect / monitor work area")
+def test_real_popup_outer_rect_is_above_the_taskbar(ui):
+    import ctypes
+    from ctypes import wintypes
+    _fire(ui, [[_ev("ON_SALE", "k")]])
+    ui.flush_popups()
+    pop = ui.popup
+    pop.update()
+    rect = wintypes.RECT()
+    user32 = ctypes.windll.user32
+    assert user32.GetWindowRect(user32.GetParent(pop.winfo_id()) or pop.winfo_id(), ctypes.byref(rect))
+    left, top, right, bottom = winsetup.work_area(ui.root)
+    print("work", (left, top, right, bottom), "rect", (rect.left, rect.top, rect.right, rect.bottom))
+    margin = ui.px(16)
+    assert rect.bottom <= bottom - margin + 1 and rect.right <= right - margin + 1
+    assert rect.left >= left and rect.top >= top
+    pop.dismiss()

@@ -254,9 +254,14 @@ def focus_existing_window(title: str, api=None) -> bool:
         return False
 
 
+def _hwnd(widget, user32):
+    return user32.GetParent(widget.winfo_id()) or widget.winfo_id()
+
+
 def work_area(root=None, user32=None) -> tuple[int, int, int, int]:
-    """(left, top, right, bottom) of the primary work area (the screen minus the taskbar); the
-    whole screen when Windows cannot say."""
+    """(left, top, right, bottom) of the WORK AREA (monitor minus taskbar) of the monitor that
+    holds ``root`` (MonitorFromWindow + GetMonitorInfo ``rcWork``); falls back to the primary
+    work area (SPI_GETWORKAREA), then to the whole screen when Windows cannot say."""
     if root is not None:
         full = (0, 0, root.winfo_screenwidth(), root.winfo_screenheight())
     else:
@@ -267,12 +272,59 @@ def work_area(root=None, user32=None) -> tuple[int, int, int, int]:
         import ctypes
         from ctypes import wintypes
         user32 = user32 or ctypes.windll.user32
+        if root is not None:
+            try:
+                class MONITORINFO(ctypes.Structure):
+                    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                                ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+                user32.MonitorFromWindow.restype = wintypes.HANDLE
+                user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+                user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MONITORINFO)]
+                mon = user32.MonitorFromWindow(_hwnd(root, user32), 2)   # MONITOR_DEFAULTTONEAREST
+                info = MONITORINFO()
+                info.cbSize = ctypes.sizeof(MONITORINFO)
+                if mon and user32.GetMonitorInfoW(mon, ctypes.byref(info)):
+                    r = info.rcWork
+                    return r.left, r.top, r.right, r.bottom
+            except Exception:
+                pass
         rect = wintypes.RECT()
         if user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):   # SPI_GETWORKAREA
             return rect.left, rect.top, rect.right, rect.bottom
     except Exception:
         pass
     return full
+
+
+def outer_size(window, user32=None) -> tuple[int, int]:
+    """Real outer size (frame + title bar included) of a mapped window: GetWindowRect on
+    Windows, else the requested client size plus the Tk frame offsets."""
+    window.update_idletasks()
+    w, h = window.winfo_width(), window.winfo_height()
+    if w <= 1 or h <= 1:
+        w, h = window.winfo_reqwidth(), window.winfo_reqheight()
+    if sys.platform == "win32" or user32 is not None:
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = user32 or ctypes.windll.user32
+            rect = wintypes.RECT()
+            if window.winfo_ismapped() and user32.GetWindowRect(_hwnd(window, user32),
+                                                                ctypes.byref(rect)):
+                return rect.right - rect.left, rect.bottom - rect.top
+        except Exception:
+            pass
+    border = max(0, window.winfo_rootx() - window.winfo_x())
+    title = max(0, window.winfo_rooty() - window.winfo_y() - border)
+    return w + 2 * border, h + title + 2 * border
+
+
+def bottom_right(work, outer, gap) -> tuple[int, int]:
+    """Top-left of an ``outer``-sized window put into the bottom-right corner of ``work``
+    with ``gap`` margin (never left of / above the work-area origin)."""
+    left, top, right, bottom = work
+    ow, oh = outer
+    return max(left, right - ow - gap), max(top, bottom - oh - gap)
 
 
 NO_ACTIVATE = 0x08000000      # WS_EX_NOACTIVATE

@@ -199,13 +199,19 @@ class Popup(tk.Toplevel):
         self.focus_ok = winsetup.set_no_activate(self)    # before it is shown
         self.deiconify()
         self.restart_timer()
+        self.update_idletasks()
+        self.place()                  # mapped: exact outer rect
 
     def place(self) -> None:
         """Bottom-right corner of the work area (above the taskbar)."""
         self.update_idletasks()
-        left, top, right, bottom = winsetup.work_area(self.app.root)
-        w, h, gap = self.winfo_reqwidth(), self.winfo_reqheight(), self.app.px(12)
-        self.geometry(f"+{max(left, right - w - gap)}+{max(top, bottom - h - gap)}")
+        work = winsetup.work_area(self.app.root)
+        gap = self.app.px(16)
+        outer = winsetup.outer_size(self)
+        if not self.winfo_ismapped():
+            outer = (outer[0] + self.app.px(16), outer[1] + self.app.px(48))   # frame estimate
+        x, y = winsetup.bottom_right(work, outer, gap)
+        self.geometry(f"+{x}+{y}")
 
     def set_text(self, text: str) -> None:
         if self.label.cget("text") != text:
