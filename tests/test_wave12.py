@@ -97,7 +97,7 @@ def test_sidebar_holds_status_buttons_cards_and_legend_and_tabs_are_on_the_right
 def test_list_gets_most_of_the_main_area_and_shows_many_rows(ui):
     _many_plays(ui)
     for width, height, rows, share in ((1760, 1015, 22, 0.55), (1500, 850, 15, 0.55),
-                                       (1000, 650, 11, 0.5)):
+                                       (1010, 650, 11, 0.5)):
         _show(ui, width, height)
         try:
             assert ui.tree.winfo_height() >= share * ui.pane.winfo_height() - 8, (width, height)
@@ -110,7 +110,7 @@ def test_list_gets_most_of_the_main_area_and_shows_many_rows(ui):
 
 def test_sidebar_scrolls_by_itself_only_when_the_window_is_too_low(ui):
     _many_plays(ui)
-    _show(ui, 1000, 650)
+    _show(ui, 1010, 650)
     try:
         assert ui.side_vsb.shown is True
         assert ui.side_canvas.yview()[1] < 1.0
@@ -183,7 +183,7 @@ def test_detail_uses_two_columns_when_wide_without_gaps_or_clipping(ui):
 
 def test_detail_stacks_its_blocks_when_narrow_and_scrolls_instead_of_clipping(ui):
     _detail_ui(ui)
-    _show(ui, 1000, 650)
+    _show(ui, 1010, 650)
     try:
         assert ui._detail_stack is True
         order = [rect(ui._detail_parts[n]) for n in ("left", "targets", "summary", "people")]
