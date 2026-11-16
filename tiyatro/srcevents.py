@@ -26,7 +26,8 @@ from urllib.parse import urljoin
 
 from tiyatro.models import ISTANBUL, Config, Event
 from tiyatro.notify import DAYS, MONTHS, SOURCE_LABELS, SRC_TEXT
-from tiyatro.srcinfo import facts_of, info_from_lines, info_hash, info_view
+from tiyatro.srcinfo import (borrow, facts_of, info_from_lines, info_hash, info_view, norm_title,
+                             play_match)
 from tiyatro.tags import (other_event_label, resolve_audience,
                           resolve_genre)
 from tiyatro.timeutil import parse_iso
@@ -749,18 +750,22 @@ def event_views(state: dict | None, config: Config | None, now: datetime) -> lis
             continue
         default = bool(rec.get("follow_default", True))
         choice = cfg_follow.get(eid)
+        kind, title = str(rec.get("kind") or ""), str(rec.get("title") or "")
+        merged = borrow(info_view(rec), genre_of(kind, title), state, title)
         rows.append({
             "id": eid, "source": rec.get("source", ""),
             "source_name": SOURCE_LABELS.get(rec.get("source"), str(rec.get("source"))),
             "title": str(rec.get("title") or eid), "start": start,
             "when": f"{start.astimezone(ISTANBUL):%d.%m.%Y %H:%M}" if start else "",
             "audience": audience_for(str(rec.get("kind") or ""), str(rec.get("title") or "")),
-            "genre": genre_of(str(rec.get("kind") or ""), str(rec.get("title") or "")),
+            "genre": merged["genre"], "genre_borrowed": "genre" in merged["borrowed"],
             "kind": str(rec.get("kind") or ""), "venue": str(rec.get("venue") or ""),
             "venue_derived": rec.get("venue_derived") is True,
             "url": str(rec.get("url") or ""), "opens_at": _dt(rec.get("opens_at")),
             "opens_pending": rec.get("opens_pending"),
-            "info": info_view(rec),
+            "info": merged["info"], "borrowed": merged["borrowed"],
+            "borrowed_credit_labels": merged["borrowed_credit_labels"],
+            "borrowed_from": merged["borrowed_from"],
             "reservation": reservation_text(rec, now),
             "summary": reservation_summary(rec, now), "full": bool(rec.get("full")),
             "followed": default if choice is None else bool(choice)})

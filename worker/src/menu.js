@@ -526,7 +526,8 @@ export function listItems(config, state, now = Date.now()) {
     items.push({
       kind: "event", id, title: String(rec.title || id), source: SOURCE_SHORT[rec.source] ?? String(rec.source ?? ""),
       followed, watched: followed, removed: false, url: rec.url, venue: rec.venue,
-      ...eventFields(rec, id, now),
+      venueDerived: rec.venue_derived === true && Boolean(rec.venue),
+      ...eventFields(rec, id, now, state),
     });
   }
   const far = Infinity;

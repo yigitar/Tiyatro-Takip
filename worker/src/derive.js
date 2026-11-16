@@ -227,25 +227,29 @@ export function playFields(entry, watch, now) {
 }
 
 /** The same five fields for a Başiskele/VKV event record (event_row). */
-export function eventFields(rec, id, now) {
+export function eventFields(rec, id, now, state) {
   const kind = String(rec.kind || "");
   const title = String(rec.title || id);
   const start = parseMs(rec.start);
   const rez = eventRez(rec, now);
   const derived = ["target"];
+  const merged = borrow(eventInfo(rec), eventGenre(kind, title), state, title);
   if (Number.isFinite(start)) derived.push("zaman");
   if (!audienceIsStated(kind)) derived.push("audience");
-  if (!genreIsStated(kind)) derived.push("genre");
+  if (!genreIsStated(kind) || merged.borrowed.includes("genre")) derived.push("genre");
   if (rez.derived) derived.push("rez");
   return {
     kitle: resolveAudience(kind, [], null, `${kind} ${title}`),
-    tur: eventGenre(kind, title),
+    tur: merged.genre,
     zaman: Number.isFinite(start) ? timeOfDay([local(start).getUTCHours()]) : "",
     hedef: "—",
     rez: rez.text,
     derived: derived.sort(),
     nearest: Number.isFinite(start) ? start : null,
-    ...eventInfo(rec),
+    ...merged.info,
+    borrowed: merged.borrowed,
+    borrowedCredits: merged.borrowedCredits,
+    borrowedFrom: merged.borrowedFrom,
   };
 }
 
@@ -283,4 +287,69 @@ export function eventInfo(rec) {
     yas: age === null ? "" : `${age}+`,
     ucret: str(raw.price),
   };
+}
+
+// ---------------------------------------------------------------- borrowing (tiyatro/srcinfo.py)
+
+const BORROWABLE = ["summary", "cast", "credits", "duration", "age", "genre"];
+
+/** srcinfo.norm_title: Turkish letters folded, lower case, punctuation dropped, spaces collapsed. */
+export function normTitle(text) {
+  return foldTr(text).replace(/ı/g, "i").replace(/[^0-9a-z]+/g, " ").trim().split(" ").filter(Boolean).join(" ");
+}
+
+/** [slug, entry] of the ONE stored play with the same normalised title; null when none / ambiguous. */
+export function playMatch(state, title) {
+  const key = normTitle(title);
+  const plays = isObj(state?.plays) ? state.plays : {};
+  if (!key) return null;
+  const found = Object.entries(plays).filter(([, e]) => isObj(e) && normTitle(e.title) === key);
+  return found.length === 1 ? found[0] : null;
+}
+
+/** srcinfo.play_info_view: the play's own Özet / Oyuncular / Yapım / Süre / Yaş / Tür. */
+function playInfo(entry) {
+  const str = (v) => (typeof v === "string" ? v.trim() : "");
+  const dur = isInt(entry.duration_min) && entry.duration_min > 0 ? entry.duration_min : null;
+  return {
+    ozet: cleanSummary(entry.summary),
+    oyuncular: (Array.isArray(entry.cast) ? entry.cast : []).map(str).filter(Boolean),
+    yapim: isObj(entry.credits)
+      ? Object.entries(entry.credits).map(([k, v]) => [str(k), str(v)]).filter(([k, v]) => k && v) : [],
+    sure: dur === null ? "" : `${dur} dk`,
+    yas: isInt(entry.age_limit) ? `${entry.age_limit}+` : "",
+    genre: genreLabel(entry.genre),
+  };
+}
+
+/**
+ * srcinfo.borrow: fill what the event's own record does not state from the same-named play.
+ * Own values win; credits merge per label (own first); nothing when missing / ambiguous.
+ * Returns {info, genre, borrowed, borrowedCredits, borrowedFrom}.
+ */
+export function borrow(own, ownGenre, state, title) {
+  const out = { info: own, genre: ownGenre, borrowed: [], borrowedCredits: [], borrowedFrom: "" };
+  const hit = playMatch(state, title);
+  if (!hit) return out;
+  const [slug, entry] = hit;
+  const play = playInfo(entry);
+  const info = { ...own };
+  const borrowed = [];
+  for (const [key, field] of [["ozet", "summary"], ["oyuncular", "cast"], ["sure", "duration"], ["yas", "age"]]) {
+    const empty = Array.isArray(own[key]) ? own[key].length === 0 : !own[key];
+    const have = Array.isArray(play[key]) ? play[key].length > 0 : Boolean(play[key]);
+    if (empty && have) { info[key] = play[key]; borrowed.push(field); }
+  }
+  const labels = new Set(own.yapim.map(([k]) => k.toLowerCase()));
+  const extra = play.yapim.filter(([k]) => !labels.has(k.toLowerCase()));
+  if (extra.length) {
+    info.yapim = [...own.yapim, ...extra];
+    borrowed.push("credits");
+    out.borrowedCredits = extra.map(([k]) => k);
+  }
+  if (!ownGenre && play.genre) { out.genre = play.genre; borrowed.push("genre"); }
+  if (borrowed.length) out.borrowedFrom = String(entry.title || slug);
+  out.info = info;
+  out.borrowed = borrowed.sort((a, b) => BORROWABLE.indexOf(a) - BORROWABLE.indexOf(b));
+  return out;
 }

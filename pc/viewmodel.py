@@ -66,6 +66,11 @@ class Row:
     rez_text: str = ""         # "Rez. açılış": "16 Kas Pzt 10:00 (yarın)" / "açık" / "tükendi" / "—"
     rez_key: tuple | None = None  # sort key: (0, 0) açık first, then (1, opening timestamp)
     derived: frozenset = frozenset()  # list columns whose value is derived, not read (italic)
+    # ---- wave 17 ----------------------------------------------------------------------
+    venue_derived: bool = False       # event rows: the venue is resolved ("aynı merkezde"), not stated
+    borrowed: frozenset = frozenset()  # event rows: fields taken from the same-named Biletinial play
+    borrowed_credits: frozenset = frozenset()  # labels of the Yapım entries taken from it
+    borrowed_from: str = ""           # title of that play ("" = nothing borrowed)
 
 
 def short_when(d: datetime) -> str:
@@ -303,7 +308,7 @@ def event_row(view: dict, now: datetime | None = None) -> Row:
         derived.add("zaman")
     if not audience_is_stated(view["kind"]):
         derived.add("audience")
-    if not genre_is_stated(view["kind"]):
+    if not genre_is_stated(view["kind"]) or view.get("genre_borrowed"):
         derived.add("genre")
     if rez_derived:
         derived.update({"rez", "summary"})
@@ -323,7 +328,11 @@ def event_row(view: dict, now: datetime | None = None) -> Row:
         target_count=0, target_text="—",
         session_starts=[start] if start else [], sessions_text=sessions_summary(
             [start] if start else []),
-        rez_text=rez_text, rez_key=rez_key, derived=frozenset(derived))
+        rez_text=rez_text, rez_key=rez_key, derived=frozenset(derived),
+        venue_derived=bool(view.get("venue_derived") and view["venue"]),
+        borrowed=frozenset(view.get("borrowed") or ()),
+        borrowed_credits=frozenset(view.get("borrowed_credit_labels") or ()),
+        borrowed_from=(view.get("borrowed_from") or {}).get("title", ""))
 
 
 def with_events(rows: list[Row], views: list[dict], now: datetime | None = None) -> list[Row]:

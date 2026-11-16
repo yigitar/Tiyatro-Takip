@@ -69,6 +69,11 @@ def check(config: dict, state: dict, nows: list[datetime]) -> int:
                 assert [tuple(c) for c in item["yapim"]] == list(row.credits), where
                 assert (item["sure"], item["yas"], item["ucret"]) == (
                     row.duration, row.age, row.price), where
+                # wave 17: fields borrowed from the same-named play, derived venue
+                assert set(item["borrowed"]) == set(row.borrowed), where
+                assert set(item["borrowedCredits"]) == set(row.borrowed_credits), where
+                assert item["borrowedFrom"] == row.borrowed_from, where
+                assert item["venueDerived"] == row.venue_derived, where
             compared += 1
     return compared
 
@@ -156,6 +161,25 @@ def test_event_info_fields_match_including_odd_whitespace_and_bad_types():
     assert full["yapim"] == [["Yönetmen", "Ali Veli"]]
     assert (full["sure"], full["yas"], full["ucret"]) == ("60 dk", "4+", "Ücretsiz")
     # ("summary" in Row.derived marks the list's status column, not the Özet text)
-    bad = items["vkv:542"]                                   # hand-edited wrong types: all empty
-    assert (bad["ozet"], bad["oyuncular"], bad["yapim"], bad["sure"], bad["yas"], bad["ucret"]) == (
-        "", [], [], "", "", "")
+    bad = items["vkv:542"]                                   # hand-edited wrong types: own info all empty
+    # (wave 17: the event shares its title with the play "kabare-basligi", whose age is borrowed)
+    assert (bad["ozet"], bad["oyuncular"], bad["yapim"], bad["sure"], bad["ucret"]) == (
+        "", [], [], "", "")
+    assert bad["yas"] == "13+" and bad["borrowed"] == ["age"] == list(rows["vkv:542"].borrowed)
+
+
+def test_wave17_borrowing_and_derived_venue_match_on_both_sides():
+    config, state = _fixture()
+    items = {i["id"]: i for i in worker_items(config, state, [NOW])[0]}
+    rows = {r.slug: r for r in python_rows(config, state, NOW)}
+    u, row = items["bk:20261117-2000-unutmak"], rows["bk:20261117-2000-unutmak"]
+    assert u["borrowedFrom"] == row.borrowed_from == "Unutmak"
+    assert set(u["borrowed"]) == set(row.borrowed) == {"summary", "cast", "credits", "age", "genre"}
+    assert u["sure"] == row.duration == "80 dk"                # own value wins, not borrowed
+    assert u["tur"] == row.genre == "Dram" and "genre" in u["derived"]
+    assert [k for k, _v in u["yapim"]][0] == "Sahneleyen"      # own entry first
+    assert dict(map(tuple, u["yapim"]))["Sahneleyen"] == "Kocaeli Şehir Tiyatroları"
+    assert set(u["borrowedCredits"]) == set(row.borrowed_credits) == {"Yazan", "Yönetmen"}
+    assert u["venueDerived"] is True and row.venue_derived is True
+    twin = items["bk:20261118-2000-ikiz-ad"]                   # two plays with that title: never
+    assert twin["borrowed"] == [] and twin["borrowedFrom"] == "" and twin["ozet"] == ""

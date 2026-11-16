@@ -1,96 +1,475 @@
 {
  "plays": {
   "yetiskin-komedi-hedefli": {
-   "title": "Kusursuz Bir Aile", "genre": "Komedi", "age_limit": 13, "tags": ["komedi"], "summary": "Bir aile, bir gece.",
+   "title": "Kusursuz Bir Aile",
+   "genre": "Komedi",
+   "age_limit": 13,
+   "tags": [
+    "komedi"
+   ],
+   "summary": "Bir aile, bir gece.",
    "sessions": {
-    "a": {"status": "on_sale", "opens_at": null, "start": "2026-11-20T20:00:00+03:00"},
-    "b": {"status": "upcoming", "opens_at": "2026-11-17T10:00:00+03:00", "start": "2026-11-21T15:00:00+03:00"},
-    "c": {"status": "sold_out", "opens_at": null, "start": "2026-11-22T15:00:00+03:00"},
-    "gone": {"status": "on_sale", "opens_at": null, "start": "2026-11-23T11:00:00+03:00", "gone": true}
+    "a": {
+     "status": "on_sale",
+     "opens_at": null,
+     "start": "2026-11-20T20:00:00+03:00"
+    },
+    "b": {
+     "status": "upcoming",
+     "opens_at": "2026-11-17T10:00:00+03:00",
+     "start": "2026-11-21T15:00:00+03:00"
+    },
+    "c": {
+     "status": "sold_out",
+     "opens_at": null,
+     "start": "2026-11-22T15:00:00+03:00"
+    },
+    "gone": {
+     "status": "on_sale",
+     "opens_at": null,
+     "start": "2026-11-23T11:00:00+03:00",
+     "gone": true
+    }
    }
   },
   "cocuk-oyunu-yok-hedef": {
-   "title": "Küçük Prens", "genre": "Çocuk Oyunu", "age_limit": 4, "tags": ["çocuk"],
+   "title": "Küçük Prens",
+   "genre": "Çocuk Oyunu",
+   "age_limit": 4,
+   "tags": [
+    "çocuk"
+   ],
    "sessions": {
-    "a": {"status": "upcoming", "opens_at": "2026-11-16T09:00:00+03:00", "start": "2026-11-28T11:00:00+03:00"},
-    "b": {"status": "upcoming", "opens_at": "2026-11-16T09:00:00+03:00", "start": "2026-11-28T14:00:00+03:00"}
+    "a": {
+     "status": "upcoming",
+     "opens_at": "2026-11-16T09:00:00+03:00",
+     "start": "2026-11-28T11:00:00+03:00"
+    },
+    "b": {
+     "status": "upcoming",
+     "opens_at": "2026-11-16T09:00:00+03:00",
+     "start": "2026-11-28T14:00:00+03:00"
+    }
    }
   },
   "yetiskin-oyunu-sadece-kitle": {
-   "title": "Hiç Kimsenin Öyküsü", "genre": "Yetişkin Oyunu", "age_limit": 16, "tags": [],
+   "title": "Hiç Kimsenin Öyküsü",
+   "genre": "Yetişkin Oyunu",
+   "age_limit": 16,
+   "tags": [],
    "summary": "Bir tren kompartımanında, dramatik bir yüzleşme.",
-   "sessions": {"a": {"status": "on_sale", "opens_at": null, "start": "2026-11-18T19:30:00+03:00"}}
+   "sessions": {
+    "a": {
+     "status": "on_sale",
+     "opens_at": null,
+     "start": "2026-11-18T19:30:00+03:00"
+    }
+   }
   },
   "genre-yok-yas-yok": {
-   "title": "On İkinci Gece", "genre": null, "age_limit": null, "tags": [],
-   "sessions": {"a": {"status": "sold_out", "opens_at": null, "start": "2026-11-19T20:00:00+03:00"},
-                "b": {"status": "sold_out", "opens_at": null, "start": "2026-11-19T16:59:00+03:00"}}
+   "title": "On İkinci Gece",
+   "genre": null,
+   "age_limit": null,
+   "tags": [],
+   "sessions": {
+    "a": {
+     "status": "sold_out",
+     "opens_at": null,
+     "start": "2026-11-19T20:00:00+03:00"
+    },
+    "b": {
+     "status": "sold_out",
+     "opens_at": null,
+     "start": "2026-11-19T16:59:00+03:00"
+    }
+   }
   },
   "cocuk-muzikali-basligi": {
-   "title": "Ceviz Adam Müzikali", "genre": "Çocuk Oyunu", "age_limit": null, "tags": [],
-   "sessions": {"a": {"status": "unknown", "opens_at": null, "start": "2026-11-29T17:00:00+03:00"}}
+   "title": "Ceviz Adam Müzikali",
+   "genre": "Çocuk Oyunu",
+   "age_limit": null,
+   "tags": [],
+   "sessions": {
+    "a": {
+     "status": "unknown",
+     "opens_at": null,
+     "start": "2026-11-29T17:00:00+03:00"
+    }
+   }
   },
   "ozetten-tur": {
-   "title": "Gece Yarısı", "genre": "Yetişkin Tiyatrosu", "age_limit": 18, "tags": ["çocuk"],
+   "title": "Gece Yarısı",
+   "genre": "Yetişkin Tiyatrosu",
+   "age_limit": 18,
+   "tags": [
+    "çocuk"
+   ],
    "summary": "  Bu bir STAND-UP gösterisidir.  ",
-   "sessions": {"a": {"status": "on_sale", "opens_at": null, "start": "2026-11-24T20:00:00+03:00"},
-                "b": {"status": "upcoming", "opens_at": "2026-11-14T10:00:00+03:00", "start": "2026-11-25T20:00:00+03:00"}}
+   "sessions": {
+    "a": {
+     "status": "on_sale",
+     "opens_at": null,
+     "start": "2026-11-24T20:00:00+03:00"
+    },
+    "b": {
+     "status": "upcoming",
+     "opens_at": "2026-11-14T10:00:00+03:00",
+     "start": "2026-11-25T20:00:00+03:00"
+    }
+   }
   },
   "gecmis-seans-ve-acilis": {
-   "title": "Geçmiş Seanslı", "genre": "Dram", "age_limit": 10, "tags": [],
-   "sessions": {"old": {"status": "on_sale", "opens_at": null, "start": "2026-11-10T20:00:00+03:00"},
-                "new": {"status": "upcoming", "opens_at": "2026-11-15T18:00:00+03:00", "start": "2026-12-05T20:00:00+03:00"}}
+   "title": "Geçmiş Seanslı",
+   "genre": "Dram",
+   "age_limit": 10,
+   "tags": [],
+   "sessions": {
+    "old": {
+     "status": "on_sale",
+     "opens_at": null,
+     "start": "2026-11-10T20:00:00+03:00"
+    },
+    "new": {
+     "status": "upcoming",
+     "opens_at": "2026-11-15T18:00:00+03:00",
+     "start": "2026-12-05T20:00:00+03:00"
+    }
+   }
   },
-  "seanssiz": {"title": "Seanssız Oyun", "genre": "Trajedi", "age_limit": 13, "tags": [], "sessions": {}},
-  "yeni-gelen": {"title": "Yeni Gelen Oyun", "tags": [], "sessions": {
-    "a": {"status": "upcoming", "opens_at": "2026-12-01T10:00:00+03:00", "start": "2026-12-10T11:00:00+03:00"}}},
-  "kabare-basligi": {"title": "Kabare Gecesi", "genre": "Fantastik", "age_limit": 13, "tags": [],
-   "sessions": {"a": {"status": "on_sale", "opens_at": null, "start": "2026-11-15T12:00:00+03:00"},
-                "b": {"status": "on_sale", "opens_at": null, "start": "2026-11-15T11:59:59+03:00"}}},
-  "arsivlenmis": {"title": "Arşivlenmiş", "genre": "Komedi", "archived": true, "tags": [],
-   "sessions": {"a": {"status": "sold_out", "opens_at": null, "start": "2026-10-01T20:00:00+03:00"}}},
-  "arsivlenmis-takipte": {"title": "Arşivli ama Takipte", "genre": "Komedi", "archived": true, "tags": [],
-   "sessions": {"a": {"status": "sold_out", "opens_at": null, "start": "2026-10-02T20:00:00+03:00"}}},
-  "kalkti": {"title": "Kalkan Oyun", "genre": "Komedi", "removed": true, "tags": [],
-   "sessions": {"a": {"status": "on_sale", "opens_at": null, "start": "2026-11-30T20:00:00+03:00"}}},
-  "bozuk-veri": {"title": "Bozuk Veri", "genre": 5, "age_limit": true, "tags": "x",
-   "sessions": {"a": {"status": "on_sale", "opens_at": "yarın", "start": "bozuk-tarih"},
-                "b": "not-a-dict",
-                "c": {"status": "upcoming", "opens_at": "2026-11-16T10:00:00+03:00", "start": "2026-11-26T20:00:00+03:00"}}}
+  "seanssiz": {
+   "title": "Seanssız Oyun",
+   "genre": "Trajedi",
+   "age_limit": 13,
+   "tags": [],
+   "sessions": {}
+  },
+  "yeni-gelen": {
+   "title": "Yeni Gelen Oyun",
+   "tags": [],
+   "sessions": {
+    "a": {
+     "status": "upcoming",
+     "opens_at": "2026-12-01T10:00:00+03:00",
+     "start": "2026-12-10T11:00:00+03:00"
+    }
+   }
+  },
+  "kabare-basligi": {
+   "title": "Kabare Gecesi",
+   "genre": "Fantastik",
+   "age_limit": 13,
+   "tags": [],
+   "sessions": {
+    "a": {
+     "status": "on_sale",
+     "opens_at": null,
+     "start": "2026-11-15T12:00:00+03:00"
+    },
+    "b": {
+     "status": "on_sale",
+     "opens_at": null,
+     "start": "2026-11-15T11:59:59+03:00"
+    }
+   }
+  },
+  "arsivlenmis": {
+   "title": "Arşivlenmiş",
+   "genre": "Komedi",
+   "archived": true,
+   "tags": [],
+   "sessions": {
+    "a": {
+     "status": "sold_out",
+     "opens_at": null,
+     "start": "2026-10-01T20:00:00+03:00"
+    }
+   }
+  },
+  "arsivlenmis-takipte": {
+   "title": "Arşivli ama Takipte",
+   "genre": "Komedi",
+   "archived": true,
+   "tags": [],
+   "sessions": {
+    "a": {
+     "status": "sold_out",
+     "opens_at": null,
+     "start": "2026-10-02T20:00:00+03:00"
+    }
+   }
+  },
+  "kalkti": {
+   "title": "Kalkan Oyun",
+   "genre": "Komedi",
+   "removed": true,
+   "tags": [],
+   "sessions": {
+    "a": {
+     "status": "on_sale",
+     "opens_at": null,
+     "start": "2026-11-30T20:00:00+03:00"
+    }
+   }
+  },
+  "bozuk-veri": {
+   "title": "Bozuk Veri",
+   "genre": 5,
+   "age_limit": true,
+   "tags": "x",
+   "sessions": {
+    "a": {
+     "status": "on_sale",
+     "opens_at": "yarın",
+     "start": "bozuk-tarih"
+    },
+    "b": "not-a-dict",
+    "c": {
+     "status": "upcoming",
+     "opens_at": "2026-11-16T10:00:00+03:00",
+     "start": "2026-11-26T20:00:00+03:00"
+    }
+   }
+  },
+  "unutmak-kocaeli-bb": {
+   "title": "Unutmak",
+   "genre": "Dram",
+   "age_limit": 16,
+   "duration_min": 95,
+   "tags": [],
+   "summary": "Bir kayıp, bir hatırlama.\r\n\r\n\r\nİkinci paragraf.",
+   "cast": [
+    "Senem Akman",
+    "Levent Muratoğlu"
+   ],
+   "credits": {
+    "Yazan": "Tristan Bernays",
+    "Yönetmen": "İbrahim Şahin",
+    "Sahneleyen": "Çifte Yazar"
+   },
+   "sessions": {
+    "a": {
+     "status": "on_sale",
+     "opens_at": null,
+     "start": "2026-11-17T20:00:00+03:00"
+    }
+   }
+  },
+  "ikiz-ad-1": {
+   "title": "Ikiz Ad",
+   "genre": "Komedi",
+   "summary": "Bir.",
+   "sessions": {}
+  },
+  "ikiz-ad-2": {
+   "title": "Ikiz Ad",
+   "genre": "Dram",
+   "summary": "İki.",
+   "sessions": {}
+  }
  },
  "source_events": {
-  "bk:20261120-1100-satir-arasi-ebeveynlik": {"id": "bk:20261120-1100-satir-arasi-ebeveynlik", "source": "basiskele",
-   "title": "Satır Arası Ebeveynlik", "kind": "", "start": "2026-11-20T11:00:00+03:00", "opens_at": null, "follow_default": false},
-  "bk:20261122-1400-cop-atlas": {"id": "bk:20261122-1400-cop-atlas", "source": "basiskele",
-   "title": "Çöp Atlas", "kind": "Çocuk Tiyatrosu", "start": "2026-11-22T14:00:00+03:00",
-   "opens_at": "2026-11-19T12:00:00+03:00", "opens_pending": true, "follow_default": false},
-  "bk:20261123-1900-yetiskin": {"id": "bk:20261123-1900-yetiskin", "source": "basiskele",
-   "title": "Gülen Adam", "kind": "Yetişkin Tiyatrosu", "start": "2026-11-23T19:00:00+03:00", "opens_at": null},
-  "bk:20261124-1100-evlilik": {"id": "bk:20261124-1100-evlilik", "source": "basiskele",
-   "title": "Evlilik Okulu", "kind": "", "start": "2026-11-24T11:00:00+03:00", "opens_at": null, "follow_default": false},
-  "bk:20261125-1000-soylesi": {"id": "bk:20261125-1000-soylesi", "source": "basiskele",
-   "title": "Söyleşi: Dram ve Hayat", "kind": "Söyleşi", "start": "2026-11-25T10:00:00+03:00", "opens_at": null, "follow_default": null},
-  "bk:20261126-1500-atolye": {"id": "bk:20261126-1500-atolye", "source": "basiskele",
-   "title": "Seramik Atölyesi", "kind": "", "start": "2026-11-26T15:00:00+03:00", "opens_at": null, "follow_default": false},
-  "bk:20261126-1700-tiyatro-atolyesi": {"id": "bk:20261126-1700-tiyatro-atolyesi", "source": "basiskele",
-   "title": "Oyunculuk Atölyesi (Tiyatro)", "kind": "", "start": "2026-11-26T17:00:00+03:00", "opens_at": null, "follow_default": false},
-  "vkv:541": {"id": "vkv:541", "source": "vkv", "title": "Ceviz Adam Müzikali", "kind": "Çocuk Tiyatrosu",
-   "start": "2026-11-29T11:00:00+03:00", "opens_at": "2026-11-15T09:00:00+03:00", "opens_pending": false, "info": {"summary": "Ceviz Adam sahnede.\r\n\r\n\r\n\u00a0 Ikinci paragraf  ", "cast": ["Ay\u015fe Y\u0131lmaz", " Mehmet Kaya ", 5], "credits": {"Y\u00f6netmen": "Ali Veli", "Yazan": " ", "Bo\u015f": 3}, "duration_min": 60, "age_limit": 4, "price": "Ücretsiz"}, "info_hash": "x", "follow_default": false},
-  "vkv:542": {"id": "vkv:542", "source": "vkv", "title": "Kabare Gecesi", "kind": "Tiyatro",
-   "start": "2026-11-30T20:00:00+03:00", "opens_at": "2026-11-14T09:00:00+03:00", "opens_pending": true, "info": {"summary": 5, "cast": "x", "credits": ["a"], "duration_min": "90", "age_limit": true, "price": 7}, "follow_default": true},
-  "vkv:543": {"id": "vkv:543", "source": "vkv", "title": "İstanbul'dan Mektuplar", "kind": "Tiyatro",
-   "start": "2026-12-02T20:30:00+03:00", "opens_at": "2026-11-15T12:00:00+03:00", "opens_pending": null, "follow_default": false},
-  "vkv:544": {"id": "vkv:544", "source": "vkv", "title": "Dolu Gösteri", "kind": "Tiyatro", "full": true,
-   "start": "2026-12-03T20:00:00+03:00", "opens_at": "2026-11-10T09:00:00+03:00", "follow_default": false},
-  "vkv:545": {"id": "vkv:545", "source": "vkv", "title": "Animasyon Günü", "kind": "Animasyon Filmi",
-   "start": "2026-11-27T15:30:00+03:00", "opens_at": "2026-11-16T00:30:00+03:00", "follow_default": false},
-  "vkv:546": {"id": "vkv:546", "source": "vkv", "title": "Tarihsiz Etkinlik", "kind": "Tiyatro", "opens_at": null, "follow_default": false},
-  "vkv:547": {"id": "vkv:547", "source": "vkv", "title": "Az Önce Bitti", "kind": "Tiyatro",
-   "start": "2026-11-15T10:00:00+03:00", "opens_at": null, "follow_default": false},
-  "vkv:548": {"id": "vkv:548", "source": "vkv", "title": "Çok Eski", "kind": "Tiyatro",
-   "start": "2026-11-14T10:00:00+03:00", "opens_at": null, "follow_default": false},
-  "vkv:549": {"id": "vkv:549", "source": "vkv", "title": "Gece Yarısı Operet", "kind": "Çocuk Müzikali",
-   "start": "2026-12-04T16:59:00+03:00", "opens_at": "2026-12-01T09:00:00+03:00", "follow_default": false}
+  "bk:20261120-1100-satir-arasi-ebeveynlik": {
+   "id": "bk:20261120-1100-satir-arasi-ebeveynlik",
+   "source": "basiskele",
+   "title": "Satır Arası Ebeveynlik",
+   "kind": "",
+   "start": "2026-11-20T11:00:00+03:00",
+   "opens_at": null,
+   "follow_default": false
+  },
+  "bk:20261122-1400-cop-atlas": {
+   "id": "bk:20261122-1400-cop-atlas",
+   "source": "basiskele",
+   "title": "Çöp Atlas",
+   "kind": "Çocuk Tiyatrosu",
+   "start": "2026-11-22T14:00:00+03:00",
+   "opens_at": "2026-11-19T12:00:00+03:00",
+   "opens_pending": true,
+   "follow_default": false
+  },
+  "bk:20261123-1900-yetiskin": {
+   "id": "bk:20261123-1900-yetiskin",
+   "source": "basiskele",
+   "title": "Gülen Adam",
+   "kind": "Yetişkin Tiyatrosu",
+   "start": "2026-11-23T19:00:00+03:00",
+   "opens_at": null
+  },
+  "bk:20261124-1100-evlilik": {
+   "id": "bk:20261124-1100-evlilik",
+   "source": "basiskele",
+   "title": "Evlilik Okulu",
+   "kind": "",
+   "start": "2026-11-24T11:00:00+03:00",
+   "opens_at": null,
+   "follow_default": false
+  },
+  "bk:20261125-1000-soylesi": {
+   "id": "bk:20261125-1000-soylesi",
+   "source": "basiskele",
+   "title": "Söyleşi: Dram ve Hayat",
+   "kind": "Söyleşi",
+   "start": "2026-11-25T10:00:00+03:00",
+   "opens_at": null,
+   "follow_default": null
+  },
+  "bk:20261126-1500-atolye": {
+   "id": "bk:20261126-1500-atolye",
+   "source": "basiskele",
+   "title": "Seramik Atölyesi",
+   "kind": "",
+   "start": "2026-11-26T15:00:00+03:00",
+   "opens_at": null,
+   "follow_default": false
+  },
+  "bk:20261126-1700-tiyatro-atolyesi": {
+   "id": "bk:20261126-1700-tiyatro-atolyesi",
+   "source": "basiskele",
+   "title": "Oyunculuk Atölyesi (Tiyatro)",
+   "kind": "",
+   "start": "2026-11-26T17:00:00+03:00",
+   "opens_at": null,
+   "follow_default": false
+  },
+  "vkv:541": {
+   "id": "vkv:541",
+   "source": "vkv",
+   "title": "Ceviz Adam Müzikali",
+   "kind": "Çocuk Tiyatrosu",
+   "start": "2026-11-29T11:00:00+03:00",
+   "opens_at": "2026-11-15T09:00:00+03:00",
+   "opens_pending": false,
+   "info": {
+    "summary": "Ceviz Adam sahnede.\r\n\r\n\r\n  Ikinci paragraf  ",
+    "cast": [
+     "Ayşe Yılmaz",
+     " Mehmet Kaya ",
+     5
+    ],
+    "credits": {
+     "Yönetmen": "Ali Veli",
+     "Yazan": " ",
+     "Boş": 3
+    },
+    "duration_min": 60,
+    "age_limit": 4,
+    "price": "Ücretsiz"
+   },
+   "info_hash": "x",
+   "follow_default": false
+  },
+  "vkv:542": {
+   "id": "vkv:542",
+   "source": "vkv",
+   "title": "Kabare Gecesi",
+   "kind": "Tiyatro",
+   "start": "2026-11-30T20:00:00+03:00",
+   "opens_at": "2026-11-14T09:00:00+03:00",
+   "opens_pending": true,
+   "info": {
+    "summary": 5,
+    "cast": "x",
+    "credits": [
+     "a"
+    ],
+    "duration_min": "90",
+    "age_limit": true,
+    "price": 7
+   },
+   "follow_default": true
+  },
+  "vkv:543": {
+   "id": "vkv:543",
+   "source": "vkv",
+   "title": "İstanbul'dan Mektuplar",
+   "kind": "Tiyatro",
+   "start": "2026-12-02T20:30:00+03:00",
+   "opens_at": "2026-11-15T12:00:00+03:00",
+   "opens_pending": null,
+   "follow_default": false
+  },
+  "vkv:544": {
+   "id": "vkv:544",
+   "source": "vkv",
+   "title": "Dolu Gösteri",
+   "kind": "Tiyatro",
+   "full": true,
+   "start": "2026-12-03T20:00:00+03:00",
+   "opens_at": "2026-11-10T09:00:00+03:00",
+   "follow_default": false
+  },
+  "vkv:545": {
+   "id": "vkv:545",
+   "source": "vkv",
+   "title": "Animasyon Günü",
+   "kind": "Animasyon Filmi",
+   "start": "2026-11-27T15:30:00+03:00",
+   "opens_at": "2026-11-16T00:30:00+03:00",
+   "follow_default": false
+  },
+  "vkv:546": {
+   "id": "vkv:546",
+   "source": "vkv",
+   "title": "Tarihsiz Etkinlik",
+   "kind": "Tiyatro",
+   "opens_at": null,
+   "follow_default": false
+  },
+  "vkv:547": {
+   "id": "vkv:547",
+   "source": "vkv",
+   "title": "Az Önce Bitti",
+   "kind": "Tiyatro",
+   "start": "2026-11-15T10:00:00+03:00",
+   "opens_at": null,
+   "follow_default": false
+  },
+  "vkv:548": {
+   "id": "vkv:548",
+   "source": "vkv",
+   "title": "Çok Eski",
+   "kind": "Tiyatro",
+   "start": "2026-11-14T10:00:00+03:00",
+   "opens_at": null,
+   "follow_default": false
+  },
+  "vkv:549": {
+   "id": "vkv:549",
+   "source": "vkv",
+   "title": "Gece Yarısı Operet",
+   "kind": "Çocuk Müzikali",
+   "start": "2026-12-04T16:59:00+03:00",
+   "opens_at": "2026-12-01T09:00:00+03:00",
+   "follow_default": false
+  },
+  "bk:20261117-2000-unutmak": {
+   "id": "bk:20261117-2000-unutmak",
+   "source": "basiskele",
+   "title": "Unutmak",
+   "kind": "Tiyatro Oyunu",
+   "start": "2026-11-17T20:00:00+03:00",
+   "venue": "Türkiye Yüzyılı Gençlik Merkezi",
+   "venue_derived": true,
+   "info": {
+    "credits": {
+     "Sahneleyen": "Kocaeli Şehir Tiyatroları"
+    },
+    "duration_min": 80
+   },
+   "follow_default": false,
+   "url": "https://www.basiskele.bel.tr/x"
+  },
+  "bk:20261118-2000-ikiz-ad": {
+   "id": "bk:20261118-2000-ikiz-ad",
+   "source": "basiskele",
+   "title": "İkiz Ad",
+   "kind": "Tiyatro Oyunu",
+   "start": "2026-11-18T20:00:00+03:00",
+   "venue": "",
+   "follow_default": false,
+   "url": "https://www.basiskele.bel.tr/y"
+  }
  },
- "meta": {}, "emitted": {}
+ "meta": {},
+ "emitted": {}
 }

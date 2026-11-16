@@ -19,6 +19,7 @@ import json
 import re
 
 from tiyatro.parser import SUMMARY_MAX, _cap_summary, _cast_name, tr_title
+from tiyatro.tags import clean_summary, genre_label
 
 _CAST_LABELS = ("oyuncular", "oyuncu kadrosu", "oynayanlar", "roller", "rol dagilimi",
                 "rollerde", "kadro", "sahnede")
@@ -138,5 +139,82 @@ def info_view(rec: dict) -> dict:
     }
 
 
+# ---- borrowing from the same-named Biletinial play (wave 17) -------------------------------------
+BORROWABLE = ("summary", "cast", "credits", "duration", "age", "genre")
+
+
+def norm_title(text) -> str:
+    """Title for an exact-name comparison: Turkish letters folded, lower case, punctuation
+    dropped, spaces collapsed ("UNUTMAK!" == "Unutmak"). Empty when nothing alphanumeric is left."""
+    folded = _fold(str(text or "")).replace("İ", "i")
+    return " ".join(re.sub(r"[^0-9a-z]+", " ", folded).split())
+
+
+def play_match(state: dict | None, title) -> tuple[str, dict] | None:
+    """(slug, entry) of the ONE stored play whose normalised title equals ``title``'s; None when
+    there is none, the title is empty, or more than one play has that title (ambiguous)."""
+    key = norm_title(title)
+    plays = (state or {}).get("plays")
+    if not key or not isinstance(plays, dict):
+        return None
+    found = [(slug, e) for slug, e in plays.items()
+             if isinstance(e, dict) and norm_title(e.get("title")) == key]
+    return found[0] if len(found) == 1 else None
+
+
+def play_info_view(entry: dict) -> dict:
+    """``info_view`` shape of a stored play (type-checked): summary, cast, credits, duration, age
+    and ``genre`` (only a genre the play itself states)."""
+    cast, credits = entry.get("cast"), entry.get("credits")
+    dur, age = entry.get("duration_min"), entry.get("age_limit")
+    return {
+        "summary": clean_summary(entry.get("summary")),
+        "cast": [c.strip() for c in cast if isinstance(c, str) and c.strip()]
+        if isinstance(cast, list) else [],
+        "credits": [(k, v.strip()) for k, v in credits.items()
+                    if isinstance(k, str) and k.strip() and isinstance(v, str) and v.strip()]
+        if isinstance(credits, dict) else [],
+        "duration": f"{dur} dk" if isinstance(dur, int) and not isinstance(dur, bool) and dur > 0 else "",
+        "age": f"{age}+" if isinstance(age, int) and not isinstance(age, bool) else "",
+        "genre": genre_label(entry.get("genre")),
+    }
+
+
+def borrow(own: dict, own_genre: str, state: dict | None, title) -> dict:
+    """Fill what the event's own page does not state from the same-named play.
+
+    Returns ``{"info": merged info_view, "genre": str, "borrowed": [field...],
+    "borrowed_credit_labels": [labels], "borrowed_from": {"slug", "title"} | None}``. An own
+    value always wins; credits are merged per label (own entries first). Nothing is borrowed
+    when the match is missing or ambiguous."""
+    out = {"info": own, "genre": own_genre, "borrowed": [], "borrowed_credit_labels": [],
+           "borrowed_from": None}
+    hit = play_match(state, title)
+    if hit is None:
+        return out
+    slug, entry = hit
+    play = play_info_view(entry)
+    info = dict(own)
+    borrowed: list[str] = []
+    for key in ("summary", "cast", "duration", "age"):
+        if not info.get(key) and play[key]:
+            info[key] = play[key]
+            borrowed.append(key)
+    labels = {k.casefold() for k, _v in own["credits"]}
+    extra = [(k, v) for k, v in play["credits"] if k.casefold() not in labels]
+    if extra:
+        info["credits"] = list(own["credits"]) + extra
+        borrowed.append("credits")
+        out["borrowed_credit_labels"] = [k for k, _v in extra]
+    if not own_genre and play["genre"]:
+        out["genre"] = play["genre"]
+        borrowed.append("genre")
+    if borrowed:
+        out["borrowed_from"] = {"slug": slug, "title": str(entry.get("title") or slug)}
+    order = {k: i for i, k in enumerate(BORROWABLE)}
+    out["info"], out["borrowed"] = info, sorted(borrowed, key=order.get)
+    return out
+
+
 __all__ = ["facts_of", "split_labelled", "info_from_lines", "info_hash", "info_view",
-           "SUMMARY_MAX"]
+           "SUMMARY_MAX", "norm_title", "play_match", "play_info_view", "borrow", "BORROWABLE"]
