@@ -4,8 +4,8 @@
  "claimed_by": "pc",
  "key": "NEWFOLD:e2ca592ade8a",
  "lease_until": "2026-11-16T15:44:13+03:00",
- "message_id": null,
+ "message_id": 16,
  "note": null,
- "sent_at": null,
- "status": "claimed"
+ "sent_at": "2026-11-16T15:43:29+03:00",
+ "status": "sent"
 }
