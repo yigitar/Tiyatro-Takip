@@ -4,8 +4,8 @@
  "claimed_by": "github",
  "key": "SRC_NEW:bk:20261122-1400-evlilik-okulu",
  "lease_until": "2026-11-17T17:33:57+03:00",
- "message_id": null,
+ "message_id": 25,
  "note": null,
- "sent_at": null,
- "status": "claimed"
+ "sent_at": "2026-11-17T17:33:13+03:00",
+ "status": "sent"
 }
