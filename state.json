@@ -8,6 +8,7 @@
   "NEW_PLAY:ve-ates-bizi-tuketiyor-kocaeli-bb": "2026-11-13T10:31:26.691999+03:00",
   "ON_SALE:18699574:1": "2026-11-15T18:05:54.774301+03:00",
   "ON_SALE:18699574:10": "2026-11-17T17:49:57.283622+03:00",
+  "ON_SALE:18699574:11": "2026-11-17T17:57:13.019334+03:00",
   "ON_SALE:18699574:2": "2026-11-15T18:37:30.741388+03:00",
   "ON_SALE:18699574:3": "2026-11-15T19:04:51.528714+03:00",
   "ON_SALE:18699574:4": "2026-11-16T17:05:53.424425+03:00",
@@ -66,7 +67,7 @@
   "fetch_fail_streak": 0,
   "last_daily": "2026-11-17",
   "last_daily_at": "2026-11-17T12:00:54.229455+03:00",
-  "last_scan": "2026-11-17T17:56:40.077381+03:00"
+  "last_scan": "2026-11-17T17:57:13.019334+03:00"
  },
  "outbox": [],
  "plays": {
@@ -318,13 +319,13 @@
    "fail_streak": 0,
    "first_seen": "2026-11-13T10:31:26.691999+03:00",
    "genre": "Komedi",
-   "last_seen": "2026-11-17T17:56:40.077381+03:00",
+   "last_seen": "2026-11-17T17:57:13.019334+03:00",
    "missing_count": 0,
    "price_from": 35.0,
    "removed": false,
    "sessions": {
     "18699567": {
-     "closed_seen_at": "2026-11-17T17:56:40.077381+03:00",
+     "closed_seen_at": "2026-11-17T17:57:13.019334+03:00",
      "end": "2026-11-13T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": true,
@@ -338,7 +339,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699567"
     },
     "18699568": {
-     "closed_seen_at": "2026-11-17T17:56:40.077381+03:00",
+     "closed_seen_at": "2026-11-17T17:57:13.019334+03:00",
      "end": "2026-11-14T17:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": true,
@@ -352,7 +353,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699568"
     },
     "18699569": {
-     "closed_seen_at": "2026-11-17T17:56:40.077381+03:00",
+     "closed_seen_at": "2026-11-17T17:57:13.019334+03:00",
      "end": "2026-11-14T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": true,
@@ -366,23 +367,23 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699569"
     },
     "18699574": {
-     "closed_seen_at": "2026-11-17T17:56:40.077381+03:00",
+     "closed_seen_at": "2026-11-17T17:56:56.462869+03:00",
      "end": "2026-11-19T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
-     "last_on_sale_notified": "2026-11-17T17:49:57.283622+03:00",
-     "on_sale_count": 10,
+     "last_on_sale_notified": "2026-11-17T17:57:13.019334+03:00",
+     "on_sale_count": 11,
      "on_sale_pending": false,
      "opens_at": null,
-     "prev_status": "on_sale",
-     "remaining": null,
+     "prev_status": "sold_out",
+     "remaining": 2,
      "start": "2026-11-19T20:00:00+03:00",
-     "status": "sold_out",
-     "status_since": "2026-11-17T17:56:40.077381+03:00",
+     "status": "on_sale",
+     "status_since": "2026-11-17T17:57:13.019334+03:00",
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699574"
     },
     "18699575": {
-     "closed_seen_at": "2026-11-17T17:56:40.077381+03:00",
+     "closed_seen_at": "2026-11-17T17:57:13.019334+03:00",
      "end": "2026-11-20T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -398,7 +399,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699575"
     },
     "18699576": {
-     "closed_seen_at": "2026-11-17T17:56:40.077381+03:00",
+     "closed_seen_at": "2026-11-17T17:57:13.019334+03:00",
      "end": "2026-11-21T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -778,8 +779,8 @@
    "error": null,
    "items_count": 6,
    "last_change_at": "2026-11-17T17:33:26.227397+03:00",
-   "last_check_at": "2026-11-17T17:56:40.077381+03:00",
-   "last_ok_at": "2026-11-17T17:56:40.077381+03:00",
+   "last_check_at": "2026-11-17T17:57:13.019334+03:00",
+   "last_ok_at": "2026-11-17T17:57:13.019334+03:00",
    "name": "Biletinial",
    "ok": true
   },
