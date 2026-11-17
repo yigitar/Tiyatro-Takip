@@ -4,8 +4,8 @@
  "claimed_by": "github",
  "key": "REMOVED_PLAY:unutmak-kocaeli-bb",
  "lease_until": "2026-11-17T20:38:27+03:00",
- "message_id": null,
+ "message_id": 31,
  "note": null,
- "sent_at": null,
- "status": "claimed"
+ "sent_at": "2026-11-17T20:37:43+03:00",
+ "status": "sent"
 }
