@@ -100,9 +100,9 @@ def test_wave18_real_article_live_fixture_parses_every_theatre_and_series_event(
     assert (ks.start.day, ks.start.hour) == (25, 20)
     # the unchanged ones
     assert ev["Satır Arası Ebeveynlik"].start.day == 20 and ev["Kediler Sokağı"].start.hour == 15
-    # still dropped (no quoted title, no "kapsamında" right after the time): Evlilik Okulu
-    assert not any("Evlilik" in t for t in ev)
-    assert len(ev) == 8
+    # wave 20: "<Name> programı" after the time and venue is an event (title without "programı")
+    assert ev["Evlilik Okulu"].start.day == 22 and ev["Evlilik Okulu"].start.hour == 14
+    assert len(ev) == 9
 
 
 def test_same_day_needs_exactly_one_explicit_date_in_the_previous_sentence():
@@ -161,3 +161,31 @@ def test_newly_parsed_events_of_a_known_article_send_one_digest_not_silent():
     st2 = {"outbox": [], "emitted": {}}
     runner._queue_events(st2, found[:1], False, now, "github")
     assert not st2["outbox"][0]["key"].startswith("NEWFOLD:")
+
+
+# ---- wave 20: "<Name> programı" ----------------------------------------------------------------
+
+def test_wave20_name_programi_with_date_time_and_venue():
+    ev = parse(para("22 Kasım Pazar günü saat 14.00’te Başiskele Belediyesi Antik Köfte Kafe & "
+                    "Restoran’da Evlilik Okulu programı düzenlenecek."))
+    e = ev["Evlilik Okulu"]
+    assert (e.start.month, e.start.day, e.start.hour) == (11, 22, 14)
+    assert e.venue == "Başiskele Belediyesi Antik Köfte Kafe & Restoran"
+    no_venue = parse(para("22 Kasım Pazar günü saat 14.00’te Evlilik Okulu programı olacak."))
+    assert "Evlilik Okulu" in no_venue
+    same_day = parse(para("20 Kasım Cuma günü saat 11.00’de Kitaphane’de “Aa” programı olacak.",
+                          "Aynı gün saat 20.00’de Merkez Salonu’nda Aile Buluşması programı yapılacak."))
+    assert same_day["Aile Buluşması"].start.day == 20 and same_day["Aile Buluşması"].start.hour == 20
+
+
+def test_wave20_name_programi_negative_cases():
+    # the article header sentence (generic, followed by kapsamında) and a date-less / time-less line
+    assert parse(para("22 Kasım Pazar günü saat 14.00’te Kültür Sanat Başiskele programı "
+                      "kapsamında etkinlik olacak.")) == {}
+    assert parse(para("Evlilik Okulu programı düzenlenecek.")) == {}
+    assert parse(para("22 Kasım Pazar günü Antik Kafe’de Evlilik Okulu programı düzenlenecek.")) == {}
+    # lowercase name, or more than 4 words, or no locative before the name
+    assert parse(para("22 Kasım Pazar günü saat 14.00’te kafe’de evlilik okulu programı olacak.")) == {}
+    assert parse(para("22 Kasım Pazar günü saat 14.00’te Ali Veli Can Cem Cin Okulu programı olacak.")) == {}
+    # the name must be in the same sentence as the time
+    assert parse(para("22 Kasım Pazar günü saat 14.00’te kafe olacak. Evlilik Okulu programı var.")) == {}

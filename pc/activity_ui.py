@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import subprocess
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
+from tkinter import font as tkfont
 from tkinter import ttk
 
 from pc import activity as A
@@ -20,7 +22,70 @@ from tiyatro.models import ISTANBUL
 
 LEVEL_CHOICES = {"Hepsi": "all", "Uyarı ve hata": "warn"}
 COLUMNS = (("when", "Zaman", 105), ("cat", "Kategori", 120), ("title", "Özet", 520),
-           ("result", "Sonuç", 300))
+           ("result", "Sonuç", 300))   # widths are only the fallback; see ``column_widths``
+ROW_STYLE = "Activity.Treeview"
+OPEN_RE = re.compile(r"bilet al[ıi]nabilir|a[cç][ıi]ld[ıi]", re.I)
+TINTED = ("error", "warn")
+
+
+def row_class(entry: dict) -> str:
+    """Colour class of a log row: error / warn / open (ticket opened) / notify / changed /
+    muted ("değişiklik yok") / plain."""
+    level, cat = entry.get("level"), entry.get("cat")
+    if level == "error":
+        return "error"
+    if level == "warn":
+        return "warn"
+    if cat == A.CAT_TICKET and OPEN_RE.search(entry.get("title") or ""):
+        return "open"
+    if cat == A.CAT_NOTIFY:
+        return "notify"
+    result = A.result_text(entry)
+    if result.startswith("değişiklik var"):
+        return "changed"
+    if result.startswith("değişiklik yok") or (entry.get("title") or "").startswith("Hızlı mod:"):
+        return "muted"
+    return "plain"
+
+
+def row_tag(entry: dict, index: int) -> str:
+    """Tree tag of a row: the class (tinted rows) or class + zebra parity (the others)."""
+    cls = row_class(entry)
+    return cls if cls in TINTED else f"{cls}_{index % 2}"
+
+
+def row_height(linespace: int, scaling: float) -> int:
+    """Row height: the font's line height plus padding that grows with the DPI scaling
+    (Tk scaling is pixels per point; 1.333 = 96 dpi)."""
+    return linespace + max(6, round(8 * scaling * 72 / 96))
+
+
+def tag_colours() -> dict[str, dict]:
+    """Tag -> {foreground, background, bold} from the system colours (``pc.theme``)."""
+    def on(tint, hue):
+        return T.readable(hue, bg=T.rgb_of(tint))
+    out: dict[str, dict] = {
+        "error": {"foreground": on(T.ERROR_ROW, T.RED), "background": T.ERROR_ROW},
+        "warn": {"foreground": on(T.WARN_ROW, T.AMBER), "background": T.WARN_ROW},
+        "sel": {"foreground": T.HILITE_TEXT, "background": T.HILITE},
+    }
+    fg = {"plain": T.WINDOW_TEXT, "muted": T.GRAY, "notify": T.BLUE, "open": T.GREEN,
+          "changed": T.WINDOW_TEXT}
+    for cls, colour in fg.items():
+        for parity, bg in enumerate((T.WINDOW, T.ZEBRA)):
+            out[f"{cls}_{parity}"] = {"foreground": colour, "background": bg,
+                                      "bold": cls in ("open", "changed")}
+    return out
+
+
+def column_widths(font, pad: int) -> dict[str, int]:
+    """Pixel widths from the real font: Zaman fits "dd.mm HH:MM", Kategori the longest category."""
+    m = font.measure
+    return {"when": m("00.00 00:00") + 2 * pad,
+            "cat": max(m(c) for c in A.CATEGORIES) + 2 * pad,
+            "title": m("x" * 60), "result": m("x" * 34) + 2 * pad}
+
+
 SAVE_DELAY_MS = 500
 
 
@@ -105,17 +170,36 @@ class ActivityTab(ttk.Frame):
 
         body = ttk.Frame(self)
         body.pack(fill="both", expand=True, padx=4, pady=(2, 4))
+        style = ttk.Style(self)
+        base = tkfont.nametofont(style.lookup("Treeview", "font") or "TkDefaultFont")
+        self.row_font = base
+        scaling = float(self.tk.call("tk", "scaling"))
+        self.row_px = row_height(base.metrics("linespace"), scaling)
+        style.configure(ROW_STYLE, rowheight=self.row_px, background=T.WINDOW,
+                        fieldbackground=T.WINDOW, foreground=T.WINDOW_TEXT)
+        style.map(ROW_STYLE, background=[("selected", T.HILITE)],
+                  foreground=[("selected", T.HILITE_TEXT)])
         self.tree = ttk.Treeview(body, columns=[c[0] for c in COLUMNS], show="headings",
-                                 selectmode="browse")
-        for key, label, width in COLUMNS:
+                                 selectmode="browse", style=ROW_STYLE)
+        widths = column_widths(base, max(8, round(scaling * 72 / 96 * 8)))
+        for key, label, _w in COLUMNS:
             self.tree.heading(key, text=label)
-            self.tree.column(key, width=width, anchor="w", stretch=key in ("title", "result"))
+            self.tree.column(key, width=widths[key], anchor="w", stretch=key == "title",
+                             minwidth=40)
         vsb = AutoScrollbar(body, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
-        self.tree.tag_configure("warn")      # native: no custom row tints (the filter separates them)
-        self.tree.tag_configure("error")
+        self._bold = base.copy()
+        self._bold.configure(weight="bold")
+        self._base_tags: dict[str, tuple] = {}
+        self._selected: tuple = ()
+        for tag, spec in tag_colours().items():
+            opts = {"foreground": spec["foreground"], "background": spec["background"]}
+            if spec.get("bold"):
+                opts["font"] = self._bold
+            self.tree.tag_configure(tag, **opts)
+        self.tree.bind("<<TreeviewSelect>>", lambda _e: self._sync_selection_tags(), add="+")
         self.tree.bind("<Double-1>", self._double_click)
         self.tree.bind("<Return>", lambda _e: self.open_detail())
         self.tree.bind("<Control-c>", lambda _e: self.copy_selected())
@@ -124,6 +208,15 @@ class ActivityTab(ttk.Frame):
         self.row_menu = tk.Menu(self.tree, tearoff=0)
         self.row_menu.add_command(label="Kopyala", command=self.copy_selected)
         self.row_menu.add_command(label="Ayrıntı", command=self.open_detail)
+        legend = ttk.Frame(self)
+        legend.pack(fill="x", padx=6, pady=(0, 4))
+        ttk.Label(legend, text="Renkler:", foreground=T.GRAY_TEXT).pack(side="left")
+        colours = tag_colours()
+        for text, colour in (("hata", colours["error"]["foreground"]),
+                             ("uyarı", colours["warn"]["foreground"]),
+                             ("bilet açıldı", T.GREEN), ("bildirim", T.BLUE),
+                             ("değişiklik yok", T.GRAY)):
+            ttk.Label(legend, text="● " + text, foreground=colour).pack(side="left", padx=(8, 0))
         self.refresh()
 
     # ---- filter state ----------------------------------------------------------------
@@ -180,19 +273,34 @@ class ActivityTab(ttk.Frame):
         tree.delete(*tree.get_children())
         now = datetime.now(ISTANBUL)
         self._entries = dict(zip(ids, entries))
-        for iid, e in zip(ids, entries):
-            tree.insert("", "end", iid=iid, tags=(e["level"],) if e["level"] != "info" else (),
+        self._base_tags = {}
+        for n, (iid, e) in enumerate(zip(ids, entries)):
+            self._base_tags[iid] = (row_tag(e, n),)
+            tree.insert("", "end", iid=iid, tags=self._base_tags[iid],
                         values=(A.when_text(e["ts"], now), e["cat"], e["title"],
                                 A.result_text(e)))
         self._keys = ids
         keep = [i for i in selected if i in self._entries]
+        self._selected = ()
         if keep:
             tree.selection_set(keep)
+        self._sync_selection_tags()
         if anchor in self._entries:
             tree.yview_moveto(ids.index(anchor) / max(1, len(ids)))
         else:
             tree.yview_moveto(0)
         self.refresh_count += 1
+
+    def _sync_selection_tags(self) -> None:
+        """A tag background hides the native selection colour, so the selected row carries the
+        "sel" tag (system highlight colours) instead of its colour tag."""
+        now = tuple(self.tree.selection())
+        for iid in self._selected:
+            if iid not in now and iid in self._base_tags and self.tree.exists(iid):
+                self.tree.item(iid, tags=self._base_tags[iid])
+        for iid in now:
+            self.tree.item(iid, tags=("sel",))
+        self._selected = now
 
     def poll(self) -> None:
         """Called by the app timer and after every tick: cheap unless something was added."""

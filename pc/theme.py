@@ -81,6 +81,7 @@ AMBER = readable("#b36b00")
 RED = readable("#c62828")
 GRAY = readable("#6b7280")
 DERIVED = readable("#4f6d8f")      # italic derived / assumed text
+BLUE = readable("#1d4ed8")         # notification rows of the activity log
 NEW = readable("#6d28d9")          # bold name of an unopened item
 # faint tints made of the system colours (zebra stripe / row tints / grid lines)
 ZEBRA = mix(sys_rgb("window"), sys_rgb("text"), 0.035)
@@ -88,3 +89,7 @@ GRID = mix(sys_rgb("window"), sys_rgb("text"), 0.12)
 LINK = _hex(sys_rgb("hotlight"))   # the system hyperlink colour
 WARN_ROW = mix(sys_rgb("window"), (255, 193, 7), 0.22)    # tints keep their meaning
 ERROR_ROW = mix(sys_rgb("window"), (220, 38, 38), 0.18)
+
+
+def rgb_of(hex_colour: str) -> tuple[int, int, int]:
+    return tuple(int(hex_colour[i:i + 2], 16) for i in (1, 3, 5))   # type: ignore[return-value]

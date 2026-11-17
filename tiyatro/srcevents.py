@@ -382,6 +382,13 @@ _COMPANY_RE = re.compile(
 _SAME_DAY = re.compile(r"(?<![a-z0-9])ayni\s+gun\s+saat\s+(\d{1,2})[.:](\d{2})")
 _SERIES = re.compile(
     rf"^(?:[’'][a-zçğıöşü]+)?[\s,]*(?:ise\s+)?((?:{_WORD}\s+){{1,4}}{_WORD})\s+kapsam[ıi]nda(?![\wçğıöşü])")
+# Wave 20: "<time>[ and venue]’de/’da <Capitalised Name, 1-4 words> programı" (no quotes, no
+# "kapsamında"); the title is the name without the word "programı". The name must follow a locative
+# suffix directly and "programı" must not be followed by "kapsamında" (that is the article header
+# "... Kültür Sanat Başiskele programı kapsamında ...").
+_PROGRAM = re.compile(
+    rf"[’'](?:n?de|n?da|te|ta)\s+((?:{_WORD}\s+){{0,3}}{_WORD})\s+program[ıi](?![\wçğıöşü])"
+    r"(?!\s+kapsam)")
 _SENTENCE_END = re.compile(r"(?<![\d])\.\s+(?=\S)")
 
 
@@ -485,9 +492,14 @@ def parse_article(html_text: str, url: str, published: datetime | None
             title_text, title_end = (q.group(1), q.end()) if q else (None, 0)
             if q is None:       # no quoted title: only "<Series Name> kapsamında" right after the time
                 sm = _SERIES.match(segment)
-                if sm is None:
-                    continue
-                title_text, title_end = sm.group(1), sm.end()
+                if sm is not None:
+                    title_text, title_end = sm.group(1), sm.end()
+                else:
+                    si_h = next(i for i, (a, b) in enumerate(spans) if a <= nm.start < b)
+                    pm = _PROGRAM.search(line[nm.end:min(seg_end, spans[si_h][1])])
+                    if pm is None:
+                        continue
+                    title_text, title_end = pm.group(1), pm.end()
             d = resolve_date(nm.day, nm.month, nm.weekday, years)
             start = _at(d, nm.hour, nm.minute) if d else None
             if start is None:
