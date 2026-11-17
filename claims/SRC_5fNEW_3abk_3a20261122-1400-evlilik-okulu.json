@@ -1,0 +1,11 @@
+{
+ "attempts": 1,
+ "claimed_at": "2026-11-17T17:33:12+03:00",
+ "claimed_by": "github",
+ "key": "SRC_NEW:bk:20261122-1400-evlilik-okulu",
+ "lease_until": "2026-11-17T17:33:57+03:00",
+ "message_id": null,
+ "note": null,
+ "sent_at": null,
+ "status": "claimed"
+}
