@@ -227,7 +227,7 @@ def apply_window_icon(root, ico: Path | None = None, png: Path | None = None) ->
 
 
 # ---- single instance helper -------------------------------------------------------------------
-def focus_existing_window(title: str, api=None) -> bool:
+def focus_existing_window(title: str, api=None, post_restore=None) -> bool:
     """Bring the already running app window (top level Tk window titled ``title``) to the
     front: restore it when minimised, then SetForegroundWindow (Windows may only flash the
     taskbar button if another process owns the foreground; that is its rule). Returns True
@@ -244,12 +244,34 @@ def focus_existing_window(title: str, api=None) -> bool:
         hwnd = user32.FindWindowW("TkTopLevel", title)
         if not hwnd:
             return False
+        visible = getattr(user32, "IsWindowVisible", None)
+        if visible is not None and not visible(hwnd):
+            # withdrawn into the system tray (wave 21): Tk must restore it itself, so ask the
+            # running app's hidden tray window; a bare ShowWindow would leave Tk's state wrong
+            if post_restore is None:
+                from pc.tray import post_restore
+            if post_restore():
+                return True
         if user32.IsIconic(hwnd):
             user32.ShowWindow(hwnd, 9)   # SW_RESTORE
         else:
             user32.ShowWindow(hwnd, 5)   # SW_SHOW (also un-hides a withdrawn window)
         user32.SetForegroundWindow(hwnd)
         return True
+    except Exception:
+        return False
+
+
+def is_maximised(root, user32=None) -> bool:
+    """True when the (also minimised) top-level window of ``root`` has the maximised style:
+    Windows keeps ``WS_MAXIMIZE`` while a maximised window is minimised."""
+    try:
+        if user32 is None:
+            import ctypes
+            user32 = ctypes.windll.user32
+            user32.GetParent.restype = ctypes.c_void_p
+            user32.IsZoomed.argtypes = [ctypes.c_void_p]
+        return bool(user32.IsZoomed(user32.GetParent(root.winfo_id()) or root.winfo_id()))
     except Exception:
         return False
 

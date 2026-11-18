@@ -331,13 +331,13 @@ def test_scrub_github_pat_and_bearer():
 
 def test_ui_prefs_roundtrip_and_bad_file(tmp_path):
     p = tmp_path / "ui.json"
-    assert L.load_ui(p) == {"geometry": None, "beep": True, "keep_awake": False}
+    assert L.load_ui(p) == {"geometry": None, "beep": True, "keep_awake": False, "minimize_to_tray": True}
     L.save_ui(p, {"geometry": "900x600+10+20", "beep": False, "geometry_v": L.GEOMETRY_VERSION})
-    assert L.load_ui(p) == {"geometry": "900x600+10+20", "beep": False, "keep_awake": False}
+    assert L.load_ui(p) == {"geometry": "900x600+10+20", "beep": False, "keep_awake": False, "minimize_to_tray": True}
     p.write_text("{not json", encoding="utf-8")
-    assert L.load_ui(p) == {"geometry": None, "beep": True, "keep_awake": False}
+    assert L.load_ui(p) == {"geometry": None, "beep": True, "keep_awake": False, "minimize_to_tray": True}
     p.write_text(json.dumps({"geometry": "evil", "beep": "yes"}), encoding="utf-8")
-    assert L.load_ui(p) == {"geometry": None, "beep": True, "keep_awake": False}
+    assert L.load_ui(p) == {"geometry": None, "beep": True, "keep_awake": False, "minimize_to_tray": True}
 
 
 def test_save_ui_creates_dir_and_leaves_no_tmp(tmp_path):

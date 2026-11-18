@@ -28,6 +28,7 @@ from pc import activity as A
 from pc import app_logic as L
 from pc import theme as T
 from pc import winsetup
+from pc.tray import menu_items as tray_menu_items
 from pc.activity_ui import ActivityTab, default_reveal
 from pc.service import RefreshError
 from pc.settings import DEFAULT_LOCAL_DIR, SettingsError, load_settings
@@ -383,10 +384,14 @@ class TargetEditor(tk.Toplevel):
 class App:
     def __init__(self, root: tk.Tk, service, local_dir: Path | str = DEFAULT_LOCAL_DIR, *,
                  open_url=webbrowser.open, beep=default_beep, msgbox=messagebox,
-                 inline: bool = False, reveal=default_reveal, win=winsetup):
+                 inline: bool = False, reveal=default_reveal, win=winsetup, tray_factory=None):
         self.root, self.service = root, service
         self.win = win   # Windows integration (autostart, keep awake); injectable for tests
         self._awake_on = False
+        self.tray_factory = tray_factory   # None: no tray (tests); main() passes pc.tray.TrayIcon
+        self.tray = None                   # the TrayIcon, created at the first minimise
+        self.in_tray = False               # window withdrawn, icon shown
+        self._tray_maximised = False
         self.local_dir = Path(local_dir)
         self.open_url, self.beep, self.mb = open_url, beep, msgbox
         self.reveal = reveal
@@ -423,6 +428,7 @@ class App:
         ui = L.load_ui(self.local_dir / "ui.json")
         self.beep_enabled = ui["beep"]
         self.keep_awake = ui["keep_awake"]
+        self.minimize_to_tray = ui["minimize_to_tray"]
         self.sort = L.load_sort(self.local_dir / "ui.json")  # (column, "asc"|"desc") or None
         self._default_rows: list = []
         self.bold_font = tkfont.nametofont("TkDefaultFont").copy()
@@ -448,6 +454,7 @@ class App:
         root.report_callback_exception = self._ui_exception
         self._build()
         root.protocol("WM_DELETE_WINDOW", self.close)
+        root.bind("<Unmap>", self._on_unmap, add="+")
         service.on_notify(lambda t, x, evs: self.q.put(("notify", t, x, evs)))
 
     # ---- construction ----------------------------------------------------------------
@@ -464,6 +471,9 @@ class App:
         self.keep_awake_var = tk.BooleanVar(value=self.keep_awake)
         settings.add_checkbutton(label="Bilgisayarın uyumasını engelle",
                                  variable=self.keep_awake_var, command=self._keep_awake_toggled)
+        self.tray_var = tk.BooleanVar(value=self.minimize_to_tray)
+        settings.add_checkbutton(label="Küçültünce sistem tepsisine gönder",
+                                 variable=self.tray_var, command=self._tray_toggled)
         settings.add_separator()
         settings.add_command(label="Çıkış", command=self.close)
         menu.add_cascade(label="Ayarlar", menu=settings)
@@ -1840,7 +1850,8 @@ class App:
         self.alert()
 
     def show_main(self) -> None:
-        """Bring the main window to the front (also from the minimised state)."""
+        """Bring the main window to the front (also from the minimised / tray state)."""
+        self.leave_tray()
         self.root.deiconify()
         self.root.lift()
         self.root.attributes("-topmost", True)
@@ -1924,6 +1935,80 @@ class App:
         self.keep_awake = want
         self.save_ui()
 
+    # ---- system tray (wave 21) ------------------------------------------------------------------
+    def _tray_toggled(self) -> None:
+        self.minimize_to_tray = bool(self.tray_var.get())
+        self.save_ui()
+
+    def _on_unmap(self, event) -> None:
+        """Minimised (state 'iconic') and the option is on: hide the window from the taskbar and
+        show the tray icon. The Unmap of ``withdraw`` itself has state 'withdrawn': ignored."""
+        if event.widget is not self.root or self.closing or self.in_tray:
+            return
+        if not self.minimize_to_tray or self.tray_factory is None:
+            return
+        try:
+            if self.root.state() == "iconic":
+                self.root.after_idle(self.enter_tray)
+        except tk.TclError:
+            pass
+
+    def enter_tray(self) -> bool:
+        if self.in_tray or self.closing or self.root.state() != "iconic":
+            return False
+        if self.tray is None:
+            ico, _png = winsetup.icon_files()
+            self.tray = self.tray_factory(ico, self._tray_event, self.root.after)
+        if not self.tray.add():
+            log.warning("tray icon could not be added: window stays on the taskbar")
+            return False
+        self._tray_maximised = bool(self.win.is_maximised(self.root))             if hasattr(self.win, "is_maximised") else False
+        self.in_tray = True
+        self.root.withdraw()
+        return True
+
+    def leave_tray(self) -> None:
+        """Remove the icon; the caller shows the window (``show_main``)."""
+        if not self.in_tray:
+            return
+        self.in_tray = False
+        if self.tray is not None:
+            self.tray.remove()
+        if self._tray_maximised:
+            self._tray_maximised = False
+            self.root.after_idle(lambda: self.root.state("zoomed") if not self.closing else None)
+
+    def tray_menu(self) -> list:
+        return tray_menu_items(bool(self.service.config.paused) if self.service.config else False)
+
+    def _tray_event(self, name: str, pos) -> None:
+        if self.closing:
+            return
+        if name == "restore":
+            self.show_main()
+        elif name == "menu":
+            action = self.tray.popup_menu(self.tray_menu(), pos) if self.tray else None
+            if action:
+                self.tray_command(action)
+
+    def tray_command(self, action: str) -> None:
+        if action == "open":
+            self.show_main()
+        elif action == "refresh":
+            self.refresh_list()
+        elif action == "pause":
+            self.toggle_pause()
+        elif action == "quit":
+            self.close()
+
+    def _destroy_tray(self) -> None:
+        self.in_tray = False
+        if self.tray is not None:
+            try:
+                self.tray.destroy()
+            except Exception:
+                log.exception("tray not removed")
+
     # ---- lifecycle ----------------------------------------------------------------------------------
     def save_ui(self) -> None:
         try:
@@ -1934,6 +2019,7 @@ class App:
                        "geometry_v": L.GEOMETRY_VERSION,
                        "beep": self.beep_enabled,
                        "keep_awake": self.keep_awake,
+                       "minimize_to_tray": self.minimize_to_tray,
                        "sort": list(self.sort) if self.sort else None,
                        "columns": (self.tree.layout_state() if hasattr(self, "tree")
                                    else L.load_columns(self.local_dir / "ui.json")),
@@ -1965,13 +2051,14 @@ class App:
                 log.exception("%s failed", name)
 
     def close(self, destroy: bool = True) -> None:
-        """Window closed = app exits (no tray). The service writes its files atomically
+        """Window closed (X) = app exits; only MINIMISE goes to the tray (wave 21). The service writes its files atomically
         after every change, so there is nothing left to flush besides ui.json."""
         if self.closing:
             return
         self.closing = True
         self._stop_beeps()
         self.save_ui()
+        self._destroy_tray()
         if self._awake_on:   # give the power state back (also reset by Windows on exit)
             self._apply_keep_awake(False)
         if self.popup is not None:
@@ -2024,7 +2111,8 @@ def main() -> int:
                           local_dir=settings.local_dir, portal_fetch_fn=fetch,
                           activity=A.ActivityLog(Path(settings.local_dir) / "activity.jsonl",
                                                  secrets=secrets))
-        app = App(root, service, settings.local_dir)
+        from pc.tray import TrayIcon
+        app = App(root, service, settings.local_dir, tray_factory=TrayIcon)
         root.deiconify()
         app.start()
         root.mainloop()

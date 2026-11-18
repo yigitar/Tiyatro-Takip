@@ -755,7 +755,7 @@ def sanitize_geometry(geometry, screen_w: int, screen_h: int) -> str | None:
 
 
 def load_ui(path) -> dict:
-    ui = {"geometry": None, "beep": True, "keep_awake": False}
+    ui = {"geometry": None, "beep": True, "keep_awake": False, "minimize_to_tray": True}
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -768,6 +768,8 @@ def load_ui(path) -> dict:
             ui["beep"] = data["beep"]
         if isinstance(data.get("keep_awake"), bool):
             ui["keep_awake"] = data["keep_awake"]
+        if isinstance(data.get("minimize_to_tray"), bool):
+            ui["minimize_to_tray"] = data["minimize_to_tray"]
     return ui
 
 
