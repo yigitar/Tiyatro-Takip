@@ -432,6 +432,21 @@ function safeUrl(raw) {
   }
 }
 
+const BASISKELE_PORTAL_URL = "https://rezervasyon.basiskele.bel.tr/etkinlikler"; // tiyatro/config.py DEFAULT_PORTALS
+
+/**
+ * Reservation-portal URL of the config (mirrors tiyatro/notify.portal_url): an absent
+ * ``config.portals`` means the default Başiskele portal; a disabled / unusable one gives "".
+ */
+export function portalUrl(config, id = "basiskele") {
+  const list = isObj(config) && Array.isArray(config.portals) ? config.portals
+    : [{ id: "basiskele", url: BASISKELE_PORTAL_URL, enabled: true }];
+  for (const p of list) {
+    if (isObj(p) && p.id === id && p.enabled !== false) return safeUrl(p.url) ?? "";
+  }
+  return "";
+}
+
 /** URL button; null when the URL is unusable (the button is simply left out). */
 function urlBtn(text, raw) {
   const url = safeUrl(raw);
@@ -475,7 +490,8 @@ function sourcesScreen(config, state, refreshed) {
     const name = SOURCE_SHORT[id] ?? trunc(views.find((v) => v.id === id)?.name ?? id, 20);
     return [urlBtn(`🔗 ${name} aç`, links[id])];
   });
-  return { text: lines.join("\n"), keyboard: rows(...openers, [btn("🔄 Durumu göster", "src")], [BACK_MAIN()]) };
+  const portal = [urlBtn("🏛️ Başiskele rezervasyon portalı", portalUrl(config))];
+  return { text: lines.join("\n"), keyboard: rows(...openers, portal, [btn("🔄 Durumu göster", "src")], [BACK_MAIN()]) };
 }
 
 // ---- unified list: Biletinial plays + Başiskele/VKV events
@@ -644,6 +660,8 @@ function eventScreen(config, state, id, now, pageArg) {
   const rec = sourceEvents(state)[id];
   const lines = [`📅 <b>${esc(trunc(it.title, 100))}</b>`, ...help(...HELP.event), LEGEND,
     ...detailLines(it, rec.start ? [`Etkinlik: ${esc(fmt(rec.start))}`] : [])];
+  const portal = rec.source === "basiskele" ? portalUrl(config) : "";
+  if (portal) lines.push(`🏛️ Rezervasyon portalı: ${esc(portal)}`);
   lines.push(`Takip: ${it.followed ? "☑ takipte" : "☐ takipte değil (yeni etkinlikler varsayılan olarak takipte değildir)"}`);
   const flag = it.followed ? 0 : 1;
   return {
@@ -651,6 +669,7 @@ function eventScreen(config, state, id, now, pageArg) {
     keyboard: rows(
       [btn(it.followed ? "☐ Takibi kapat" : "☑ Takibi aç", `ef:${hh}:${flag}:i${lp}`)],
       [urlBtn("🔗 Etkinlik sayfası", it.url)],
+      ...(portal ? [[urlBtn("🏛️ Rezervasyon portalı", portal)]] : []),
       [btn("‹ Liste", `pl:${lp}`), BACK_MAIN()],
     ),
   };

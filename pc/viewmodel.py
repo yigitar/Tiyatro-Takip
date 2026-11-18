@@ -51,6 +51,8 @@ class Row:
     cast: list[str] = field(default_factory=list)  # actors in the page's own order
     credits: list[tuple[str, str]] = field(default_factory=list)  # ("Yönetmen", "Ad Soyad")
     source: str = "Biletinial"  # Kaynak: Biletinial / Başiskele / VKV
+    source_id: str = ""        # event rows: "basiskele" / "vkv" (Wave 22: decides the portal link)
+    alert: bool = False        # Wave 22: an unacknowledged alert belongs to this row
     is_event: bool = False     # a Başiskele / VKV event (slug = event id), not a Biletinial play
     seans: str = ""            # event rows: date/time of the event (the "Seans" column)
     venue: str = ""
@@ -317,7 +319,7 @@ def event_row(view: dict, now: datetime | None = None) -> Row:
         genre=view["genre"],
         session_count=1, status_summary=view["summary"],
         watched=view["followed"], active=view["followed"],
-        url=view["url"], nearest=start, source=view["source_name"], is_event=True,
+        url=view["url"], nearest=start, source=view["source_name"], source_id=str(view.get("source") or ""), is_event=True,
         seans=when_text(start) if start else "", venue=view["venue"],
         reservation_opens=when_text(opens) if opens else "", contact=contact,
         event_full=bool(view["full"]),

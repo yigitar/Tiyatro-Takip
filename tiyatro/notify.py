@@ -141,6 +141,32 @@ def portal_label(portal_id, name) -> str:
     return PORTAL_LABELS.get(portal_id) or str(name or portal_id or "Portal")
 
 
+def portal_url(config, portal_id: str = "basiskele") -> str:
+    """URL of an enabled reservation portal of ``config`` ("" when none / unusable). An absent
+    ``config.portals`` means the default portal (as ``tiyatro.config``)."""
+    from tiyatro.config import DEFAULT_PORTALS
+    portals = getattr(config, "portals", None)
+    if portals is None:
+        portals = DEFAULT_PORTALS
+    for p in portals:
+        if isinstance(p, dict) and p.get("id") == portal_id and p.get("enabled", True):
+            url = p.get("url")
+            if isinstance(url, str) and re.match(r"^https?://\S+$", url):
+                return url
+    return ""
+
+
+PORTAL_LINE = "🏛️ Rezervasyon portalı: "   # one line in Başiskele notices
+
+
+def portal_line(payload, config) -> str | None:
+    """The reservation-portal line for a notice about a Başiskele event (None for others)."""
+    if not isinstance(payload, dict) or payload.get("source") != "basiskele":
+        return None
+    url = portal_url(config)
+    return PORTAL_LINE + _esc(url, URL_MAX) if url else None
+
+
 def portal_headline(ev: Event) -> str:
     """First line of a portal notification (also the desktop notification title)."""
     p = ev.payload if isinstance(ev.payload, dict) else {}
@@ -199,12 +225,15 @@ def _new_play_entry(ev: Event) -> str:
                          _discovery_note(p)])
 
 
-def _source_entry(ev: Event) -> str:
+def _source_entry(ev: Event, config=None) -> str:
     p = ev.payload if isinstance(ev.payload, dict) else {}
     if ev.kind == "SRC_NEW":
         label = SOURCE_LABELS.get(p.get("source")) or str(p.get("source") or "Kaynak")
         lines = [_discovery_line(p, label, "etkinlik"), _discovery_note(p)]
         lines.extend(_esc(x, TITLE_MAX) for x in p.get("contact") or [])
+        extra = portal_line(p, config)
+        if extra:
+            lines.append(extra)
         return chr(10).join(lines)
     lines = [html.escape(source_headline(ev))]
     if p.get("title"):
@@ -224,6 +253,9 @@ def _source_entry(ev: Event) -> str:
         lines.append(_esc(extra, TITLE_MAX))
     if p.get("url"):
         lines.append(f"🔗 {_esc(p['url'], URL_MAX)}")
+    extra = portal_line(p, config)
+    if extra:
+        lines.append(extra)
     return chr(10).join(lines)
 
 
@@ -259,7 +291,7 @@ def _entry(ev: Event, plays: dict[str, Play], config: Config, ids: list[str]) ->
     if ev.kind in PORTAL_TEXT:
         return _portal_entry(ev)
     if ev.kind in SRC_TEXT:
-        return _source_entry(ev)
+        return _source_entry(ev, config)
     if ev.kind == "NEW_PLAY":
         return _new_play_entry(ev)
     lines = []
@@ -378,6 +410,10 @@ def format_message(events: list[Event], plays: dict[str, Play], config: Config) 
                 if url:
                     line += f" · {_esc(url, URL_MAX)}"
                 lines.append(line)
+            extra = next((x for x in (portal_line(e.payload, config) for e in item[1]) if x),
+                         None)
+            if extra:
+                lines.append(extra)
             lines.append(FOLLOWED_NOTE if all(e.payload.get("followed") is True
                                               for e in item[1]) else NOT_FOLLOWED_NOTE)
             entries.append("\n".join(lines))

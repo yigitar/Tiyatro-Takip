@@ -89,6 +89,8 @@ GRID = mix(sys_rgb("window"), sys_rgb("text"), 0.12)
 LINK = _hex(sys_rgb("hotlight"))   # the system hyperlink colour
 WARN_ROW = mix(sys_rgb("window"), (255, 193, 7), 0.22)    # tints keep their meaning
 ERROR_ROW = mix(sys_rgb("window"), (220, 38, 38), 0.18)
+ALERT_ROW = mix(sys_rgb("window"), (37, 99, 235), 0.14)      # row with an unread alert (wave 22)
+ALERT_EDGE = BLUE
 
 
 def rgb_of(hex_colour: str) -> tuple[int, int, int]:

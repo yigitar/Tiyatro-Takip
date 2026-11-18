@@ -443,6 +443,8 @@ def row_tags(row) -> tuple[str, ...]:
         tags.append("watched")
     if row.is_new and not row.is_removed:
         tags.append("new")
+    if getattr(row, "alert", False) and not row.is_removed:
+        tags.append("alert")
     return tuple(tags)
 
 

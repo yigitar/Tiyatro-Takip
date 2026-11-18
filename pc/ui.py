@@ -25,6 +25,7 @@ except ImportError:  # pragma: no cover
     winsound = None
 
 from pc import activity as A
+from pc import alerts as AL
 from pc import app_logic as L
 from pc import theme as T
 from pc import winsetup
@@ -39,6 +40,7 @@ from pc.widgets import (AutoScrollbar, Flow, LinkButton, RichLabel, SelectableLa
 from tiyatro import sources as S
 from tiyatro.config import config_to_dict
 from tiyatro.models import ISTANBUL
+from tiyatro.notify import portal_url
 from tiyatro.tags import clean_summary
 
 log = logging.getLogger("pc.app")
@@ -56,13 +58,14 @@ STATUS_MS = 5000
 RELOAD_MS = 60_000
 ACTIVITY_MS = 2000
 NO_INFO = "Bilgi yok"
+PORTAL_BUTTON = "Rezervasyon portalı ↗"   # Wave 22: Başiskele event detail
 SOURCE_NO_INFO = "Kaynakta bilgi yok"   # the source gave nothing (grey), same for every row
 FIELD_NAMES = {"summary": "Özet", "cast": "Oyuncular", "credits": "Yapım", "duration": "Süre",
                "age": "Yaş", "genre": "Tür"}
 # attributes that belong to one built detail view (plays and events each keep their own)
 VIEW_ATTRS = (
     "_detail_parts", "_detail_stack", "_detail_w", "_detail_window", "_summary_fit",
-    "_target_labels", "follow_help", "event_no_page_label", "event_page_btn", "session_note",
+    "_target_labels", "follow_help", "event_no_page_label", "event_page_btn", "event_portal_btn", "session_note",
     "add_buttons", "target_buttons", "title_label", "open_btn", "meta_label", "active_var",
     "active_chk", "_session_sb", "_session_sb_on", "_session_note_on", "_session_links",
     "_session_missing", "session_tree", "_targets_parent", "_target_pool", "_target_rows",
@@ -444,6 +447,11 @@ class App:
         self.icon_font.configure(size=bigger(3))
         self.scale = max(1.0, float(root.winfo_fpixels("1i")) / 96.0)
         self.seen = L.SeenStore.load(self.local_dir / "ui.json")  # items the user has opened
+        self.alerts = AL.AlertStore.load(self.local_dir / "ui.json",
+                                         clock=lambda: self.now())   # wave 22: unread alerts
+        self._alert_key = None
+        self._alert_shown: list = []
+        self._alert_on = False
         root.title(APP_TITLE)
         geom = L.sanitize_geometry(ui["geometry"], root.winfo_screenwidth(),
                                    root.winfo_screenheight())
@@ -536,6 +544,10 @@ class App:
         self.detail = ttk.LabelFrame(pane, text="Oyun ayrıntısı")
         pane.add(self.detail, weight=2)
         self._detail_placeholder()
+        self.games_tab = games
+        self.tree.tag_configure("alert", background=T.ALERT_ROW)
+        self._build_alert_bar(games)
+        self._render_alerts()
 
     def px(self, n: int) -> int:
         return int(round(n * self.scale))
@@ -827,6 +839,7 @@ class App:
             log.exception("rows() failed")
             return
         self._apply_seen(rows)
+        self._apply_alert_flags(rows)
         self._default_rows = rows
         self._render_rows()
         self._render_sources()
@@ -987,6 +1000,7 @@ class App:
                                 lambda u=view["portal_url"]: self.open_url(u),
                                 background=CARD_BG)
             button.pack(side="left")
+            Tooltip(button, lambda u=view["portal_url"]: f"Rezervasyon portalını tarayıcıda aç\n{u}")
             self.source_buttons.append(button)
         self.source_cards[sid] = {"frame": frame, "stripe": stripe, "icon": icon,
                                   "title": title, "body": body, "error": error,
@@ -1081,6 +1095,12 @@ class App:
                 row.is_new = False
                 self.tree.set_tags(new, L.row_tags(row))
             self.save_ui()
+        if new is not None and self.alerts.ack_slug(new):   # opened: its alerts are read
+            row = self.rows_by_slug.get(new)
+            if row is not None:
+                row.alert = False
+                self.tree.set_tags(new, L.row_tags(row))
+            self._alerts_changed(rows=False)
         self.show_detail(force=True)
 
     def _detail_placeholder(self) -> None:
@@ -1128,6 +1148,7 @@ class App:
         self._detail_parts = parts
         self._detail_stack = None
         self.follow_help = self.event_no_page_label = self.event_page_btn = None
+        self.event_portal_btn = None
         self.session_note = None
         self.add_buttons, self.target_buttons, self._target_labels = {}, {}, []
         self.detail_builds += 1
@@ -1256,14 +1277,32 @@ class App:
         links.pack(fill="x", padx=8, pady=(4, 0))
         self.event_page_btn = ttk.Button(links, text="Etkinlik sayfası ↗")
         self.event_page_btn.pack(side="left")
+        self.event_portal_btn = ttk.Button(links, text=PORTAL_BUTTON)   # Başiskele events only
+        self._portal_btn_on = False
         self.event_no_page_label = SelectableLabel(links, text=NO_SESSION_PAGE,
                                                    foreground=T.GRAY_TEXT, wraplength=self.px(300))
         self.event_no_page_label.pack(side="left", padx=8)
         self._fill_event_links(row)
 
+    def portal_url_for(self, row) -> str:
+        """Reservation-portal URL of a Başiskele event row ("" for every other row)."""
+        if not getattr(row, "is_event", False) or getattr(row, "source_id", "") != "basiskele":
+            return ""
+        return portal_url(getattr(self.service, "config", None))
+
     def _fill_event_links(self, row) -> None:
         self.event_page_btn.configure(command=lambda: row.url and self.open_url(row.url),
                                       state="normal" if row.url else "disabled")
+        portal = self.portal_url_for(row)
+        btn = self.event_portal_btn
+        if portal:
+            btn.configure(command=lambda u=portal: self.open_url(u))
+            if not self._portal_btn_on:
+                btn.pack(side="left", padx=(8, 0), before=self.event_no_page_label)
+                self._portal_btn_on = True
+        elif self._portal_btn_on:
+            btn.pack_forget()
+            self._portal_btn_on = False
 
     def _build_sessions(self, left, row, sessions) -> None:
         sess = ttk.Frame(left)
@@ -1396,6 +1435,9 @@ class App:
                   row.is_event and "summary" in der or not row.status_summary),
                  ("Mekan", row.venue or NO_INFO, row.venue_derived or not row.venue)]
         facts += [("İletişim" if i == 0 else "", line, False) for i, line in enumerate(row.contact)]
+        portal = self.portal_url_for(row)
+        if portal:
+            facts.append(("Rezervasyon", portal, False))
         if row.url:
             facts.append(("Etkinlik sayfası", row.url, False))
         return facts
@@ -1833,6 +1875,8 @@ class App:
         ONE popup (distinct by event key)."""
         for ev in events:
             self._popup_events.setdefault(ev.key or f"#{len(self._popup_events)}", ev)
+        if self.alerts.add(events):       # the private list of what happened (wave 22)
+            self._alerts_changed()
         if self._popup_flush is None and not self.closing:
             self._popup_flush = self.root.after(self.popup_coalesce_ms, self.flush_popups)
 
@@ -1849,6 +1893,140 @@ class App:
             self.popup = Popup(self, text)
         self.alert()
 
+    # ---- "Yeni gelişmeler" (wave 22) -----------------------------------------------------------
+    def _build_alert_bar(self, parent) -> None:
+        """Strip above the list: one selectable line per unread alert ("🎟 Bilet açıldı — oyun ·
+        tarih · son 3 bilet") with a "Göster" link, and "Tümünü okundu say". Hidden while there is
+        nothing unread. Wrap width follows the strip width only (never its own size)."""
+        bg = T.ALERT_ROW
+        self.alert_bar = tk.Frame(parent, background=bg, highlightthickness=1,
+                                  highlightbackground=T.ALERT_EDGE, highlightcolor=T.ALERT_EDGE)
+        pad = self.px(8)
+        head = tk.Frame(self.alert_bar, background=bg)
+        head.pack(fill="x", padx=pad, pady=(self.px(4), self.px(2)))
+        self.alert_title = tk.Label(head, text="", font=self.bold_font, background=bg,
+                                    foreground=VALUE_COLOR)
+        self.alert_title.pack(side="left")
+        self.alert_ack_btn = ttk.Button(head, text="Tümünü okundu say", command=self.ack_alerts)
+        self.alert_ack_btn.pack(side="right")
+        self.alert_lines = tk.Frame(self.alert_bar, background=bg)
+        self.alert_lines.pack(fill="x", padx=pad, pady=(0, self.px(4)))
+        self.alert_lines.columnconfigure(0, weight=1)
+        self._alert_pool: list = []          # (text label, "Göster" link); grows, never shrinks
+        self.alert_more = SelectableLabel(self.alert_lines, text="", background=bg,
+                                          foreground=T.GRAY_TEXT, wraplength=self.px(400))
+        self._alert_room = 0
+        self.alert_bar.bind("<Configure>", self._rewrap_alerts)
+
+    def _rewrap_alerts(self, event=None) -> None:
+        width = event.width if event is not None else self.alert_bar.winfo_width()
+        link_w = max((lk.winfo_reqwidth() for _t, lk in self._alert_pool), default=0)
+        room = max(self.px(120), width - link_w - self.px(40))
+        if room == self._alert_room:
+            return
+        self._alert_room = room
+        for lbl, _lk in self._alert_pool:
+            if int(lbl.cget("wraplength")) != room:
+                lbl.configure(wraplength=room)
+        self.alert_more.configure(wraplength=room)
+        self._refit_soon()
+
+    def _refit_soon(self) -> None:
+        if not self.closing:
+            self.root.after(60, self._fit_panes)
+
+    def _alert_line(self, n: int):
+        while len(self._alert_pool) <= n:
+            i = len(self._alert_pool)
+            lbl = SelectableLabel(self.alert_lines, text="", background=T.ALERT_ROW,
+                                  foreground=VALUE_COLOR, wraplength=self._alert_room or self.px(400))
+            link = LinkButton(self.alert_lines, "Göster ›", lambda i=i: self._alert_clicked(i),
+                              background=T.ALERT_ROW)
+            lbl.grid(row=i, column=0, sticky="w", pady=1)
+            link.grid(row=i, column=1, sticky="ne", padx=(self.px(8), 0))
+            lbl.bind("<Double-Button-1>", lambda _e, i=i: (self._alert_clicked(i), "break")[1])
+            lbl.grid_remove()
+            link.grid_remove()
+            self._alert_pool.append((lbl, link))
+        return self._alert_pool[n]
+
+    def _render_alerts(self) -> None:
+        """Show the unread alerts (newest first, at most ``AL.MAX_LINES``); nothing changes
+        when the list is the same as the one shown."""
+        items = self.alerts.open()
+        key = tuple(i["key"] for i in items)
+        if key == self._alert_key:
+            return
+        self._alert_key = key
+        shown = items[:AL.MAX_LINES]
+        self._alert_shown = shown
+        if not items:
+            if self._alert_on:
+                self.alert_bar.pack_forget()
+                self._alert_on = False
+                self._refit_soon()
+            return
+        self.alert_title.configure(text=f"Yeni gelişmeler ({len(items)})")
+        for n in range(max(len(shown), len(self._alert_pool))):
+            if n < len(shown):
+                lbl, link = self._alert_line(n)
+                lbl.set_text(AL.line_text(shown[n]))
+                lbl.grid()
+                link.grid()
+            else:
+                lbl, link = self._alert_pool[n]
+                lbl.grid_remove()
+                link.grid_remove()
+        extra = len(items) - len(shown)
+        if extra > 0:
+            self.alert_more.set_text(f"… ve {extra} gelişme daha")
+            self.alert_more.grid(row=len(self._alert_pool), column=0, sticky="w")
+        else:
+            self.alert_more.grid_remove()
+        if not self._alert_on:
+            self.alert_bar.pack(fill="x", before=self.pane, padx=self.px(2),
+                                pady=(self.px(2), self.px(4)))
+            self._alert_on = True
+        self._refit_soon()
+
+    def _apply_alert_flags(self, rows) -> None:
+        mine = self.alerts.open_slugs()
+        for r in rows:
+            r.alert = r.slug in mine and not r.is_removed
+
+    def _alerts_changed(self, rows: bool = True) -> None:
+        """Alerts were added / read: persist, repaint the banner and (``rows``) the row marks."""
+        self.save_ui()
+        self._render_alerts()
+        if rows and getattr(self, "_default_rows", None):
+            self._apply_alert_flags(self._default_rows)
+            self._render_rows()
+
+    def ack_alerts(self) -> None:
+        """"Tümünü okundu say"."""
+        if self.alerts.ack_all():
+            self._alerts_changed()
+
+    def _alert_clicked(self, index: int) -> None:
+        """A banner line: show its list row and detail; the alert counts as read."""
+        if index >= len(self._alert_shown):
+            return
+        alert = self._alert_shown[index]
+        self.notebook.select(self.games_tab)
+        slug = alert["slug"]
+        if slug and slug in self.rows_by_slug:
+            self.select_slug(slug)
+        elif slug:
+            self.set_message("Bu gelişmenin satırı listede yok (kalkmış ya da geçmiş olabilir).")
+        self.alerts.ack_key(alert["key"])
+        self._alerts_changed()
+
+    def reveal_alerts(self) -> None:
+        """Opened from the popup / tray: make sure the banner is on screen (Oyunlar tab)."""
+        if self.alerts.count():
+            self.notebook.select(self.games_tab)
+        self._render_alerts()
+
     def show_main(self) -> None:
         """Bring the main window to the front (also from the minimised / tray state)."""
         self.leave_tray()
@@ -1857,6 +2035,7 @@ class App:
         self.root.attributes("-topmost", True)
         self.root.after(200, lambda: self.root.attributes("-topmost", False))
         self.root.focus_force()
+        self.reveal_alerts()
 
     def alert(self) -> None:
         """A new notification: restart the beep series (one shared timer for all popups)."""
@@ -2024,6 +2203,7 @@ class App:
                        "columns": (self.tree.layout_state() if hasattr(self, "tree")
                                    else L.load_columns(self.local_dir / "ui.json")),
                        "seen": self.seen.to_json(),
+                       "alerts": self.alerts.to_json(),
                        "activity": self.activity_tab.filters()})
         except Exception:
             log.exception("ui.json not saved")

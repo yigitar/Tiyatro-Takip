@@ -304,7 +304,7 @@ def test_worker_renders_python_state_lists_and_item_screens():
         session_urls = {s.url for s in p.sessions if s.url}
         assert set(urls) - {p.url} and set(urls) - {p.url} <= session_urls  # Seans buttons (page 1)
     src = res["rendered"][-1]
-    assert len([b for row in src["keyboard"] for b in row if "url" in b]) == 3
+    assert len([b for row in src["keyboard"] for b in row if "url" in b]) == 4   # 3 sources + portal
 
 
 def test_adding_a_target_follows_an_unfollowed_play_parity_with_pc():  # wave 9

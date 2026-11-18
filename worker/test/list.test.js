@@ -1,7 +1,7 @@
 // Wave 7: unified play/event list, derived fields, link buttons.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { h, render, apply, listItems, sourceLinks, isMutating, viewOf, HELP, LEGEND } from "../src/menu.js";
+import { h, render, apply, listItems, sourceLinks, portalUrl, isMutating, viewOf, HELP, LEGEND } from "../src/menu.js";
 import {
   resolveAudience, resolveGenre, genreFromText, timeOfDay, audienceIsStated, genreIsStated,
   rezWhen, eventFields, playFields, eventGenre,
@@ -340,6 +340,7 @@ test("Kaynaklar screen: an 'aç' URL button for each source", () => {
       "🔗 Biletinial aç": "https://biletinial.com/tr-tr/mekan/ornek-mekan",
       "🔗 Başiskele aç": "https://www.basiskele.bel.tr/b-yeni",
       "🔗 VKV aç": "https://www.vkvfordkultur.org.tr/Etkinlikler",
+      "🏛️ Başiskele rezervasyon portalı": "https://rezervasyon.basiskele.bel.tr/etkinlikler",
     });
     assert.ok(flat(r).some((b) => b.callback_data === "src"));
   }
@@ -347,7 +348,7 @@ test("Kaynaklar screen: an 'aç' URL button for each source", () => {
   assert.deepEqual(sourceLinks({ sources: ["not a url"] }, {}), {
     basiskele: "https://www.basiskele.bel.tr", vkv: "https://www.vkvfordkultur.org.tr/Etkinlikler" });
   // without any source record the three known sources still get a button
-  assert.equal(flat(render("src", makeConfig(), makeState(), NOW)).filter((b) => b.url).length, 3);
+  assert.equal(flat(render("src", makeConfig(), makeState(), NOW)).filter((b) => b.url).length, 4);   // + the portal
 });
 
 test("texts no longer mention the old behaviour (default-ON, Diğer kaynaklar)", () => {
@@ -451,4 +452,31 @@ test("wave 17: a borrowed Özet / cast / credits are italic with one provenance 
   const play = render(`p:${h("unutmak-kocaeli-bb")}`, makeConfig(), s, NOW).text;
   assert.ok(!play.includes("ℹ️ Biletinial kaydından") && play.includes("📝 Özet: Bir kayıp."));
   assert.ok(bytes(t) < 4096);
+});
+
+// ---- Wave 22: Başiskele reservation portal link
+const PORTAL = "https://rezervasyon.basiskele.bel.tr/etkinlikler";
+const urlBtns = (r) => flat(r).filter((b) => b.url);
+
+test("wave 22: Başiskele event screen has the portal as a line and a URL button; VKV and plays do not", () => {
+  const bk = render(`e:${h("bk:20300206-1400-cop-atlas")}`, makeConfig(), evState(), NOW);
+  assert.ok(bk.text.includes(`🏛️ Rezervasyon portalı: ${PORTAL}`), bk.text);
+  assert.ok(urlBtns(bk).some((b) => b.text === "🏛️ Rezervasyon portalı" && b.url === PORTAL));
+  assert.ok(urlBtns(bk).some((b) => b.text === "🔗 Etkinlik sayfası"));   // the page button stays
+  const vkv = render(`e:${h("vkv:541")}`, makeConfig(), evState(), NOW);
+  assert.ok(!vkv.text.includes("Rezervasyon portalı") && !urlBtns(vkv).some((b) => b.url === PORTAL));
+  assert.ok(!urlBtns(render(`p:${KB}`, makeConfig(), evState(), NOW)).some((b) => b.url === PORTAL));
+});
+
+test("wave 22: Kaynaklar screen has the portal button; config.portals decides (disabled -> none)", () => {
+  assert.ok(urlBtns(render("src", makeConfig(), evState(), NOW)).some((b) => b.url === PORTAL && b.text.includes("portalı")));
+  const custom = { ...makeConfig(), portals: [{ id: "basiskele", name: "x", url: "https://example.test/rez", enabled: true }] };
+  assert.equal(portalUrl(custom), "https://example.test/rez");
+  assert.equal(portalUrl({ ...makeConfig(), portals: [{ id: "basiskele", name: "x", url: PORTAL, enabled: false }] }), "");
+  assert.equal(portalUrl({ ...makeConfig(), portals: [{ id: "basiskele", url: "javascript:alert(1)" }] }), "");
+  assert.equal(portalUrl({ ...makeConfig(), portals: [] }), "");
+  assert.equal(portalUrl(makeConfig()), PORTAL);   // absent key = the default portal
+  const off = { ...makeConfig(), portals: [] };
+  assert.ok(!urlBtns(render("src", off, evState(), NOW)).some((b) => b.url === PORTAL));
+  assert.ok(!render(`e:${h("bk:20300206-1400-cop-atlas")}`, off, evState(), NOW).text.includes("Rezervasyon portalı"));
 });
