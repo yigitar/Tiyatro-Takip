@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from tiyatro.models import ISTANBUL
+from tiyatro import history as H
 from tiyatro.notify import portal_label
 from tiyatro.timeutil import parse_iso
 
@@ -23,7 +24,7 @@ MONTH_SHORT = ["Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl", 
 
 MAX_ITEMS = 100            # stored alerts (acknowledged ones are dropped first)
 KEEP_ACKED = timedelta(days=3)
-MAX_LINES = 6              # lines the banner shows; the rest is "+N daha"
+MAX_LINES = 3              # lines the banner shows (one line each); the rest is in the history tab
 TITLE_MAX = 80
 DETAIL_MAX = 120
 
@@ -46,7 +47,9 @@ KIND_LABELS = {
     "SRC_REOPENED": ("🎟", "Rezervasyon yeniden açıldı"),
     "SRC_PROGRAM_MISSING": ("⚠", "Program haberi bulunamadı"),
     "PORTAL_OPENED": ("🏛", "Portalda etkinlik açıldı"),
-    "PORTAL_CHANGED": ("🏛", "Portal güncellendi"),
+    "PORTAL_NEW": ("🆕", "Yeni etkinlik (portal)"),
+    "PORTAL_SEATS": ("🎟", "Yer açıldı"),
+    "PORTAL_MARKUP": ("⚠", "Portal sayfa düzeni değişmiş olabilir"),
     "PORTAL_FAILING": ("⚠", "Portal okunamıyor"),
     "PC_INACTIVE": ("🖥", "PC uygulaması aktif değil"),
     "PC_DIVERGED": ("🖥", "PC ile GitHub uyuşmuyor"),
@@ -87,7 +90,12 @@ def describe(ev, now: datetime | None = None) -> dict:
     p = ev.payload if isinstance(getattr(ev, "payload", None), dict) else {}
     icon, label = KIND_LABELS.get(ev.kind, (FALLBACK_ICON, str(ev.kind)))
     slug = str(getattr(ev, "play_slug", "") or p.get("event_id") or "")
-    if ev.kind.startswith("PORTAL_"):
+    if ev.kind in ("PORTAL_NEW", "PORTAL_SEATS"):     # the exact change text (as the history)
+        facts = H.entries_for(ev)
+        title = ""
+        parts = ["; ".join(f["text"] for f in facts[:3]) + (f" (+{len(facts) - 3})" if len(facts) > 3 else "")]
+        slug = facts[0]["row"] if facts else ""
+    elif ev.kind.startswith("PORTAL_"):
         title = portal_label(p.get("portal_id"), p.get("title"))
         items = [i for i in (p.get("items") or []) if isinstance(i, dict)]
         parts = [f"{len(items)} etkinlik"] if items else []

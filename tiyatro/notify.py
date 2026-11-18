@@ -48,8 +48,10 @@ KIND_TEXT = {
 }
 PORTAL_TEXT = {
     "PORTAL_OPENED": "etkinlik açıldı",
-    "PORTAL_CHANGED": "güncellendi",
     "PORTAL_FAILING": "okunamıyor",
+    "PORTAL_NEW": "yeni etkinlik",
+    "PORTAL_SEATS": "yer açıldı",
+    "PORTAL_MARKUP": "sayfa düzeni değişmiş olabilir",
 }
 SOURCE_LABELS = {"basiskele": "Başiskele Belediyesi", "vkv": "VKV Gölcük",
                  "biletinial": "Biletinial"}
@@ -163,7 +165,7 @@ def portal_line(payload, config) -> str | None:
     """The reservation-portal line for a notice about a Başiskele event (None for others)."""
     if not isinstance(payload, dict) or payload.get("source") != "basiskele":
         return None
-    url = portal_url(config)
+    url = payload.get("portal_url") or portal_url(config)   # the event's own portal page if known
     return PORTAL_LINE + _esc(url, URL_MAX) if url else None
 
 
@@ -259,13 +261,36 @@ def _source_entry(ev: Event, config=None) -> str:
     return chr(10).join(lines)
 
 
+def _portal_event_line(e: dict) -> str:
+    """"TITLE · 20.11 20:00 · venue · boş 350/590 · link" (one line, one link)."""
+    parts = [f"<b>{_esc(e.get('title') or 'Etkinlik', TITLE_MAX)}</b>"]
+    when = " ".join(x for x in (str(e.get("date") or "")[:5], str(e.get("time") or "")) if x)
+    if when:
+        parts.append(html.escape(when))
+    if e.get("venue"):
+        parts.append(_esc(e["venue"], NAME_MAX))
+    total, free = e.get("total"), e.get("free")
+    if isinstance(total, int) and isinstance(free, int) and not isinstance(total, bool):
+        parts.append(f"DOLU {total}/{total}" if free <= 0 else f"boş {free}/{total}")
+    if e.get("url"):
+        parts.append(_esc(e["url"], URL_MAX))
+    return " · ".join(parts)
+
+
 def _portal_entry(ev: Event) -> str:
     p = ev.payload if isinstance(ev.payload, dict) else {}
+    if ev.kind in ("PORTAL_NEW", "PORTAL_SEATS"):
+        return _portal_events_entry(ev, p)
     lines = [html.escape(portal_headline(ev))]
-    items = [i for i in (p.get("items") or []) if isinstance(i, dict)]
+    seen: set[str] = set()
+    items = []
+    for i in (p.get("items") or []):   # one bullet per distinct link
+        if isinstance(i, dict) and (i.get("url") or "") not in seen:
+            seen.add(i.get("url") or "")
+            items.append(i)
     for i in items[:PORTAL_NOTE_ITEMS]:
         line = f"• {_esc(i.get('title') or 'Etkinlik', TITLE_MAX)}"
-        if i.get("url"):
+        if i.get("url") and i["url"] != p.get("url"):
             line += f" — {_esc(i['url'], URL_MAX)}"
         lines.append(line)
     try:
@@ -281,6 +306,32 @@ def _portal_entry(ev: Event) -> str:
         lines.append(_esc(p["detail"], DETAIL_MAX))
     if p.get("url"):
         lines.append(f"🔗 {_esc(p['url'], URL_MAX)}")
+    return chr(10).join(lines)
+
+
+def _portal_events_entry(ev: Event, p: dict) -> str:
+    """Wave 23 notices of the structured portal: header once, one line (one link) per event,
+    the general portal link once at the bottom of a discovery message."""
+    if ev.kind == "PORTAL_SEATS":
+        e = p.get("event") if isinstance(p.get("event"), dict) else {}
+        head = ("🎟️ Başiskele · YER AÇILDI — hemen rezervasyon yap!" if p.get("reason") != "opened"
+                else "🎟️ Başiskele · rezervasyon açıldı — hemen rezervasyon yap!")
+        return chr(10).join([head, _portal_event_line(e),
+                             FOLLOWED_NOTE if p.get("followed") is True else NOT_FOLLOWED_NOTE])
+    evs = [e for e in (p.get("events") or []) if isinstance(e, dict)]
+    try:
+        count = max(len(evs), int(p.get("event_count") or 0))
+    except (TypeError, ValueError):
+        count = len(evs)
+    lines = ["🏛️ Başiskele · yeni etkinlik" if count <= 1
+             else f"🏛️ Başiskele · {count} yeni etkinlik"]
+    lines.extend(_portal_event_line(e) for e in evs)
+    if count > len(evs):
+        lines.append(f"… +{count - len(evs)} etkinlik daha")
+    lines.append(FOLLOWED_NOTE if evs and all(e.get("followed") is True for e in evs)
+                 else NOT_FOLLOWED_NOTE)
+    if p.get("url"):
+        lines.append(f"🏛️ Tüm etkinlikler: {_esc(p['url'], URL_MAX)}")
     return chr(10).join(lines)
 
 
@@ -432,7 +483,32 @@ def format_message(events: list[Event], plays: dict[str, Play], config: Config) 
                 cur = cand
     if cur:
         parts.append(cur)
-    return parts
+    return [dedupe_urls(part) for part in parts]
+
+
+_URL_RE = re.compile(r"https?://[^\s<>\"]+")
+_LABEL_ONLY = re.compile(r"(?:🔗|🏛️|🌐|•)?\s*(?:Rezervasyon portalı|Tüm etkinlikler)?\s*:?")
+
+
+def dedupe_urls(text: str) -> str:
+    """One occurrence of every URL in a message: a repeat is removed together with its
+    separator, and a line that held nothing else but a label and the repeat is dropped."""
+    seen: set[str] = set()
+    out = []
+    for line in text.split(chr(10)):
+        urls = _URL_RE.findall(line)
+        if not any(u in seen for u in urls):
+            seen.update(urls)
+            out.append(line)
+            continue
+        kept = line
+        for u in urls:
+            if u in seen:
+                kept = re.sub(r"\s*[·—–-]?\s*" + re.escape(u), "", kept, count=1)
+            seen.add(u)
+        if not _LABEL_ONLY.fullmatch(re.sub(r"<[^>]*>", "", kept).strip()):
+            out.append(kept.rstrip(" ·—–-:"))
+    return chr(10).join(out)
 
 
 

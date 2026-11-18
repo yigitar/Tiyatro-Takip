@@ -56,11 +56,17 @@ when the caller injects ``portal_fetch_fn`` (so no caller can reach the network 
 accident). Every enabled portal is fetched on its own daemon thread that overlaps the
 Biletinial scan; the Biletinial events are dispatched first, then the portal result is
 waited for at most ``PORTAL_WAIT_S`` and its events are dispatched separately, so a slow or
-broken portal can neither abort nor delay a Biletinial alert. ``state["portals"][id]`` keeps
-the last snapshot; ``PORTAL_OPENED`` (empty -> open, or the very first observation is open;
-key ``PORTAL_OPENED:<id>:<sig12>``), ``PORTAL_CHANGED`` (open, signature changed) and
-``PORTAL_FAILING`` (3 failed checks in a row) go through the normal outbox/claims; open ->
-empty only updates the state; a first empty observation is a silent baseline.
+broken portal can neither abort nor delay a Biletinial alert. Wave 23: the portal page is
+read as structured event cards (title, date, time, venue, seat total / reserved, link;
+``tiyatro/portals.py``); ``state["portals"][id]["events"]`` keeps them (small ints/strings).
+Only transitions notify: ``PORTAL_NEW`` (a portal event nobody announced; merged with the
+article events by normalised title + date), ``PORTAL_SEATS`` (full -> free seats, or
+not bookable -> open; one claim per event, ``PORTAL_SEATS_GAP`` between two alerts, same
+urgency as ON_SALE) and ``PORTAL_FAILING`` / ``PORTAL_MARKUP`` (health: 3 failed reads /
+page with content but no card, once a day). A changed reserved-seat counter never notifies;
+full / sold-out (``OPENED_SOLD_OUT``, portal full, session sold out) is only recorded in
+``state["history"]`` (``tiyatro/history.py``) and in the row status. A page that never had
+cards keeps the old generic watcher (``PORTAL_OPENED`` once per signature, changes silent).
 
 Pausing: with ``config.paused`` the scan and state update run normally but the events
 (and anything still in the outbox) are discarded: they stay recorded in ``emitted`` and
@@ -87,13 +93,14 @@ from typing import Callable, Iterable
 
 from tiyatro.claims import ClaimStore, claim_key, claim_path, send_with_claim
 from tiyatro.config import config_from_dict, default_config
+from tiyatro import history
 from tiyatro.fetcher import fetch
 from tiyatro.heartbeat import github_run_status, pc_status, read_heartbeat
 from tiyatro.models import ISTANBUL, Config, Event, Play, Session, Status
 from tiyatro.notify import (DISCOVERY_KINDS, FOLD_NEW_PLAYS_ABOVE, MONTHS, fold_discoveries, Telegram,
                             default_transport, format_message)
 from tiyatro.parser import ParseError, parse_play, parse_venue
-from tiyatro.portals import item_key, parse_portal
+from tiyatro.portals import item_key, match_portal_event, norm_title, parse_portal, seats_text
 from tiyatro.rules import matching_targets
 from tiyatro import srcevents
 from tiyatro.sources import TIME_KEYS, record_check
@@ -113,6 +120,10 @@ SOURCE_WAIT_S = 25  # sources (Başiskele RSS, VKV) overlap the Biletinial scan 
 PORTAL_WAIT_S = 5  # how long after the Biletinial work the portal result may still take
 PORTAL_LINES_KEPT, PORTAL_ITEMS_KEPT, PORTAL_NOTE_MAX = 40, 20, 5
 PORTAL_CHANGED_COOLDOWN = timedelta(hours=6)  # at most one PORTAL_CHANGED per portal
+PORTAL_SEATS_GAP = ON_SALE_GAP     # wave 23: min. gap between two "yer açıldı" alerts of one event
+PORTAL_SEATS_UNFOLLOWED = True     # also alert for events that are not followed (a missed seat is the worst failure)
+PORTAL_NEW_LINES = 8               # event lines in one discovery message
+PORTAL_EVENT_KEEP = timedelta(days=3)
 OUTBOX_MAX_AGE = timedelta(hours=6)
 OUTBOX_MAX_ATTEMPTS = 20
 PC_DELAY = timedelta(seconds=60)
@@ -195,6 +206,10 @@ def _prepare(state) -> dict:
     state["portals"] = ({k: v for k, v in portals.items()
                          if isinstance(k, str) and isinstance(v, dict)}
                         if isinstance(portals, dict) else {})
+    hist = state.get("history")
+    state["history"] = [h for h in (hist if isinstance(hist, list) else [])
+                        if isinstance(h, dict) and isinstance(h.get("text"), str)
+                        and isinstance(h.get("key"), str)][-history.MAX_HISTORY:]
     sources = state.get("sources")
     state["sources"] = ({k: v for k, v in sources.items()
                          if isinstance(k, str) and isinstance(v, dict)}
@@ -270,7 +285,7 @@ def _emit(state: dict, kind: str, key: str, payload: dict, now: datetime,
 
 def pc_delay(key: str) -> timedelta:
     """How long the PC waits before sending outbox entry ``key`` (GitHub goes first)."""
-    return PC_ON_SALE_DELAY if key.startswith("ON_SALE:") else PC_DELAY
+    return PC_ON_SALE_DELAY if key.startswith(("ON_SALE:", "PORTAL_SEATS:")) else PC_DELAY
 
 
 def _enqueue(state: dict, key: str, events: list[Event], now: datetime, who: str) -> None:
@@ -449,8 +464,25 @@ def _confirmed_paused(store, config: Config) -> bool:
         return False
 
 
+def _record_sold_out(state: dict, now: datetime) -> None:
+    """History only: a session that turned SOLD_OUT in this scan ("tükendi" is never sent)."""
+    now_iso = now.isoformat()
+    for slug, entry in (state.get("plays") or {}).items():
+        for sid, rec in ((entry.get("sessions") if isinstance(entry, dict) else None) or {}).items():
+            if (isinstance(rec, dict) and rec.get("status") == Status.SOLD_OUT.value
+                    and rec.get("status_since") == now_iso and rec.get("prev_status")):
+                history.add(state, kind="SOLD_OUT", source="biletinial", title=entry.get("title"),
+                            start=rec.get("start"), row=slug, now=now,
+                            text=f"{entry.get('title')} ({history.when(rec.get('start'))}) — seans doldu",
+                            key=f"SOLD_OUT:{sid}:{now_iso}")
+
+
 def _dispatch(state: dict, events: list[Event], first_scan: bool, store, tg, claims,
               now: datetime, plays: dict[str, Play], config: Config, who: str) -> int:
+    history.record(state, events, now, lambda slug: (plays.get(slug).title if plays.get(slug)
+                   else (state["plays"].get(slug) or {}).get("title", "")), first_scan)
+    # wave 23: sold-out / full is recorded (history, row status) but never notified
+    events = [e for e in events if e.kind not in history.SILENT_EVENT_KINDS]
     if (events or state["outbox"]) and _confirmed_paused(store, config):
         _discard_outbox(state, events)
         return 0
@@ -587,7 +619,188 @@ def _new_portal_item(rec: dict, snap) -> bool:
     return any(item_key(i) not in known for i in snap.items)
 
 
-def _apply_portal(state: dict, portal: dict, result, now: datetime) -> list[Event]:
+
+# ---- structured portal events (wave 23) -----------------------------------------------
+#
+# Alert semantics: only meaningful transitions are announced, never a changed reserved-seat
+# counter. (i) a portal event nobody announced yet -> ``PORTAL_NEW`` (one message per scan, a
+# line per event; an event already known from a Başiskele article is merged by normalised
+# title + date and stays silent); (ii) FULL -> free seats, and (iii) "not bookable" -> open
+# -> ``PORTAL_SEATS`` (key ``PORTAL_SEATS:<portal>:<event>:<n>``, one claim per event, at least
+# ``PORTAL_SEATS_GAP`` between two alerts of an event, ON_SALE urgency); (iv) removed/closed
+# events are silent. Every portal event has a ``source_events`` record (an article event
+# when one matches, else its own ``bkp<id>`` record) so it can be followed and listed.
+
+_EVENT_KEYS = ("id", "title", "start", "date", "time", "venue", "total", "reserved", "free",
+               "status", "url")
+
+
+def _title_case_tr(text: str) -> str:
+    out = []
+    for word in str(text).replace("I", "ı").replace("İ", "i").lower().split(" "):
+        if word:
+            first = {"i": "İ", "ı": "I"}.get(word[0], word[0].upper())
+            word = first + word[1:]
+        out.append(word)
+    return " ".join(out)
+
+
+def _article_record_id(state: dict, ev: dict) -> str | None:
+    """Id of the Başiskele ARTICLE event with the same normalised title and date (the same
+    clock time wins when several share the day), else None."""
+    start = ev.get("start") or ""
+    want = norm_title(ev.get("title"))
+    if not want or not start:
+        return None
+    found = [(rid, r) for rid, r in (state.get("source_events") or {}).items()
+             if isinstance(r, dict) and r.get("source") == srcevents.BASISKELE
+             and not r.get("portal_eid") and norm_title(r.get("title")) == want
+             and str(r.get("start") or "")[:10] == start[:10]]
+    if len(found) > 1:
+        same = [f for f in found if str(f[1].get("start") or "")[11:16] == start[11:16]]
+        found = same if len(same) == 1 else []
+    return found[0][0] if len(found) == 1 else None
+
+
+def _portal_record(state: dict, ev: dict, now: datetime) -> tuple[str, dict]:
+    """(source_events id, record) of a portal event: the matching article event, or its own
+    ``bkp<id>`` record (created / refreshed here)."""
+    store = state.setdefault("source_events", {})
+    rid = _article_record_id(state, ev)
+    if rid is not None:
+        store.pop(f"bkp{ev['id']}", None)   # the article event replaces the portal's own record
+        return rid, store[rid]
+    rid = f"bkp{ev['id']}"
+    rec = store.get(rid)
+    if not isinstance(rec, dict):
+        rec = store[rid] = {"id": rid, "source": srcevents.BASISKELE, "first_seen": now.isoformat(),
+                            "full": None, "opens_at": None, "opens_pending": False,
+                            "follow_default": False, "portal_eid": ev["id"], "kind": ""}
+    rec.update(title=_title_case_tr(ev["title"]), venue=ev.get("venue") or "",
+               url=ev.get("url") or "", start=ev.get("start"), last_seen=now.isoformat(),
+               full=ev.get("status") == "full", venue_derived=False)
+    rec.setdefault("audience", srcevents.audience_for("", ev["title"]))
+    rec.setdefault("genre", srcevents.genre_of("", ev["title"]))
+    return rid, rec
+
+
+def _event_view(ev: dict, followed: bool | None = None) -> dict:
+    d = {k: ev.get(k) for k in _EVENT_KEYS}
+    if followed is not None:
+        d["followed"] = followed
+    return d
+
+
+def _apply_portal_events(state: dict, config: Config, portal: dict, snap, now: datetime
+                         ) -> list[Event]:
+    pid, now_iso = portal["id"], now.isoformat()
+    rec = state["portals"].setdefault(pid, {})
+    rec.update(name=portal["name"], url=portal["url"])
+    stored = rec.get("events")
+    stored = stored if isinstance(stored, dict) else {}
+    events: list[Event] = []
+    new_views: list[dict] = []
+    seen = set()
+    for ev in snap.events:
+        eid = str(ev["id"])
+        seen.add(eid)
+        old = stored.get(eid) if isinstance(stored.get(eid), dict) else None
+        rid, srec = _portal_record(state, ev, now)
+        followed = srcevents.effective_follow(config, rid, bool(srec.get("follow_default")))
+        cur = {k: ev.get(k) for k in _EVENT_KEYS}
+        cur.update(rec_id=rid, present=True, first_seen=(old or {}).get("first_seen") or now_iso)
+        for keep in ("last_seats_alert", "seats_count", "closed_seen_at"):
+            if keep in (old or {}):
+                cur[keep] = old[keep]
+        if ev.get("status") != "open":   # the claim logic tells episodes apart by this (as ON_SALE)
+            cur["closed_seen_at"] = now_iso
+        if old is None:
+            if srec.get("portal_eid") == eid and not srec.get("portal_announced"):
+                srec["portal_announced"] = True       # created by this portal: announce it
+                new_views.append({**_event_view(ev, followed), "rec_id": rid})
+            # an article event of the same title/date was announced by its own SRC_NEW: silent
+        else:
+            prev, now_status = old.get("status"), ev.get("status")
+            if prev == "open" and now_status == "full":     # quiet: history + row status only
+                history.add(state, kind="FULL", source="basiskele", title=ev["title"],
+                            start=ev.get("start"), row=rid, now=now,
+                            text=f"{ev['title']} ({history.when(ev.get('start'))}) — doldu "
+                                 f"({seats_text(ev)})",
+                            key=f"FULL:{pid}:{eid}:{now_iso}")
+            reason = ("freed" if prev == "full" and now_status == "open" else
+                      "opened" if prev == "closed" and now_status == "open" else None)
+            last = parse_iso(old["last_seats_alert"]) if isinstance(
+                old.get("last_seats_alert"), str) else None
+            if reason and (followed or PORTAL_SEATS_UNFOLLOWED) and (
+                    last is None or now - last >= PORTAL_SEATS_GAP):
+                n = int(old.get("seats_count") or 0) + 1
+                e = _emit(state, "PORTAL_SEATS", f"PORTAL_SEATS:{pid}:{eid}:{n}",
+                          {"portal_id": pid, "title": portal["name"], "url": portal["url"],
+                           "event_id": rid, "reason": reason, "followed": followed,
+                           "closed_seen_at": old.get("closed_seen_at"),
+                           "event": _event_view(ev, followed)}, now)
+                if e:
+                    events.append(e)
+                    cur["seats_count"], cur["last_seats_alert"] = n, now_iso
+        stored[eid] = cur
+    for eid, old in list(stored.items()):
+        if not isinstance(old, dict):
+            del stored[eid]
+        elif eid not in seen:             # removed / closed: silent, remembered for a reappearance
+            old["present"] = False
+            old.setdefault("gone_since", now_iso)
+            start = parse_iso(old["start"]) if isinstance(old.get("start"), str) else None
+            if (start is not None and now - start > PORTAL_EVENT_KEEP) or len(stored) > 80:
+                del stored[eid]
+    if new_views:
+        ids = ",".join(sorted(v["id"] for v in new_views))
+        digest = hashlib.sha1(ids.encode()).hexdigest()[:10]
+        e = _emit(state, "PORTAL_NEW", f"PORTAL_NEW:{pid}:{digest}",
+                  {"portal_id": pid, "title": portal["name"], "url": portal["url"],
+                   "events": new_views[:PORTAL_NEW_LINES], "event_count": len(new_views)}, now)
+        if e:
+            events.insert(0, e)
+    changed = snap.signature != rec.get("signature") or rec.get("empty") is not False
+    rec.update(mode="structured", signature=snap.signature, empty=False, events=stored,
+               lines=list(snap.lines[:PORTAL_LINES_KEPT]),
+               items=[dict(i) for i in snap.items[:PORTAL_ITEMS_KEPT]],
+               item_keys=sorted({item_key(i) for i in snap.items}),
+               fail_streak=0, last_check=now_iso)
+    for k in ("pending_signature", "pending_since"):
+        rec.pop(k, None)
+    rec.setdefault("first_seen", now_iso)
+    if changed or not rec.get("last_change"):
+        rec["last_change"] = now_iso
+    return events
+
+
+def _portal_drift(state: dict, portal: dict, snap, now: datetime) -> list[Event] | None:
+    """A portal that was read as structured events before, and now shows a page without a
+    single card. A page without content is a real empty list (all events leave silently); a
+    page WITH content is a markup change: one "markup değişmiş olabilir" notice per day, the
+    stored events stay as they were. None when the portal never had structured events."""
+    pid = portal["id"]
+    rec = state["portals"][pid]
+    if rec.get("mode") != "structured":
+        return None
+    now_iso = now.isoformat()
+    rec["fail_streak"], rec["last_check"] = 0, now_iso
+    if snap.empty:
+        for old in (rec.get("events") or {}).values():
+            if isinstance(old, dict) and old.get("present"):
+                old["present"], old["gone_since"] = False, now_iso
+        rec.update(empty=True, signature=snap.signature, lines=[], items=[], item_keys=[])
+        return []
+    day = now.astimezone(ISTANBUL).date().isoformat()
+    ev = _emit(state, "PORTAL_MARKUP", f"PORTAL_MARKUP:{pid}:{day}",
+               {"portal_id": pid, "title": portal["name"], "url": portal["url"],
+                "detail": "Sayfada etkinlik kartı bulunamadı ama sayfada içerik var: "
+                          "sayfa düzeni değişmiş olabilir."}, now)
+    return [ev] if ev else []
+
+
+def _apply_portal(state: dict, portal: dict, result, now: datetime,
+                  config: Config | None = None) -> list[Event]:
     pid, now_iso = portal["id"], now.isoformat()
     rec = state["portals"].setdefault(pid, {})
     rec.update(name=portal["name"], url=portal["url"])
@@ -603,6 +816,11 @@ def _apply_portal(state: dict, portal: dict, result, now: datetime) -> list[Even
         return [ev] if ev else []
 
     snap = result
+    if getattr(snap, "structured", False):
+        return _apply_portal_events(state, config or default_config(), portal, snap, now)
+    drift = _portal_drift(state, portal, snap, now)
+    if drift is not None:
+        return drift
     prev_empty, prev_sig = rec.get("empty"), rec.get("signature")
     old_lines = rec.get("lines") if isinstance(rec.get("lines"), list) else []
     events: list[Event] = []
@@ -627,13 +845,8 @@ def _apply_portal(state: dict, portal: dict, result, now: datetime) -> list[Even
                 pending = True
                 if rec.get("pending_signature") != snap.signature:
                     rec["pending_signature"], rec["pending_since"] = snap.signature, now_iso
-        elif snap.signature != prev_sig:
-            last = parse_iso(rec.get("last_changed_alert")) if isinstance(
-                rec.get("last_changed_alert"), str) else None
-            # the cooldown only damps churn; a genuinely new item always alerts
-            if (last is None or now - last >= PORTAL_CHANGED_COOLDOWN
-                    or _new_portal_item(rec, snap)):
-                kind, key = "PORTAL_CHANGED", f"PORTAL_CHANGED:{pid}:{sig12}"
+        # wave 23: an open page whose signature changed is NOT announced any more ("güncellendi"
+        # told nothing); a concrete change is either a structured transition or silent.
         if kind and not announced:
             ev = _emit(state, kind, key, _portal_payload(portal, snap, new_lines), now)
             if ev:
@@ -666,7 +879,7 @@ def _apply_portals(state: dict, config: Config, results: dict, now: datetime) ->
             continue
         try:
             events.extend(_apply_portal(state, portal, results.get(portal["id"], "Timeout"),
-                                        now))
+                                        now, config))
         except Exception:  # one portal's bug must never reach the Biletinial result
             continue
     return events
@@ -893,6 +1106,7 @@ def run_once(store, tg, claims, now: datetime, who: str = "github",
                                   complete=not burst and not venue_error,
                                   unscanned=unscanned)
         state = _prepare(cleanup(state, config, now))
+        _record_sold_out(state, now)
         events.extend(diff_events)
         if not burst:
             events.extend(_track_play_failures(state, plays, unscanned, config, now))

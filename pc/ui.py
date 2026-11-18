@@ -30,7 +30,9 @@ from pc import app_logic as L
 from pc import theme as T
 from pc import winsetup
 from pc.tray import menu_items as tray_menu_items
+from pc import history_ui as HV
 from pc.activity_ui import ActivityTab, default_reveal
+from pc.history_ui import HistoryTab
 from pc.service import RefreshError
 from pc.settings import DEFAULT_LOCAL_DIR, SettingsError, load_settings
 from pc.table import DERIVED_COLOR, GridTable
@@ -58,6 +60,7 @@ STATUS_MS = 5000
 RELOAD_MS = 60_000
 ACTIVITY_MS = 2000
 NO_INFO = "Bilgi yok"
+RESERVE_BUTTON = "Rezervasyon yap ↗"       # wave 23: the event's own portal page
 PORTAL_BUTTON = "Rezervasyon portalı ↗"   # Wave 22: Başiskele event detail
 SOURCE_NO_INFO = "Kaynakta bilgi yok"   # the source gave nothing (grey), same for every row
 FIELD_NAMES = {"summary": "Özet", "cast": "Oyuncular", "credits": "Yapım", "duration": "Süre",
@@ -509,6 +512,11 @@ class App:
         self.notebook = ttk.Notebook(self.shell)
         games = ttk.Frame(self.notebook)
         self.notebook.add(games, text="Oyunlar")
+        self.history_tab = HistoryTab(
+            self.notebook, self._history_entries, HV.load(self.local_dir / "ui.json"),
+            self.save_ui, self._history_open, self._history_unread)
+        self.notebook.add(self.history_tab, text="Bildirim geçmişi")
+        self.history_tab.refresh()
         self.activity_tab = ActivityTab(
             self.notebook, self.activity, A.load_filters(self.local_dir / "ui.json"),
             self.save_ui, self.mb, self.reveal)
@@ -826,6 +834,26 @@ class App:
         self.refresh_rows()
         self.update_status()
         self.activity_tab.poll()
+        self.history_tab.refresh()
+
+    def _history_entries(self) -> list:
+        hist = (getattr(self.service, "state", None) or {}).get("history")
+        return hist if isinstance(hist, list) else []
+
+    def _history_unread(self, n: int) -> None:
+        text = f"Bildirim geçmişi ({n})" if n else "Bildirim geçmişi"
+        if not hasattr(self, "history_tab"):       # called from the tab's own constructor
+            return
+        if self.notebook.tab(self.history_tab, "text") != text:
+            self.notebook.tab(self.history_tab, text=text)
+
+    def _history_open(self, slug: str) -> None:
+        """A history row: show its list row and detail (Oyunlar tab)."""
+        self.notebook.select(self.games_tab)
+        if slug in self.rows_by_slug:
+            self.select_slug(slug)
+        else:
+            self.set_message("Bu kaydın satırı listede yok (kalkmış ya da geçmiş olabilir).")
 
     def _ui_exception(self, exc, val, tb) -> None:
         log.error("UI exception", exc_info=(exc, val, tb))
@@ -1288,7 +1316,7 @@ class App:
         """Reservation-portal URL of a Başiskele event row ("" for every other row)."""
         if not getattr(row, "is_event", False) or getattr(row, "source_id", "") != "basiskele":
             return ""
-        return portal_url(getattr(self.service, "config", None))
+        return getattr(row, "portal_url", "") or portal_url(getattr(self.service, "config", None))
 
     def _fill_event_links(self, row) -> None:
         self.event_page_btn.configure(command=lambda: row.url and self.open_url(row.url),
@@ -1296,6 +1324,8 @@ class App:
         portal = self.portal_url_for(row)
         btn = self.event_portal_btn
         if portal:
+            btn.configure(command=lambda u=portal: self.open_url(u),
+                          text=RESERVE_BUTTON if getattr(row, "portal_url", "") else PORTAL_BUTTON)
             btn.configure(command=lambda u=portal: self.open_url(u))
             if not self._portal_btn_on:
                 btn.pack(side="left", padx=(8, 0), before=self.event_no_page_label)
@@ -1436,9 +1466,12 @@ class App:
                  ("Mekan", row.venue or NO_INFO, row.venue_derived or not row.venue)]
         facts += [("İletişim" if i == 0 else "", line, False) for i, line in enumerate(row.contact)]
         portal = self.portal_url_for(row)
+        if getattr(row, "portal_seats", ""):
+            facts.insert(4, ("Koltuk", row.portal_seats, False))    # source-quoted, not derived
         if portal:
-            facts.append(("Rezervasyon", portal, False))
-        if row.url:
+            facts.append(("Rezervasyon yap" if getattr(row, "portal_url", "") else "Rezervasyon",
+                          portal, False))
+        if row.url and row.url != portal:
             facts.append(("Etkinlik sayfası", row.url, False))
         return facts
 
@@ -1909,12 +1942,15 @@ class App:
         self.alert_title.pack(side="left")
         self.alert_ack_btn = ttk.Button(head, text="Tümünü okundu say", command=self.ack_alerts)
         self.alert_ack_btn.pack(side="right")
+        self.alert_hist_link = LinkButton(head, "Bildirim geçmişi ›", self.open_history,
+                                          background=bg)
+        self.alert_hist_link.pack(side="right", padx=(0, self.px(10)))
         self.alert_lines = tk.Frame(self.alert_bar, background=bg)
         self.alert_lines.pack(fill="x", padx=pad, pady=(0, self.px(4)))
         self.alert_lines.columnconfigure(0, weight=1)
         self._alert_pool: list = []          # (text label, "Göster" link); grows, never shrinks
-        self.alert_more = SelectableLabel(self.alert_lines, text="", background=bg,
-                                          foreground=T.GRAY_TEXT, wraplength=self.px(400))
+        self.alert_more = SelectableLabel(head, text="", background=bg,     # in the header row:
+                                          foreground=T.GRAY_TEXT, wraplength=self.px(400))   # no extra strip row
         self._alert_room = 0
         self.alert_bar.bind("<Configure>", self._rewrap_alerts)
 
@@ -1925,21 +1961,38 @@ class App:
         if room == self._alert_room:
             return
         self._alert_room = room
-        for lbl, _lk in self._alert_pool:
-            if int(lbl.cget("wraplength")) != room:
-                lbl.configure(wraplength=room)
-        self.alert_more.configure(wraplength=room)
+        self.alert_more.configure(wraplength=max(room // 2, self.px(120)))
+        self._alert_key = None            # lines are cut to the room: redraw them for the new width
+        self._render_alerts()
         self._refit_soon()
 
     def _refit_soon(self) -> None:
         if not self.closing:
             self.root.after(60, self._fit_panes)
 
+    def _fit_alert(self, text: str) -> str:
+        """``text`` cut with an ellipsis to one line of the strip (the full text is in the history)."""
+        room = self._alert_room or self.px(400)
+        font = tkfont.nametofont("TkDefaultFont")
+        if font.measure(text) <= room:
+            return text
+        lo, hi = 1, len(text)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if font.measure(text[:mid] + "…") <= room:
+                lo = mid
+            else:
+                hi = mid - 1
+        return text[:lo].rstrip() + "…"
+
+    def open_history(self) -> None:
+        self.notebook.select(self.history_tab)
+
     def _alert_line(self, n: int):
         while len(self._alert_pool) <= n:
             i = len(self._alert_pool)
             lbl = SelectableLabel(self.alert_lines, text="", background=T.ALERT_ROW,
-                                  foreground=VALUE_COLOR, wraplength=self._alert_room or self.px(400))
+                                  foreground=VALUE_COLOR, wraplength=self.px(4000))   # one line: cut, not wrapped
             link = LinkButton(self.alert_lines, "Göster ›", lambda i=i: self._alert_clicked(i),
                               background=T.ALERT_ROW)
             lbl.grid(row=i, column=0, sticky="w", pady=1)
@@ -1970,7 +2023,7 @@ class App:
         for n in range(max(len(shown), len(self._alert_pool))):
             if n < len(shown):
                 lbl, link = self._alert_line(n)
-                lbl.set_text(AL.line_text(shown[n]))
+                lbl.set_text(self._fit_alert(AL.line_text(shown[n])))
                 lbl.grid()
                 link.grid()
             else:
@@ -1980,9 +2033,9 @@ class App:
         extra = len(items) - len(shown)
         if extra > 0:
             self.alert_more.set_text(f"… ve {extra} gelişme daha")
-            self.alert_more.grid(row=len(self._alert_pool), column=0, sticky="w")
+            self.alert_more.pack(side="left", padx=(self.px(10), 0))
         else:
-            self.alert_more.grid_remove()
+            self.alert_more.pack_forget()
         if not self._alert_on:
             self.alert_bar.pack(fill="x", before=self.pane, padx=self.px(2),
                                 pady=(self.px(2), self.px(4)))
@@ -2204,6 +2257,7 @@ class App:
                                    else L.load_columns(self.local_dir / "ui.json")),
                        "seen": self.seen.to_json(),
                        "alerts": self.alerts.to_json(),
+                       "history": self.history_tab.to_json(),
                        "activity": self.activity_tab.filters()})
         except Exception:
             log.exception("ui.json not saved")
@@ -2213,6 +2267,7 @@ class App:
         if self.keep_awake and not self._apply_keep_awake(True):
             log.warning("keep awake could not be enabled")
         self.refresh_rows()
+        self.history_tab.refresh()
         self.update_status()
         self._service_hook("log_startup")
         self.worker = ScanWorker(self.service, self.q.put)

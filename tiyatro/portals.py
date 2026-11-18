@@ -17,7 +17,10 @@ import hashlib
 import re
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
+from datetime import datetime
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+
+from tiyatro.models import ISTANBUL
 
 DEFAULT_BASE_URL = "https://rezervasyon.basiskele.bel.tr/etkinlikler"
 MAX_HTML = 500_000
@@ -112,6 +115,10 @@ class PortalSnapshot:
     empty: bool = True
     signature: str = ""
     valid: bool = True   # False: the page is garbled/binary, to be treated as a failed fetch
+    # Wave 23: structured event cards (see ``parse_events``); ``structured`` is True when at
+    # least one card was read, and then ``items``/``lines`` are derived from them.
+    events: list[dict] = field(default_factory=list)
+    structured: bool = False
 
 
 def fold(text: str) -> str:
@@ -301,9 +308,19 @@ def has_date(line: str) -> bool:
     return bool(_DATE_TIME.search(fold(line[:MAX_LINE])))
 
 
+_COUNTER_TITLE = re.compile(r"koltuk|kontenjan|kalan|sayisi|\bbos\b|\bdolu\b|rezerve")
+
+
+def stable_title(title: str) -> str:
+    """Folded title; digits are dropped from a seat-counter line ("Rezerve Edilmiş Koltuk
+    Sayısı: 173"): the number moves with every reservation, the item does not."""
+    f = fold(title)
+    return re.sub(r"\d+", "#", f) if _COUNTER_TITLE.search(f) else f
+
+
 def item_key(item: dict) -> str:
     """Short stable identity of an item (folded title + cleaned URL)."""
-    raw = fold(item.get("title", "")) + "\t" + _clean_url(item.get("url", ""))
+    raw = stable_title(item.get("title", "")) + "\t" + _clean_url(item.get("url", ""))
     return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:10]
 
 
@@ -418,10 +435,212 @@ def _signature(lines: list[str], items: list[dict]) -> str:
     """With items: the SORTED SET of (title, cleaned url), so clocks, counters, order and
     volatile URL parameters do not matter; without: the (non-volatile) content lines."""
     if items:
-        raw = "\n".join(sorted({fold(i["title"]) + "\t" + _clean_url(i["url"]) for i in items}))
+        raw = "\n".join(sorted({stable_title(i["title"]) + "\t" + _clean_url(i["url"])
+                                for i in items}))
     else:
         raw = "\n".join(lines)
     return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()
+
+
+# ---- structured event cards (wave 23) ---------------------------------------------------
+#
+# Real markup (observed 2026-11-18): one card per event with the title, "20.11.2026 - 20:00",
+# the venue, "Mevcut Koltuk Sayısı: 590" (total seats), "Rezerve Edilmiş Koltuk Sayısı: 240"
+# (reserved seats) and the buttons Rezervasyon Yap / Doğrula / İptal; every text line is also
+# a link to the event page /etkinlik-d/0/<id>/<slug>.aspx. A card is found by its seat-total
+# line (not by ids or classes), so a redesign that keeps the wording keeps working.
+
+MAX_EVENTS = 60
+_TOTAL_RE = re.compile(r"mevcut koltuk sayisi\s*:?\s*(\d{1,6})")
+_RESERVED_RE = re.compile(r"rezerve edilmis koltuk sayisi\s*:?\s*(\d{1,6})")
+_DATE_RE = re.compile(r"(?<!\d)(\d{1,2})\.(\d{1,2})\.(\d{4})(?!\d)")
+_CLOCK_RE = re.compile(r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)")
+_EVENT_URL_ID = re.compile(r"/etkinlik-d/\d+/(\d+)(?:/|$)")
+_ANY_URL_ID = re.compile(r"/(?:etkinlik-d|bilet-al|bilet-dogrula|bilet-iptal)/\d+/(\d+)(?:/|$)")
+_BUTTON_WORDS = ("rezervasyon", "dogrula", "iptal", "bilet")
+
+
+def _count_after(rx, line: str):
+    m = rx.search(fold(line))
+    return int(m.group(1)) if m else None
+
+
+def _card_of(anchor: _Node, holders: dict) -> _Node:
+    """Highest ancestor of ``anchor`` that holds no other card's seat-total line."""
+    card, cur = anchor, anchor.parent
+    while cur is not None and cur.tag not in ("body", "html", "#root", "form"):
+        if holders.get(id(cur), 0) > 1:
+            break
+        card, cur = cur, cur.parent
+    return card
+
+
+def _card_event(card: _Node, base: str) -> dict | None:
+    total = reserved = None
+    rest = []
+    for line in _lines_of(card):
+        f = fold(line)
+        if total is None and (n := _count_after(_TOTAL_RE, line)) is not None:
+            total = n
+        elif reserved is None and (n := _count_after(_RESERVED_RE, line)) is not None:
+            reserved = n
+        elif "koltuk" in f and re.search(r"\d", f):
+            continue
+        else:
+            rest.append(line)
+    date_line = next((l for l in rest if _DATE_RE.search(l)), None)
+    start = time_ = None
+    day = None
+    if date_line:
+        d = _DATE_RE.search(date_line)
+        c = _CLOCK_RE.search(date_line[d.end():])
+        try:
+            day = (int(d.group(3)), int(d.group(2)), int(d.group(1)))
+            hh, mm = (int(c.group(1)), int(c.group(2))) if c else (0, 0)
+            start = datetime(*day, hh, mm, tzinfo=ISTANBUL).isoformat()
+            time_ = f"{hh:02d}:{mm:02d}" if c else ""
+        except ValueError:
+            start = time_ = day = None
+    content = [l for l in rest if l is not date_line
+               and not any(fold(l).startswith(w) for w in _BUTTON_WORDS)
+               and fold(l) not in GENERIC_ACTIONS and not _is_chrome_line(l)]
+    title = next((l for l in content if _titleish(l)), "")
+    venue = ""
+    if title:
+        after = content[content.index(title) + 1:]
+        venue = after[0] if after else ""
+    url = reserve_url = ""
+    bookable = None
+    for n in _walk(card):
+        if n.tag != "a" or n.chrome:
+            continue
+        href = (n.attrs.get("href") or "").strip()
+        if not href or href.lower().startswith(("javascript:", "#", "tel:", "mailto:")):
+            continue
+        absolute = urljoin(base, href)
+        if urlsplit(absolute).scheme not in ("http", "https"):
+            continue
+        path = urlsplit(absolute).path.lower()
+        if "bilet-al" in path or fold(_own_text(n)).startswith("rezervasyon yap"):
+            reserve_url = reserve_url or absolute
+            bookable = (not n.hidden) if bookable is None else (bookable and not n.hidden)
+        elif not url and "/etkinlik" in path:
+            url = absolute
+    if not title or (total is None and reserved is None):
+        return None
+    m = _EVENT_URL_ID.search(url) or _ANY_URL_ID.search(reserve_url)
+    eid = m.group(1) if m else hashlib.sha1(
+        (fold(title) + (start or "")).encode("utf-8")).hexdigest()[:8]
+    ev = {"id": eid, "title": title[:120], "start": start,
+          "date": f"{day[2]:02d}.{day[1]:02d}.{day[0]}" if day else "", "time": time_ or "",
+          "venue": venue[:120], "total": total, "reserved": reserved,
+          "url": url or reserve_url, "bookable": bookable}
+    ev["free"] = (max(total - reserved, 0) if total is not None and reserved is not None
+                  else None)
+    ev["status"] = seat_status(ev)
+    return ev
+
+
+def seat_status(ev: dict) -> str:
+    """"full" (no free seat), "closed" (the reservation button is hidden), "open" (free seats),
+    "unknown" (the counters were not read). The counters decide: the button stays visible on
+    a full event (observed 2026-11-18)."""
+    free = ev.get("free")
+    if free is not None and ev.get("total") is not None:
+        if free <= 0:
+            return "full"
+        return "closed" if ev.get("bookable") is False else "open"
+    return "closed" if ev.get("bookable") is False else "unknown"
+
+
+def parse_events(root: _Node, base: str) -> list[dict]:
+    """Structured event cards of a portal page ([] when none is recognisable)."""
+    anchors = []
+    for n in _walk(root):
+        if n.hidden or n.chrome or n.tag in ("script", "style"):
+            continue
+        # cheap pre-check (the text itself must name the seats): the full text of a node is
+        # only built for the few nodes that do, never for every node of a huge page
+        if not any(isinstance(c, str) and "koltuk" in fold(c) for c in n.children):
+            continue
+        if _TOTAL_RE.search(fold(_own_text(n))):
+            anchors.append(n)
+            if len(anchors) > MAX_EVENTS * 3:
+                break
+    holders: dict = {}
+    for a in anchors:
+        p = a.parent
+        while p is not None:
+            holders[id(p)] = holders.get(id(p), 0) + 1
+            p = p.parent
+    events, seen = [], set()
+    for a in anchors:
+        ev = _card_event(_card_of(a, holders), base)
+        if ev and ev["id"] not in seen:
+            seen.add(ev["id"])
+            events.append(ev)
+            if len(events) >= MAX_EVENTS:
+                break
+    return events
+
+
+def seats_text(ev: dict) -> str:
+    """"boş 350/590", "DOLU 590/590" or "" (counters unknown)."""
+    total, free = ev.get("total"), ev.get("free")
+    if total is None or free is None:
+        return ""
+    return f"DOLU {total}/{total}" if free <= 0 else f"boş {free}/{total}"
+
+
+def event_line(ev: dict) -> str:
+    """One short line per event: "TITLE · 20.11 20:00 · venue · boş 350/590"."""
+    parts = [ev["title"]]
+    if ev.get("date"):
+        parts.append(ev["date"][:5] + (f" {ev['time']}" if ev.get("time") else ""))
+    if ev.get("venue"):
+        parts.append(ev["venue"])
+    if seats_text(ev):
+        parts.append(seats_text(ev))
+    return " · ".join(parts)
+
+
+def _structured_snapshot(events: list[dict]) -> PortalSnapshot:
+    items = [{"title": e["title"], "url": e["url"], "info": event_line(e)} for e in events]
+    # identity only (id, title, start): seat counters / status never change the signature
+    raw = "\n".join(sorted(f"{e['id']}\t{fold(e['title'])}\t{e['start'] or ''}" for e in events))
+    return PortalSnapshot([event_line(e) for e in events], items, False,
+                          hashlib.sha1(raw.encode("utf-8")).hexdigest(), True,
+                          [dict(e) for e in events], True)
+
+
+def norm_title(text) -> str:
+    """Folded title for matching an article event with a portal event."""
+    f = re.sub(r"[^a-z0-9 ]+", " ", fold(str(text or "")))
+    f = re.sub(r"\b(programi|etkinligi|gosterisi)\b", " ", f)
+    return re.sub(r"\s+", " ", f).strip()
+
+
+def match_portal_event(state, title, start) -> tuple[str, dict] | None:
+    """(portal id, stored event) with the same normalised title and Istanbul date as ``title``
+    / ``start`` (ISO string); the same clock time wins when several share the day. None when
+    nothing, or nothing unambiguous, matches."""
+    portals = state.get("portals") if isinstance(state, dict) else None
+    if not isinstance(portals, dict) or not isinstance(start, str) or not start:
+        return None
+    want, day, clock = norm_title(title), start[:10], start[11:16]
+    if not want:
+        return None
+    found = []
+    for pid, rec in portals.items():
+        evs = rec.get("events") if isinstance(rec, dict) else None
+        for ev in (evs.values() if isinstance(evs, dict) else ()):
+            if (isinstance(ev, dict) and norm_title(ev.get("title")) == want
+                    and str(ev.get("start") or "")[:10] == day):
+                found.append((pid, ev))
+    if len(found) > 1:
+        same = [f for f in found if str(f[1].get("start") or "")[11:16] == clock]
+        found = same if len(same) == 1 else []
+    return found[0] if len(found) == 1 else None
 
 
 def _fallback(html: str, base: str) -> PortalSnapshot:
@@ -469,6 +688,9 @@ def parse_portal(html, base_url: str = DEFAULT_BASE_URL) -> PortalSnapshot:
             items.append(item)
             if len(items) >= MAX_ITEMS:
                 break
+        events = parse_events(root, base_url)
+        if events:   # structured cards: the generic reading is only the fallback
+            return _structured_snapshot(events)
         substantial = [l for l in lines if len(l) >= CONTENT_LINE_MIN]
         empty = False
         if not items:

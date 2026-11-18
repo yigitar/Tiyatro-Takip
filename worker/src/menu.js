@@ -660,16 +660,17 @@ function eventScreen(config, state, id, now, pageArg) {
   const rec = sourceEvents(state)[id];
   const lines = [`📅 <b>${esc(trunc(it.title, 100))}</b>`, ...help(...HELP.event), LEGEND,
     ...detailLines(it, rec.start ? [`Etkinlik: ${esc(fmt(rec.start))}`] : [])];
-  const portal = rec.source === "basiskele" ? portalUrl(config) : "";
-  if (portal) lines.push(`🏛️ Rezervasyon portalı: ${esc(portal)}`);
+  const portal = it.portalUrl || (rec.source === "basiskele" ? portalUrl(config) : "");
+  if (it.seats) lines.push(`Koltuk: ${esc(it.seats)}`);
+  if (portal) lines.push(`🏛️ ${it.portalUrl ? "Rezervasyon yap" : "Rezervasyon portalı"}: ${esc(portal)}`);
   lines.push(`Takip: ${it.followed ? "☑ takipte" : "☐ takipte değil (yeni etkinlikler varsayılan olarak takipte değildir)"}`);
   const flag = it.followed ? 0 : 1;
   return {
     text: lines.join("\n"),
     keyboard: rows(
       [btn(it.followed ? "☐ Takibi kapat" : "☑ Takibi aç", `ef:${hh}:${flag}:i${lp}`)],
-      [urlBtn("🔗 Etkinlik sayfası", it.url)],
-      ...(portal ? [[urlBtn("🏛️ Rezervasyon portalı", portal)]] : []),
+      ...(it.url && it.url !== portal ? [[urlBtn("🔗 Etkinlik sayfası", it.url)]] : []),
+      ...(portal ? [[urlBtn(it.portalUrl ? "🎟️ Rezervasyon yap" : "🏛️ Rezervasyon portalı", portal)]] : []),
       [btn("‹ Liste", `pl:${lp}`), BACK_MAIN()],
     ),
   };
@@ -697,7 +698,7 @@ function mainScreen(config, state, now) {
       [btn("🎭 Oyunlar ve etkinlikler", "pl:0")],
       [btn("📋 Takip listem", "tl")],
       [btn("⏳ Yaklaşan açılışlar", "up")],
-      [btn("🔄 Yenile", "rf"), btn("📡 Kaynaklar", "src")],
+      [btn("📜 Geçmiş", "hi"), btn("🔄 Yenile", "rf"), btn("📡 Kaynaklar", "src")],
       [paused ? btn("▶️ Devam", "pz:0") : btn("⏸ Duraklat", "pz:1")],
     ),
   };
@@ -866,6 +867,18 @@ function watchlistScreen(config, state, idx, pageArg) {
   };
 }
 
+const HISTORY_LINES = 10;
+
+/** "📜 Geçmiş": the last entries of state.history, newest first (one exact fact per line). */
+function historyScreen(state) {
+  const hist = Array.isArray(state?.history) ? state.history.filter((x) => isObj(x) && typeof x.text === "string") : [];
+  const last = hist.slice(-HISTORY_LINES).reverse();
+  const lines = ["📜 <b>Geçmiş</b>", "ℹ️ Son gelişmeler (yeni → eski). Dolan/tükenen etkinlikler de burada, bildirim gelmez."];
+  if (!last.length) lines.push("Henüz kayıt yok.");
+  for (const e of last) lines.push(`${esc(fmtShort(e.ts))} · ${esc(trunc(e.text, 200))}`);
+  return { text: lines.join("\n"), keyboard: rows([btn("🔄 Yenile", "hi")], [BACK_MAIN()]) };
+}
+
 function upcomingScreen(config, state) {
   const items = [];
   for (const slug of allSlugs(config, state)) {
@@ -918,6 +931,7 @@ function renderRoute(route, config, state, now) {
     if (op === "up") return upcomingScreen(config, state);
     if (op === "rf") return sourcesScreen(config, state, true);
     if (op === "src") return sourcesScreen(config, state, false);
+    if (op === "hi") return historyScreen(state);
     if (op === "eo") return listScreen(config, state, "0", now); // legacy button of an old message
     if (op === "pl") return listScreen(config, state, parts[1], now);
     if (op === "e") {

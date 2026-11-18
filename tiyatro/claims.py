@@ -22,9 +22,12 @@ _SAFE = re.compile(r"[A-Za-z0-9.\-]")
 
 def claim_key(event) -> str:
     """Claim key for an ``Event`` or an event key: ``ON_SALE:<sid>`` for ON_SALE
-    events (key ``ON_SALE:<sid>:<n>``), the event key itself for everything else."""
+    events (key ``ON_SALE:<sid>:<n>``), ``PORTAL_SEATS:<portal>:<event>`` for the Başiskele
+    "yer açıldı" alerts (key ``...:<n>``), the event key itself for everything else."""
     key = event if isinstance(event, str) else event.key
     if key.startswith("ON_SALE:") and key.count(":") >= 2:
+        return key.rsplit(":", 1)[0]
+    if key.startswith("PORTAL_SEATS:") and key.count(":") >= 3:
         return key.rsplit(":", 1)[0]
     return key
 

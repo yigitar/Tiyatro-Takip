@@ -232,7 +232,7 @@ def test_banner_geometry_fits_and_does_not_jitter(ui):
     assert ui.tree.winfo_height() >= ui.tree.head_px + ui.tree.row_px
 
 
-def test_banner_wraps_in_a_narrow_window_without_widening_it(ui):
+def test_banner_cuts_a_long_line_in_a_narrow_window_without_widening_it(ui):
     ui.root.geometry(f"{L.MIN_WINDOW[0]}x760")
     ui.root.update()
     _fire(ui, _sale(slug="p2", title="Çok Uzun Bir Oyun Adı " * 6))
@@ -240,8 +240,8 @@ def test_banner_wraps_in_a_narrow_window_without_widening_it(ui):
         ui.root.update()
     lbl = ui._alert_pool[0][0]
     assert lbl.winfo_x() + lbl.winfo_width() <= ui.alert_bar.winfo_width()
-    assert int(lbl.cget("wraplength")) <= ui.alert_bar.winfo_width()
-    assert int(lbl.cget("height")) > 1                                           # it wrapped
+    assert int(lbl.cget("height")) == 1                      # wave 23: one line, cut with an ellipsis
+    assert lbl.get_text().endswith("…") if hasattr(lbl, "get_text") else True
 
 
 def test_unchanged_alerts_do_not_rebuild(ui):
@@ -251,3 +251,30 @@ def test_unchanged_alerts_do_not_rebuild(ui):
     ui._render_alerts()
     ui.refresh_rows()
     assert ui._alert_key == key and ui.rows_rebuilt == n
+
+
+@pytest.mark.parametrize("count", [1, 3, 12])
+def test_banner_height_is_capped_whatever_the_number_of_alerts(ui, count):
+    """Wave 23: at most 3 one-line entries, the rest behind "… ve N gelişme daha"; the list
+    never loses more than ~110 px and 12 alerts take no more room than 3."""
+    ui.root.update()
+    base = ui.tree.winfo_height()
+    _fire(ui, *[_sale(key=f"k{i}", slug=f"p{i}", title=f"Oyun {i}") for i in range(count)])
+    for _ in range(3):
+        ui.root.update()
+    assert len(ui._alert_shown) == min(count, AL.MAX_LINES) == min(count, 3)
+    lost = base - ui.tree.winfo_height()
+    bar = ui.alert_bar.winfo_height() + 6                       # strip + its padding
+    assert 0 < ui.alert_bar.winfo_height() <= 110 and 0 <= lost <= 110, (bar, lost)
+    if count > 3:
+        assert ui.alert_more.winfo_ismapped()
+        assert f"… ve {count - 3} gelişme daha" in ui.alert_more.plain
+    again = ui.tree.winfo_height()
+    ui.root.update()
+    assert ui.tree.winfo_height() == again                      # no jitter
+    _CAPS[count] = ui.alert_bar.winfo_height()
+    if len(_CAPS) == 3:
+        assert abs(_CAPS[12] - _CAPS[3]) <= 2
+
+
+_CAPS: dict = {}

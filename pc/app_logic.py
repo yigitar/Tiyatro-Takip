@@ -526,9 +526,10 @@ POPUP_COALESCE_MS = 3000      # alerts arriving within this window share one pop
 POPUP_WORDING = {
     "ON_SALE": (0, "bilet açıldı"), "OPENED_SOLD_OUT": (0, "bilet açıldı"),
     "SRC_OPENED": (1, "rezervasyon açıldı"), "SRC_REOPENED": (1, "rezervasyon açıldı"),
+    "PORTAL_SEATS": (0, "yer açıldı"),
     "OPENING_SOON": (2, "açılış yaklaşıyor"), "SRC_SOON": (2, "açılış yaklaşıyor"),
     "NEW_PLAY": (3, "yeni etkinlik"), "SRC_NEW": (3, "yeni etkinlik"),
-    "NEW_SESSIONS": (3, "yeni etkinlik"),
+    "NEW_SESSIONS": (3, "yeni etkinlik"), "PORTAL_NEW": (3, "yeni etkinlik"),
 }
 POPUP_OTHER = (4, "yeni gelişme")
 

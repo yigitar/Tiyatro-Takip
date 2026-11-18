@@ -61,23 +61,21 @@ def test_probe_open_with_changing_clock_alerts_once(monkeypatch):
     assert len(pm(env)) == 1
 
 
-def test_changed_once_for_new_item_and_cooldown(monkeypatch):
+def test_list_changes_of_the_generic_watcher_are_silent(monkeypatch):
+    """Wave 23: "güncellendi" told nothing, so a changed list is never announced by the
+    generic watcher (a concrete change is a structured transition or silent); the change is
+    still stored."""
     env = make(monkeypatch)
     go(env, 0)
     env.portal.html = opened_html("Konser")
     go(env, 1)
     go(env, 2)
     env.portal.html = opened_html("Konser", "Pinokyo")
-    assert kinds(go(env, 3)) == ["PORTAL_CHANGED"]
-    assert pstate(env)["last_changed_alert"] == at(3).isoformat()
-    env.portal.html = opened_html("Konser")              # an event disappears: churn
-    assert kinds(go(env, 4)) == []                       # inside the 6 h cooldown
-    assert len(pstate(env)["items"]) == 1                # but the change is stored
-    env.portal.html = opened_html("Konser", "Dördüncü")  # a NEW event is never swallowed
-    assert kinds(go(env, 5)) == ["PORTAL_CHANGED"]
-    env.portal.html = opened_html("Dördüncü")
-    res = env.run(at(5) + timedelta(hours=6, minutes=1), portal_fetch_fn=env.portal.fetch)
-    assert kinds(res) == ["PORTAL_CHANGED"]              # churn alerts again after 6 h
+    assert kinds(go(env, 3)) == []
+    assert len(pstate(env)["items"]) == 2
+    env.portal.html = opened_html("Konser", "Dördüncü")
+    assert kinds(go(env, 5)) == []
+    assert "güncellendi" not in " ".join(pm(env))
 
 
 # ---- I2 classification ------------------------------------------------------------------

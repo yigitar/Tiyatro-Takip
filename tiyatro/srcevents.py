@@ -24,8 +24,10 @@ from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
 from urllib.parse import urljoin
 
+from tiyatro import history
 from tiyatro.models import ISTANBUL, Config, Event
 from tiyatro.notify import DAYS, MONTHS, SOURCE_LABELS, SRC_TEXT
+from tiyatro.portals import match_portal_event, norm_title as portal_norm_title
 from tiyatro.srcinfo import (borrow, facts_of, info_from_lines, info_hash, info_view, norm_title,
                              play_match)
 from tiyatro.tags import (other_event_label, resolve_audience,
@@ -661,11 +663,35 @@ def _payload(rec: dict, extra: dict | None = None) -> dict:
     return p
 
 
+def portal_event_of(state: dict | None, rec: dict) -> dict | None:
+    """The portal event (stored in ``state["portals"][id]["events"]``) of a Başiskele event
+    record: its own (``portal_eid``), else the one with the same normalised title and date.
+    Wave 23; None for other sources and when nothing matches."""
+    if not isinstance(rec, dict) or rec.get("source") != BASISKELE:
+        return None
+    portals = (state or {}).get("portals") if isinstance(state, dict) else None
+    if not isinstance(portals, dict):
+        return None
+    eid = rec.get("portal_eid")
+    if eid:
+        for prec in portals.values():
+            ev = (prec.get("events") or {}).get(str(eid)) if isinstance(prec, dict) and \
+                isinstance(prec.get("events"), dict) else None
+            if isinstance(ev, dict):
+                return ev
+        return None
+    found = match_portal_event(state, rec.get("title"), rec.get("start"))
+    return found[1] if found else None
+
+
 def _emit(state: dict, kind: str, key: str, rec: dict, now: datetime,
           extra: dict | None = None) -> Event | None:
     if key in state["emitted"]:
         return None
     state["emitted"][key] = now.isoformat()
+    ev = portal_event_of(state, rec)
+    if ev and ev.get("url"):   # wave 23: link the event's own portal page, not only the portal root
+        extra = {**(extra or {}), "portal_url": ev["url"]}
     return Event(kind, key, "", None, [], _payload(rec, extra))
 
 
@@ -697,14 +723,18 @@ def fold_listings(state: dict, config: Config, source: str, listings: list[Listi
     store = state.get("source_events")
     if not isinstance(store, dict):
         store = state["source_events"] = {}
-    baseline = not any(isinstance(r, dict) and r.get("source") == source for r in store.values())
+    baseline = not any(isinstance(r, dict) and r.get("source") == source
+                       and not r.get("portal_eid") for r in store.values())
     events: list[Event] = []
     for ls in listings:
         rec = store.get(ls.id)
         is_new = not isinstance(rec, dict)
+        on_portal = False
         if is_new:
             rec = store[ls.id] = {"id": ls.id, "source": source, "first_seen": now.isoformat(),
                                   "full": None, "opens_at": None, "opens_pending": None}
+            if source == BASISKELE:   # wave 23: the reservation portal may list it already
+                on_portal = _adopt_portal_event(state, store, rec, ls)
         rec.update(title=ls.title, kind=ls.kind, venue=ls.venue, venue_derived=bool(ls.venue_derived), url=ls.url,
                    start=_iso(ls.start), last_seen=now.isoformat(),
                    audience=audience_for(ls.kind, ls.title),
@@ -724,6 +754,10 @@ def fold_listings(state: dict, config: Config, source: str, listings: list[Listi
         prev_full = rec.get("full")
         if ls.full is not None:
             rec["full"] = bool(ls.full)
+            if rec["full"] and prev_full is False:   # quiet: history + row status only
+                history.add(state, kind="FULL", source=source, title=ls.title, start=_iso(ls.start),
+                            row=ls.id, now=now, key=f"FULL:{ls.id}:{now.isoformat()}",
+                            text=f"{ls.title} ({history.when(_iso(ls.start))}) — doldu")
         if ls.detail_ok:
             rec["last_detail_at"] = now.isoformat()
         if ls.info is not None and ls.detail_ok:
@@ -734,7 +768,7 @@ def fold_listings(state: dict, config: Config, source: str, listings: list[Listi
         if start is not None and start < now - timedelta(hours=3):
             continue  # past event: bookkeeping only
         followed = effective_follow(config, ls.id, bool(rec.get("follow_default")))
-        if is_new and not baseline:
+        if is_new and not baseline and not on_portal:
             # Discovery notice (wave 9): sent for every new event, followed or not, once
             # per event id (emitted key). A record already in the state is never "new", so
             # nothing present at deploy time can fire it.
@@ -749,6 +783,22 @@ def fold_listings(state: dict, config: Config, source: str, listings: list[Listi
         events.extend(_due_events(state, rec, opens, prev_full, now))
     _prune(store, now)
     return events
+
+
+def _adopt_portal_event(state: dict, store: dict, rec: dict, ls: Listing) -> bool:
+    """A new Başiskele article event that the reservation portal already announced (same
+    normalised title and date): its own ``bkp<id>`` record is dropped in favour of this one
+    and True is returned so no second discovery notice is sent."""
+    found = match_portal_event(state, ls.title, _iso(ls.start))
+    if found is None:
+        return False
+    for rid, other in list(store.items()):
+        if isinstance(other, dict) and other.get("portal_eid") and rid != ls.id and \
+                portal_norm_title(other.get("title")) == portal_norm_title(ls.title) and \
+                str(other.get("start") or "")[:10] == (_iso(ls.start) or "")[:10]:
+            rec["first_seen"] = other.get("first_seen") or rec["first_seen"]
+            del store[rid]
+    return True
 
 
 def _due_events(state: dict, rec: dict, opens: datetime | None, prev_full, now: datetime
@@ -816,6 +866,18 @@ def due_for_burst_check(rec: dict, now: datetime) -> bool:
     return last is None or now - last >= BURST_EVERY
 
 
+def portal_view(ev: dict | None) -> dict | None:
+    """The reservation-portal facts of an event row (all source-quoted): status
+    ("open" / "full" / "closed" / "unknown"), seat counters, event page link."""
+    if not isinstance(ev, dict):
+        return None
+    def num(v):
+        return v if isinstance(v, int) and not isinstance(v, bool) else None
+    return {"status": ev.get("status") if ev.get("status") in ("open", "full", "closed") else "unknown",
+            "total": num(ev.get("total")), "reserved": num(ev.get("reserved")),
+            "free": num(ev.get("free")), "url": str(ev.get("url") or "")}
+
+
 def event_views(state: dict | None, config: Config | None, now: datetime) -> list[dict]:
     """Rows for the unified list (PC) / Worker list: future events by start."""
     cfg_follow = getattr(config, "event_follow", {}) if config is not None else {}
@@ -830,6 +892,12 @@ def event_views(state: dict | None, config: Config | None, now: datetime) -> lis
         choice = cfg_follow.get(eid)
         kind, title = str(rec.get("kind") or ""), str(rec.get("title") or "")
         merged = borrow(info_view(rec), genre_of(kind, title), state, title)
+        pview = portal_view(portal_event_of(state, rec))
+        summary = reservation_summary(rec, now)
+        if pview and pview["status"] == "full":
+            summary = "doldu"
+        elif pview and pview["status"] == "open":
+            summary = "rezervasyon açık" + (f" · {pview['free']} boş" if pview["free"] is not None else "")
         rows.append({
             "id": eid, "source": rec.get("source", ""),
             "source_name": SOURCE_LABELS.get(rec.get("source"), str(rec.get("source"))),
@@ -845,7 +913,8 @@ def event_views(state: dict | None, config: Config | None, now: datetime) -> lis
             "borrowed_credit_labels": merged["borrowed_credit_labels"],
             "borrowed_from": merged["borrowed_from"],
             "reservation": reservation_text(rec, now),
-            "summary": reservation_summary(rec, now), "full": bool(rec.get("full")),
+            "portal": pview,
+            "summary": summary, "full": bool(rec.get("full")),
             "followed": default if choice is None else bool(choice)})
     far = datetime.max.replace(tzinfo=ISTANBUL)
     rows.sort(key=lambda r: (r["start"] or far, r["id"]))

@@ -173,7 +173,7 @@ def fact_texts(ui):
 def test_diger_kaynaklar_tab_is_gone_and_events_are_in_the_one_list(mixed):
     ui = mixed
     assert [ui.notebook.tab(t, "text") for t in ui.notebook.tabs()] == [
-        "Oyunlar", "Etkinlik günlüğü"]
+        "Oyunlar", "Bildirim geçmişi", "Etkinlik günlüğü"]
     assert not hasattr(ui, "events_tab")
     assert {"p1", "p2", "vkv:541", "bk:1"} <= set(ui.tree.get_children())
     cols = list(ui.tree["columns"])

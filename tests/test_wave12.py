@@ -72,7 +72,7 @@ def test_sidebar_holds_status_buttons_cards_and_legend_and_tabs_are_on_the_right
         assert side[2] <= nb[0] + 1 and side[3] - side[1] >= 1000     # left of the tabs, full height
         assert nb[2] - nb[0] >= 1760 - ui.px(appmod.SIDE_W) - 20      # tabs use the rest
         assert [ui.notebook.tab(t, "text") for t in ui.notebook.tabs()] == [
-            "Oyunlar", "Etkinlik günlüğü"]
+            "Oyunlar", "Bildirim geçmişi", "Etkinlik günlüğü"]
         for block in (ui.status, ui.source_bar, ui.legend):
             assert inside(rect(block), rect(ui.side_canvas))
         blocks = [rect(ui.status), rect(ui.source_bar), rect(ui.legend)]

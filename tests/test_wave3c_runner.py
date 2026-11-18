@@ -145,19 +145,19 @@ def test_empty_to_open_then_deduped_across_runs(monkeypatch):
         and after["last_check"] == at(3).isoformat()
 
 
-def test_open_to_changed_alerts_once_per_signature(monkeypatch):
+def test_open_to_changed_is_silent(monkeypatch):
     env = make(monkeypatch)
     go(env, 0)
     env.portal.html = opened_html("Konser")
     go2(env, 1)
     env.portal.html = opened_html("Konser", "Tiyatro Gecesi")
     res = go(env, 2)
-    assert kinds(res) == ["PORTAL_CHANGED"]
-    assert "güncellendi" in pm(env)[-1] and "Tiyatro Gecesi" in pm(env)[-1]
+    assert kinds(res) == []                         # wave 23: no vague "güncellendi" notice
+    assert all("güncellendi" not in m for m in pm(env))
     assert kinds(go(env, 3)) == []
-    env.portal.html = opened_html("Konser")        # back to a signature already announced
+    env.portal.html = opened_html("Konser")
     assert kinds(go(env, 4)) == []
-    assert len(pm(env)) == 2
+    assert len(pm(env)) == 1
 
 
 def test_open_to_empty_only_updates_state(monkeypatch):
@@ -378,10 +378,10 @@ def test_notify_texts_and_escaping():
     assert msg.startswith("🏛️ Başiskele rezervasyon portalı: etkinlik açıldı")
     assert "A &lt;b&gt;&amp;&lt;/b&gt; Şov" in msg and "a=1&amp;b=2" in msg
     assert msg.rstrip().endswith(PORTAL_URL) or PORTAL_URL in msg
-    changed = _ev("PORTAL_CHANGED", {"portal_id": "basiskele", "title": "x", "url": PORTAL_URL,
-                                     "items": [], "lines": ["Yeni duyuru satırı 1", "Satır <2>"]})
-    [msg] = format_message([changed], {}, cfg)
-    assert "güncellendi" in msg and "Yeni duyuru satırı 1" in msg and "Satır &lt;2&gt;" in msg
+    plain = _ev("PORTAL_OPENED", {"portal_id": "basiskele", "title": "x", "url": PORTAL_URL,
+                                  "items": [], "lines": ["Yeni duyuru satırı 1", "Satır <2>"]})
+    [msg] = format_message([plain], {}, cfg)
+    assert "güncellendi" not in msg and "Yeni duyuru satırı 1" in msg and "Satır &lt;2&gt;" in msg
     failing = _ev("PORTAL_FAILING", {"portal_id": "basiskele", "title": "x", "url": PORTAL_URL,
                                      "detail": "3 taramadır okunamıyor"})
     [msg] = format_message([failing], {}, cfg)

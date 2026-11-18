@@ -87,7 +87,7 @@ def test_headline_and_desktop_text_for_portal_events():
     title, text = format_event_for_desktop(ev)
     assert "Konser" in text and PORTAL_URL in text and "<" not in text
     assert act.EVENT_CATEGORY["PORTAL_OPENED"] == act.CAT_TICKET == "Bilet açılışı"
-    assert act.EVENT_CATEGORY["PORTAL_CHANGED"] == act.CAT_TICKET
+    assert "PORTAL_CHANGED" not in act.EVENT_CATEGORY      # wave 23: the vague notice is gone
     assert "PORTAL_FAILING" in act.WARNING_KINDS
 
 

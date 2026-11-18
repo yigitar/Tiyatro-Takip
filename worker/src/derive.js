@@ -189,9 +189,68 @@ function playRez(sessions, now) {
   return { text: "—", derived: true, opening: null };
 }
 
+// ---------------------------------------------------------------- reservation portal (wave 23)
+
+const TR_FOLD = { "ç": "c", "Ç": "c", "ğ": "g", "Ğ": "g", "ı": "i", "İ": "i", "I": "i", "ö": "o", "Ö": "o", "ş": "s", "Ş": "s", "ü": "u", "Ü": "u" };
+
+/** tiyatro/portals.py norm_title: folded title for matching an article event with a portal event. */
+export function portalNormTitle(text) {
+  let f = String(text ?? "").replace(/[çÇğĞıİIöÖşŞüÜ]/g, (c) => TR_FOLD[c]).toLowerCase();
+  f = f.replace(/\s+/g, " ").trim().replace(/[^a-z0-9 ]+/g, " ");
+  f = f.replace(/\b(programi|etkinligi|gosterisi)\b/g, " ");
+  return f.replace(/\s+/g, " ").trim();
+}
+
+/** tiyatro/srcevents.portal_event_of: the stored portal event of a Başiskele event record. */
+export function portalEventOf(state, rec) {
+  if (!isObj(rec) || rec.source !== "basiskele" || !isObj(state?.portals)) return null;
+  const eventsOf = (p) => (isObj(p) && isObj(p.events) ? Object.values(p.events).filter(isObj) : []);
+  if (rec.portal_eid) {
+    for (const p of Object.values(state.portals)) {
+      const ev = isObj(p) && isObj(p.events) ? p.events[String(rec.portal_eid)] : null;
+      if (isObj(ev)) return ev;
+    }
+    return null;
+  }
+  const start = typeof rec.start === "string" ? rec.start : "";
+  const want = portalNormTitle(rec.title);
+  if (!want || !start) return null;
+  let found = [];
+  for (const p of Object.values(state.portals)) {
+    for (const ev of eventsOf(p)) {
+      if (portalNormTitle(ev.title) === want && String(ev.start ?? "").slice(0, 10) === start.slice(0, 10)) found.push(ev);
+    }
+  }
+  if (found.length > 1) {
+    const same = found.filter((ev) => String(ev.start ?? "").slice(11, 16) === start.slice(11, 16));
+    found = same.length === 1 ? same : [];
+  }
+  return found.length === 1 ? found[0] : null;
+}
+
+/** tiyatro/srcevents.portal_view: source-quoted seat facts (null when the event is not on the portal). */
+export function portalView(ev) {
+  if (!isObj(ev)) return null;
+  const num = (v) => (Number.isInteger(v) ? v : null);
+  return {
+    status: ["open", "full", "closed"].includes(ev.status) ? ev.status : "unknown",
+    total: num(ev.total), reserved: num(ev.reserved), free: num(ev.free), url: String(ev.url ?? ""),
+  };
+}
+
+/** pc/viewmodel.py portal_seats_text: "240/590 dolu (350 boş)". */
+export function portalSeatsText(portal) {
+  if (!portal || portal.total === null || portal.reserved === null || portal.free === null) return "";
+  return `${portal.reserved}/${portal.total} dolu (${portal.free} boş)`;
+}
+
 /** ("Rez. açılış" text, derived?) of a Başiskele/VKV event; pc/viewmodel.py _event_rez. */
-function eventRez(rec, now) {
+function eventRez(rec, now, portal) {
   const opens = parseMs(rec.opens_at);
+  if (portal && portal.status === "full") return { text: "doldu", derived: false };
+  if (portal && portal.status === "open") {
+    return { text: portal.free !== null ? `açık · ${portal.free} boş` : "açık", derived: false };
+  }
   if (rec.full) return { text: "doldu", derived: false };
   if (!Number.isFinite(opens)) return { text: "duyuru bekleniyor", derived: true };
   if (now < opens) return { text: rezWhen(opens, now), derived: false };
@@ -231,7 +290,8 @@ export function eventFields(rec, id, now, state) {
   const kind = String(rec.kind || "");
   const title = String(rec.title || id);
   const start = parseMs(rec.start);
-  const rez = eventRez(rec, now);
+  const portal = portalView(portalEventOf(state, rec));
+  const rez = eventRez(rec, now, portal);
   const derived = ["target"];
   const merged = borrow(eventInfo(rec), eventGenre(kind, title), state, title);
   if (Number.isFinite(start)) derived.push("zaman");
@@ -246,6 +306,8 @@ export function eventFields(rec, id, now, state) {
     rez: rez.text,
     derived: derived.sort(),
     nearest: Number.isFinite(start) ? start : null,
+    seats: portalSeatsText(portal),
+    portalUrl: portal ? portal.url : "",
     ...merged.info,
     borrowed: merged.borrowed,
     borrowedCredits: merged.borrowedCredits,

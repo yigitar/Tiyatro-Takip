@@ -70,7 +70,7 @@ def shown(app):
 
 def test_window_has_two_tabs_and_the_games_tab_still_works(ui):
     nb = ui.notebook
-    assert [nb.tab(t, "text") for t in nb.tabs()] == ["Oyunlar", "Etkinlik günlüğü"]
+    assert [nb.tab(t, "text") for t in nb.tabs()] == ["Oyunlar", "Bildirim geçmişi", "Etkinlik günlüğü"]
     assert ui.tree.get_children()[0] == "p1"  # list unchanged
     ui.select_slug("p1")
     assert len(ui.session_tree.get_children()) == 3

@@ -59,6 +59,8 @@ class Row:
     reservation_opens: str = ""  # event rows: "19 Kasım Perşembe 12:00" or ""
     contact: list[str] = field(default_factory=list)  # VKV: phone / e-mail lines
     event_full: bool = False
+    portal_seats: str = ""     # wave 23: "240/590 dolu (350 boş)" (source-quoted, from the portal)
+    portal_url: str = ""       # wave 23: the event's own reservation-portal page
     # ---- wave 6 -----------------------------------------------------------------------
     zaman: str = ""            # "gündüz" / "gece" / "gündüz+gece" (computed from session times)
     target_count: int = 0      # explicit targets of the play (events: always 0)
@@ -278,11 +280,24 @@ def _play_rez(counts: dict, opening: datetime | None, upcoming: int, now: dateti
     return "—", None, True
 
 
+def portal_seats_text(portal) -> str:
+    """"240/590 dolu (350 boş)" or "" (counters unknown); parity: worker derive.js."""
+    if not portal or portal.get("total") is None or portal.get("reserved") is None             or portal.get("free") is None:
+        return ""
+    return f"{portal['reserved']}/{portal['total']} dolu ({portal['free']} boş)"
+
+
 def _event_rez(view: dict, now: datetime):
     """("Rez. açılış" text, sort key, derived?) of a source event: "doldu" when the page
     says it is full, the announced opening time, "açık" / "açılmış olabilir" (our reading
     of a passed opening time, derived) or "duyuru bekleniyor" (nothing announced)."""
     opens = view.get("opens_at")
+    portal = view.get("portal")
+    if portal and portal.get("status") == "full":     # wave 23: the portal's own counters
+        return "doldu", None, False
+    if portal and portal.get("status") == "open":
+        free = portal.get("free")
+        return (f"açık · {free} boş" if free is not None else "açık"), (0, 0.0), False
     if view.get("full"):
         return "doldu", None, False
     if opens is None:
@@ -322,7 +337,9 @@ def event_row(view: dict, now: datetime | None = None) -> Row:
         url=view["url"], nearest=start, source=view["source_name"], source_id=str(view.get("source") or ""), is_event=True,
         seans=when_text(start) if start else "", venue=view["venue"],
         reservation_opens=when_text(opens) if opens else "", contact=contact,
-        event_full=bool(view["full"]),
+        event_full=bool(view["full"]) or bool((view.get("portal") or {}).get("status") == "full"),
+        portal_seats=portal_seats_text(view.get("portal")),
+        portal_url=str((view.get("portal") or {}).get("url") or ""),
         summary=clean_summary(info.get("summary")), cast=list(info.get("cast") or []),
         credits=list(info.get("credits") or []), duration=info.get("duration") or "",
         age=info.get("age") or "", price=info.get("price") or "",
