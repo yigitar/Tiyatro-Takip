@@ -278,3 +278,11 @@ def test_banner_height_is_capped_whatever_the_number_of_alerts(ui, count):
 
 
 _CAPS: dict = {}
+
+
+def test_legacy_portal_changed_alerts_are_dropped_on_load():
+    from pc.alerts import AlertStore
+    saved = [{"key": "PORTAL_CHANGED:basiskele:abc", "kind": "PORTAL_CHANGED",
+              "label": "Portal güncellendi", "detail": "5 etkinlik",
+              "ts": "2026-11-18T15:03:52+03:00", "ack": None}]
+    assert AlertStore(saved).count() == 0

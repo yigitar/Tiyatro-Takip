@@ -149,7 +149,10 @@ class AlertStore:
     few days only so that a replayed event key is not shown twice."""
 
     def __init__(self, items=None, clock=None):
-        self.items: list[dict] = [c for c in map(_clean, items or ()) if c]
+        # PORTAL_CHANGED ("Portal güncellendi · N etkinlik") was retired in wave 23: it never said
+        # what changed. Alerts of that kind saved by older versions are dropped on load.
+        self.items: list[dict] = [c for c in map(_clean, items or ())
+                                  if c and c.get("kind") != "PORTAL_CHANGED"]
         self._clock = clock or (lambda: datetime.now(ISTANBUL))
         self._prune()
 
