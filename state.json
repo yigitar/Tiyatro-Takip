@@ -24,6 +24,7 @@
   "ON_SALE:18699575:1": "2026-11-17T13:15:55.879381+03:00",
   "ON_SALE:18699575:2": "2026-11-18T07:55:54.363648+03:00",
   "ON_SALE:18699575:3": "2026-11-18T09:17:50.472659+03:00",
+  "ON_SALE:18699575:4": "2026-11-18T09:20:54.260880+03:00",
   "ON_SALE:18699576:1": "2026-11-17T13:15:55.879381+03:00",
   "REMOVED_PLAY:unutmak-kocaeli-bb": "2026-11-17T20:37:25.808530+03:00",
   "SRC_NEW:bk:20261120-2000-puskullu-muamma": "2026-11-16T16:20:55.485625+03:00",
@@ -74,7 +75,7 @@
   "fetch_fail_streak": 0,
   "last_daily": "2026-11-17",
   "last_daily_at": "2026-11-17T12:00:54.229455+03:00",
-  "last_scan": "2026-11-18T09:19:51.140038+03:00"
+  "last_scan": "2026-11-18T09:20:54.260880+03:00"
  },
  "outbox": [],
  "plays": {
@@ -326,13 +327,13 @@
    "fail_streak": 0,
    "first_seen": "2026-11-13T10:31:26.691999+03:00",
    "genre": "Komedi",
-   "last_seen": "2026-11-18T09:19:51.140038+03:00",
+   "last_seen": "2026-11-18T09:20:54.260880+03:00",
    "missing_count": 0,
    "price_from": 35.0,
    "removed": false,
    "sessions": {
     "18699567": {
-     "closed_seen_at": "2026-11-18T09:19:51.140038+03:00",
+     "closed_seen_at": "2026-11-18T09:20:54.260880+03:00",
      "end": "2026-11-13T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": true,
@@ -346,7 +347,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699567"
     },
     "18699568": {
-     "closed_seen_at": "2026-11-18T09:19:51.140038+03:00",
+     "closed_seen_at": "2026-11-18T09:20:54.260880+03:00",
      "end": "2026-11-14T17:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": true,
@@ -360,7 +361,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699568"
     },
     "18699569": {
-     "closed_seen_at": "2026-11-18T09:19:51.140038+03:00",
+     "closed_seen_at": "2026-11-18T09:20:54.260880+03:00",
      "end": "2026-11-14T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": true,
@@ -374,7 +375,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699569"
     },
     "18699574": {
-     "closed_seen_at": "2026-11-18T09:19:51.140038+03:00",
+     "closed_seen_at": "2026-11-18T09:20:54.260880+03:00",
      "end": "2026-11-19T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -394,9 +395,9 @@
      "end": "2026-11-20T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
-     "last_on_sale_notified": "2026-11-18T09:17:50.472659+03:00",
-     "on_sale_count": 3,
-     "on_sale_pending": true,
+     "last_on_sale_notified": "2026-11-18T09:20:54.260880+03:00",
+     "on_sale_count": 4,
+     "on_sale_pending": false,
      "opens_at": null,
      "prev_status": "sold_out",
      "remaining": 2,
@@ -406,7 +407,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699575"
     },
     "18699576": {
-     "closed_seen_at": "2026-11-18T09:19:51.140038+03:00",
+     "closed_seen_at": "2026-11-18T09:20:54.260880+03:00",
      "end": "2026-11-21T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -786,8 +787,8 @@
    "error": null,
    "items_count": 5,
    "last_change_at": "2026-11-18T09:00:53.517352+03:00",
-   "last_check_at": "2026-11-18T09:19:51.140038+03:00",
-   "last_ok_at": "2026-11-18T09:19:51.140038+03:00",
+   "last_check_at": "2026-11-18T09:20:54.260880+03:00",
+   "last_ok_at": "2026-11-18T09:20:54.260880+03:00",
    "name": "Biletinial",
    "ok": true
   },
