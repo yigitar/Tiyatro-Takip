@@ -1,0 +1,11 @@
+{
+ "attempts": 1,
+ "claimed_at": "2026-11-18T11:52:08+03:00",
+ "claimed_by": "pc",
+ "key": "PORTAL_CHANGED:basiskele:c641fb87a15b",
+ "lease_until": "2026-11-18T11:52:53+03:00",
+ "message_id": null,
+ "note": null,
+ "sent_at": null,
+ "status": "claimed"
+}
