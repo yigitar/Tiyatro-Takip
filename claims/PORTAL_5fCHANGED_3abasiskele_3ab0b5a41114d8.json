@@ -4,8 +4,8 @@
  "claimed_by": "github",
  "key": "PORTAL_CHANGED:basiskele:b0b5a41114d8",
  "lease_until": "2026-11-18T15:11:59+03:00",
- "message_id": null,
+ "message_id": 84,
  "note": null,
- "sent_at": null,
- "status": "claimed"
+ "sent_at": "2026-11-18T15:11:15+03:00",
+ "status": "sent"
 }
