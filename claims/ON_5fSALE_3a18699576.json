@@ -1,11 +1,11 @@
 {
- "attempts": 4,
- "claimed_at": "2026-11-19T12:51:34+03:00",
+ "attempts": 5,
+ "claimed_at": "2026-11-19T12:54:39+03:00",
  "claimed_by": "pc",
  "key": "ON_SALE:18699576",
- "lease_until": "2026-11-19T12:52:19+03:00",
- "message_id": 112,
+ "lease_until": "2026-11-19T12:55:24+03:00",
+ "message_id": null,
  "note": null,
- "sent_at": "2026-11-19T12:51:36+03:00",
- "status": "sent"
+ "sent_at": null,
+ "status": "claimed"
 }
