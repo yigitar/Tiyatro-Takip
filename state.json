@@ -503,6 +503,16 @@
    "text": "Ve Ateş Bizi Tüketiyor (28 Kas 20:00) — seans doldu",
    "title": "Ve Ateş Bizi Tüketiyor",
    "ts": "2026-11-19T13:07:23.240238+03:00"
+  },
+  {
+   "key": "SOLD_OUT:18699588:2026-11-19T13:30:53.780132+03:00",
+   "kind": "SOLD_OUT",
+   "row": "ve-ates-bizi-tuketiyor-kocaeli-bb",
+   "source": "biletinial",
+   "start": "2026-11-28T20:00:00+03:00",
+   "text": "Ve Ateş Bizi Tüketiyor (28 Kas 20:00) — seans doldu",
+   "title": "Ve Ateş Bizi Tüketiyor",
+   "ts": "2026-11-19T13:30:53.780132+03:00"
   }
  ],
  "meta": {
@@ -549,7 +559,7 @@
   "fetch_fail_streak": 0,
   "last_daily": "2026-11-19",
   "last_daily_at": "2026-11-19T12:21:24.836744+03:00",
-  "last_scan": "2026-11-19T13:25:53.236760+03:00"
+  "last_scan": "2026-11-19T13:30:53.780132+03:00"
  },
  "outbox": [],
  "plays": {
@@ -572,13 +582,13 @@
    "fail_streak": 0,
    "first_seen": "2026-11-13T10:31:26.691999+03:00",
    "genre": "Çocuk Oyunu",
-   "last_seen": "2026-11-19T13:25:53.236760+03:00",
+   "last_seen": "2026-11-19T13:30:53.780132+03:00",
    "missing_count": 0,
    "price_from": 20.0,
    "removed": false,
    "sessions": {
     "18699570": {
-     "closed_seen_at": "2026-11-19T13:25:53.236760+03:00",
+     "closed_seen_at": "2026-11-19T13:30:53.780132+03:00",
      "end": "2026-11-15T14:45:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": true,
@@ -593,7 +603,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/evvel-zaman-icinde-kocaeli-sehir-tiyatrolari/18699570"
     },
     "18699572": {
-     "closed_seen_at": "2026-11-19T13:25:53.236760+03:00",
+     "closed_seen_at": "2026-11-19T13:30:53.780132+03:00",
      "end": "2026-11-18T11:45:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": true,
@@ -609,7 +619,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/evvel-zaman-icinde-kocaeli-sehir-tiyatrolari/18699572"
     },
     "18699573": {
-     "closed_seen_at": "2026-11-19T13:25:53.236760+03:00",
+     "closed_seen_at": "2026-11-19T13:30:53.780132+03:00",
      "end": "2026-11-18T14:45:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": true,
@@ -625,7 +635,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/evvel-zaman-icinde-kocaeli-sehir-tiyatrolari/18699573"
     },
     "18699577": {
-     "closed_seen_at": "2026-11-19T13:25:53.236760+03:00",
+     "closed_seen_at": "2026-11-19T13:30:53.780132+03:00",
      "end": "2026-11-22T14:45:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -660,13 +670,13 @@
    "fail_streak": 0,
    "first_seen": "2026-11-13T10:31:26.691999+03:00",
    "genre": "Yetişkin Oyunu",
-   "last_seen": "2026-11-19T13:25:53.236760+03:00",
+   "last_seen": "2026-11-19T13:30:53.780132+03:00",
    "missing_count": 0,
    "price_from": 35.0,
    "removed": false,
    "sessions": {
     "18699593": {
-     "closed_seen_at": "2026-11-19T13:25:53.236760+03:00",
+     "closed_seen_at": "2026-11-19T13:30:53.780132+03:00",
      "end": "2026-11-18T21:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": true,
@@ -682,7 +692,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/hic-kimsenin-oykusu-kocaeli-buyuksehir-sehir-tiyatrolari/18699593"
     },
     "18699594": {
-     "closed_seen_at": "2026-11-19T13:25:53.236760+03:00",
+     "closed_seen_at": "2026-11-19T13:30:53.780132+03:00",
      "end": "2026-11-25T21:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -735,13 +745,13 @@
    "fail_streak": 0,
    "first_seen": "2026-11-13T10:31:26.691999+03:00",
    "genre": "Fantastik",
-   "last_seen": "2026-11-19T13:25:53.236760+03:00",
+   "last_seen": "2026-11-19T13:30:53.780132+03:00",
    "missing_count": 0,
    "price_from": 20.0,
    "removed": false,
    "sessions": {
     "18699591": {
-     "closed_seen_at": "2026-11-19T13:25:53.236760+03:00",
+     "closed_seen_at": "2026-11-19T13:30:53.780132+03:00",
      "end": "2026-11-29T15:00:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -801,13 +811,13 @@
    "fail_streak": 0,
    "first_seen": "2026-11-13T10:31:26.691999+03:00",
    "genre": "Komedi",
-   "last_seen": "2026-11-19T13:25:53.236760+03:00",
+   "last_seen": "2026-11-19T13:30:53.780132+03:00",
    "missing_count": 0,
    "price_from": 35.0,
    "removed": false,
    "sessions": {
     "18699567": {
-     "closed_seen_at": "2026-11-19T13:25:53.236760+03:00",
+     "closed_seen_at": "2026-11-19T13:30:53.780132+03:00",
      "end": "2026-11-13T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": true,
@@ -821,7 +831,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699567"
     },
     "18699568": {
-     "closed_seen_at": "2026-11-19T13:25:53.236760+03:00",
+     "closed_seen_at": "2026-11-19T13:30:53.780132+03:00",
      "end": "2026-11-14T17:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": true,
@@ -835,7 +845,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699568"
     },
     "18699569": {
-     "closed_seen_at": "2026-11-19T13:25:53.236760+03:00",
+     "closed_seen_at": "2026-11-19T13:30:53.780132+03:00",
      "end": "2026-11-14T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": true,
@@ -849,7 +859,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699569"
     },
     "18699574": {
-     "closed_seen_at": "2026-11-19T13:25:53.236760+03:00",
+     "closed_seen_at": "2026-11-19T13:30:53.780132+03:00",
      "end": "2026-11-19T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -865,7 +875,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699574"
     },
     "18699575": {
-     "closed_seen_at": "2026-11-19T13:25:53.236760+03:00",
+     "closed_seen_at": "2026-11-19T13:30:53.780132+03:00",
      "end": "2026-11-20T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -881,7 +891,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699575"
     },
     "18699576": {
-     "closed_seen_at": "2026-11-19T13:25:53.236760+03:00",
+     "closed_seen_at": "2026-11-19T13:30:53.780132+03:00",
      "end": "2026-11-21T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -924,7 +934,7 @@
    "first_seen": "2026-11-13T10:31:26.691999+03:00",
    "genre": "Dram",
    "last_seen": "2026-11-17T20:00:55.750322+03:00",
-   "missing_count": 444,
+   "missing_count": 445,
    "price_from": 35.0,
    "removed": true,
    "sessions": {
@@ -995,13 +1005,13 @@
    "fail_streak": 0,
    "first_seen": "2026-11-13T10:31:26.691999+03:00",
    "genre": "Dram",
-   "last_seen": "2026-11-19T13:25:53.236760+03:00",
+   "last_seen": "2026-11-19T13:30:53.780132+03:00",
    "missing_count": 0,
    "price_from": 35.0,
    "removed": false,
    "sessions": {
     "18699586": {
-     "closed_seen_at": "2026-11-19T13:25:53.236760+03:00",
+     "closed_seen_at": "2026-11-19T13:30:53.780132+03:00",
      "end": "2026-11-27T21:30:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -1017,7 +1027,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/ve-ates-bizi-tuketiyor-kocaeli-bb/18699586"
     },
     "18699587": {
-     "closed_seen_at": "2026-11-19T13:25:53.236760+03:00",
+     "closed_seen_at": "2026-11-19T13:30:53.780132+03:00",
      "end": "2026-11-28T16:30:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -1033,19 +1043,19 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/ve-ates-bizi-tuketiyor-kocaeli-bb/18699587"
     },
     "18699588": {
-     "closed_seen_at": "2026-11-19T13:07:23.240238+03:00",
+     "closed_seen_at": "2026-11-19T13:30:53.780132+03:00",
      "end": "2026-11-28T21:30:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
      "last_on_sale_notified": null,
      "on_sale_count": 0,
-     "on_sale_pending": true,
+     "on_sale_pending": false,
      "opens_at": null,
-     "prev_status": "sold_out",
-     "remaining": 1,
+     "prev_status": "on_sale",
+     "remaining": null,
      "start": "2026-11-28T20:00:00+03:00",
-     "status": "on_sale",
-     "status_since": "2026-11-19T13:10:54.394061+03:00",
+     "status": "sold_out",
+     "status_since": "2026-11-19T13:30:53.780132+03:00",
      "url": "https://biletinial.com/tr-tr/tiyatro/ve-ates-bizi-tuketiyor-kocaeli-bb/18699588"
     }
    },
@@ -1062,7 +1072,7 @@
    "empty": false,
    "events": {
     "1083": {
-     "closed_seen_at": "2026-11-19T13:25:53.236760+03:00",
+     "closed_seen_at": "2026-11-19T13:30:53.780132+03:00",
      "date": "20.11.2026",
      "first_seen": "2026-11-18T15:55:54.367872+03:00",
      "free": 0,
@@ -1117,7 +1127,7 @@
    ],
    "last_change": "2026-11-19T00:00:57.205275+03:00",
    "last_changed_alert": "2026-11-18T15:50:53.965287+03:00",
-   "last_check": "2026-11-19T13:25:53.236760+03:00",
+   "last_check": "2026-11-19T13:30:53.780132+03:00",
    "lines": [
     "PÜSKÜLLÜ MUAMMA · 20.11 20:00 · Türkiye Yüzyılı Gençlik Merkezi · boş 90/590",
     "KEDİLER SOKAĞI · 20.11 15:00 · Türkiye Yüzyılı Gençlik Merkezi · DOLU 590/590"
@@ -1139,8 +1149,8 @@
    "info": {},
    "info_hash": "bf21a9e8fbc5a384",
    "kind": "Tiyatro Oyunu",
-   "last_detail_at": "2026-11-19T13:25:53.236760+03:00",
-   "last_seen": "2026-11-19T13:25:53.236760+03:00",
+   "last_detail_at": "2026-11-19T13:30:53.780132+03:00",
+   "last_seen": "2026-11-19T13:30:53.780132+03:00",
    "opens_at": null,
    "opens_pending": null,
    "source": "basiskele",
@@ -1160,8 +1170,8 @@
    "info": {},
    "info_hash": "bf21a9e8fbc5a384",
    "kind": "",
-   "last_detail_at": "2026-11-19T13:25:53.236760+03:00",
-   "last_seen": "2026-11-19T13:25:53.236760+03:00",
+   "last_detail_at": "2026-11-19T13:30:53.780132+03:00",
+   "last_seen": "2026-11-19T13:30:53.780132+03:00",
    "opens_at": null,
    "opens_pending": null,
    "source": "basiskele",
@@ -1181,8 +1191,8 @@
    "info": {},
    "info_hash": "bf21a9e8fbc5a384",
    "kind": "Çocuk Tiyatro",
-   "last_detail_at": "2026-11-19T13:25:53.236760+03:00",
-   "last_seen": "2026-11-19T13:25:53.236760+03:00",
+   "last_detail_at": "2026-11-19T13:30:53.780132+03:00",
+   "last_seen": "2026-11-19T13:30:53.780132+03:00",
    "opens_at": null,
    "opens_pending": null,
    "source": "basiskele",
@@ -1202,8 +1212,8 @@
    "info": {},
    "info_hash": "bf21a9e8fbc5a384",
    "kind": "",
-   "last_detail_at": "2026-11-19T13:25:53.236760+03:00",
-   "last_seen": "2026-11-19T13:25:53.236760+03:00",
+   "last_detail_at": "2026-11-19T13:30:53.780132+03:00",
+   "last_seen": "2026-11-19T13:30:53.780132+03:00",
    "opens_at": null,
    "opens_pending": null,
    "source": "basiskele",
@@ -1223,8 +1233,8 @@
    "info": {},
    "info_hash": "bf21a9e8fbc5a384",
    "kind": "",
-   "last_detail_at": "2026-11-19T13:25:53.236760+03:00",
-   "last_seen": "2026-11-19T13:25:53.236760+03:00",
+   "last_detail_at": "2026-11-19T13:30:53.780132+03:00",
+   "last_seen": "2026-11-19T13:30:53.780132+03:00",
    "opens_at": null,
    "opens_pending": null,
    "source": "basiskele",
@@ -1244,8 +1254,8 @@
    "info": {},
    "info_hash": "bf21a9e8fbc5a384",
    "kind": "Çocuk Tiyatro",
-   "last_detail_at": "2026-11-19T13:25:53.236760+03:00",
-   "last_seen": "2026-11-19T13:25:53.236760+03:00",
+   "last_detail_at": "2026-11-19T13:30:53.780132+03:00",
+   "last_seen": "2026-11-19T13:30:53.780132+03:00",
    "opens_at": null,
    "opens_pending": null,
    "source": "basiskele",
@@ -1265,8 +1275,8 @@
    "info": {},
    "info_hash": "bf21a9e8fbc5a384",
    "kind": "",
-   "last_detail_at": "2026-11-19T13:25:53.236760+03:00",
-   "last_seen": "2026-11-19T13:25:53.236760+03:00",
+   "last_detail_at": "2026-11-19T13:30:53.780132+03:00",
+   "last_seen": "2026-11-19T13:30:53.780132+03:00",
    "opens_at": null,
    "opens_pending": null,
    "source": "basiskele",
@@ -1288,8 +1298,8 @@
    },
    "info_hash": "56baf0a637035c0d",
    "kind": "Çocuk Tiyatrosu",
-   "last_detail_at": "2026-11-19T13:25:53.236760+03:00",
-   "last_seen": "2026-11-19T13:25:53.236760+03:00",
+   "last_detail_at": "2026-11-19T13:30:53.780132+03:00",
+   "last_seen": "2026-11-19T13:30:53.780132+03:00",
    "opens_at": "2026-11-18T12:00:00+03:00",
    "opens_pending": true,
    "source": "vkv",
@@ -1306,19 +1316,19 @@
    "error": null,
    "items_count": 9,
    "last_change_at": "2026-11-17T17:32:54.435475+03:00",
-   "last_check_at": "2026-11-19T13:25:53.236760+03:00",
-   "last_ok_at": "2026-11-19T13:25:53.236760+03:00",
+   "last_check_at": "2026-11-19T13:30:53.780132+03:00",
+   "last_ok_at": "2026-11-19T13:30:53.780132+03:00",
    "name": "Başiskele Belediyesi",
    "ok": true,
    "warning": null
   },
   "biletinial": {
-   "content_hash": "e07199e3c28428b04bbaa2d1e7d4ba6bb89a7a8f",
+   "content_hash": "3fba5a4388e83be4a5647b0aadceaa74b75a5720",
    "error": null,
    "items_count": 5,
-   "last_change_at": "2026-11-19T13:10:54.394061+03:00",
-   "last_check_at": "2026-11-19T13:25:53.236760+03:00",
-   "last_ok_at": "2026-11-19T13:25:53.236760+03:00",
+   "last_change_at": "2026-11-19T13:30:53.780132+03:00",
+   "last_check_at": "2026-11-19T13:30:53.780132+03:00",
+   "last_ok_at": "2026-11-19T13:30:53.780132+03:00",
    "name": "Biletinial",
    "ok": true
   },
@@ -1327,8 +1337,8 @@
    "error": null,
    "items_count": 1,
    "last_change_at": "2026-11-18T12:20:54.705816+03:00",
-   "last_check_at": "2026-11-19T13:25:53.236760+03:00",
-   "last_ok_at": "2026-11-19T13:25:53.236760+03:00",
+   "last_check_at": "2026-11-19T13:30:53.780132+03:00",
+   "last_ok_at": "2026-11-19T13:30:53.780132+03:00",
    "name": "VKV Ford Otosan Gölcük",
    "ok": true
   }
