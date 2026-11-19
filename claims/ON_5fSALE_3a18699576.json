@@ -4,8 +4,8 @@
  "claimed_by": "pc",
  "key": "ON_SALE:18699576",
  "lease_until": "2026-11-19T13:20:07+03:00",
- "message_id": null,
+ "message_id": 117,
  "note": null,
- "sent_at": null,
- "status": "claimed"
+ "sent_at": "2026-11-19T13:19:25+03:00",
+ "status": "sent"
 }
