@@ -5,7 +5,7 @@
  "key": "ON_SALE:18699576",
  "lease_until": "2026-11-19T23:32:41+03:00",
  "message_id": null,
- "note": null,
+ "note": "TelegramError",
  "sent_at": null,
- "status": "claimed"
+ "status": "failed"
 }
