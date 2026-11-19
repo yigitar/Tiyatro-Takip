@@ -369,6 +369,16 @@
    "text": "On İkinci Gece (20 Kas 20:00) — bilet satışa çıktı (son 2 bilet)",
    "title": "On İkinci Gece",
    "ts": "2026-11-19T10:49:46.554885+03:00"
+  },
+  {
+   "key": "SOLD_OUT:18699575:2026-11-19T10:50:25.398394+03:00",
+   "kind": "SOLD_OUT",
+   "row": "on-ikinci-gece-kocaeli-bb",
+   "source": "biletinial",
+   "start": "2026-11-20T20:00:00+03:00",
+   "text": "On İkinci Gece (20 Kas 20:00) — seans doldu",
+   "title": "On İkinci Gece",
+   "ts": "2026-11-19T10:50:25.398394+03:00"
   }
  ],
  "meta": {
@@ -415,7 +425,7 @@
   "fetch_fail_streak": 0,
   "last_daily": "2026-11-18",
   "last_daily_at": "2026-11-18T12:01:00.895311+03:00",
-  "last_scan": "2026-11-19T10:49:46.554885+03:00"
+  "last_scan": "2026-11-19T10:50:25.398394+03:00"
  },
  "outbox": [],
  "plays": {
@@ -667,13 +677,13 @@
    "fail_streak": 0,
    "first_seen": "2026-11-13T10:31:26.691999+03:00",
    "genre": "Komedi",
-   "last_seen": "2026-11-19T10:49:46.554885+03:00",
+   "last_seen": "2026-11-19T10:50:25.398394+03:00",
    "missing_count": 0,
    "price_from": 35.0,
    "removed": false,
    "sessions": {
     "18699567": {
-     "closed_seen_at": "2026-11-19T10:49:46.554885+03:00",
+     "closed_seen_at": "2026-11-19T10:50:25.398394+03:00",
      "end": "2026-11-13T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": true,
@@ -687,7 +697,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699567"
     },
     "18699568": {
-     "closed_seen_at": "2026-11-19T10:49:46.554885+03:00",
+     "closed_seen_at": "2026-11-19T10:50:25.398394+03:00",
      "end": "2026-11-14T17:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": true,
@@ -701,7 +711,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699568"
     },
     "18699569": {
-     "closed_seen_at": "2026-11-19T10:49:46.554885+03:00",
+     "closed_seen_at": "2026-11-19T10:50:25.398394+03:00",
      "end": "2026-11-14T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": true,
@@ -715,7 +725,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699569"
     },
     "18699574": {
-     "closed_seen_at": "2026-11-19T10:49:46.554885+03:00",
+     "closed_seen_at": "2026-11-19T10:50:25.398394+03:00",
      "end": "2026-11-19T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -731,7 +741,7 @@
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699574"
     },
     "18699575": {
-     "closed_seen_at": "2026-11-19T10:49:28.417701+03:00",
+     "closed_seen_at": "2026-11-19T10:50:25.398394+03:00",
      "end": "2026-11-20T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -739,15 +749,15 @@
      "on_sale_count": 10,
      "on_sale_pending": false,
      "opens_at": null,
-     "prev_status": "sold_out",
-     "remaining": 2,
+     "prev_status": "on_sale",
+     "remaining": null,
      "start": "2026-11-20T20:00:00+03:00",
-     "status": "on_sale",
-     "status_since": "2026-11-19T10:49:46.554885+03:00",
+     "status": "sold_out",
+     "status_since": "2026-11-19T10:50:25.398394+03:00",
      "url": "https://biletinial.com/tr-tr/tiyatro/on-ikinci-gece-kocaeli-bb/18699575"
     },
     "18699576": {
-     "closed_seen_at": "2026-11-19T10:49:46.554885+03:00",
+     "closed_seen_at": "2026-11-19T10:50:25.398394+03:00",
      "end": "2026-11-21T22:10:00+03:00",
      "first_seen": "2026-11-13T10:31:26.691999+03:00",
      "gone": false,
@@ -1183,8 +1193,8 @@
    "error": null,
    "items_count": 5,
    "last_change_at": "2026-11-19T10:35:54.535438+03:00",
-   "last_check_at": "2026-11-19T10:49:46.554885+03:00",
-   "last_ok_at": "2026-11-19T10:49:46.554885+03:00",
+   "last_check_at": "2026-11-19T10:50:25.398394+03:00",
+   "last_ok_at": "2026-11-19T10:50:25.398394+03:00",
    "name": "Biletinial",
    "ok": true
   },
