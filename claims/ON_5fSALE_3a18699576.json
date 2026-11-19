@@ -4,8 +4,8 @@
  "claimed_by": "github",
  "key": "ON_SALE:18699576",
  "lease_until": "2026-11-19T11:42:00+03:00",
- "message_id": null,
+ "message_id": 109,
  "note": null,
- "sent_at": null,
- "status": "claimed"
+ "sent_at": "2026-11-19T11:41:17+03:00",
+ "status": "sent"
 }
