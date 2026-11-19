@@ -73,3 +73,17 @@ ile başlar.
 
 `app.log` (dönen günlük, jetonlar maskelenir), `crash.log`, `ui.json` (pencere boyutu — sürüm numarasıyla; sürüm değişince eski boyut bir kez atılır, varsayılan ekranın ~%92'sidir —, ses ayarı),
 `state.json`, `plays.json`, `notified.json` (yerel durum).
+
+## Sonraki eklemeler (dalga 16–23 özeti)
+- **Başlatma:** masaüstü kısayolu (`scripts/make_shortcut.ps1` oluşturur) ya da
+  `pc/tiyatro_takip.pyw`; komut penceresi açılmaz. Tek örnek koruması vardır.
+- **Küçültünce sistem tepsisi** (Ayarlar'dan kapatılabilir): sol/çift tık pencereyi açar,
+  sağ tık menüsü (Aç, Listeyi güncelle, Duraklat/Devam, Çıkış). X düğmesi uygulamayı kapatır.
+- **Liste:** sütunlar sürükleyerek yeniden boyutlanır/yer değiştirir/gizlenir (`ui.json`'da
+  saklanır, başlığa sağ tık menüsünden sıfırlanır). Normal yazı = kaynaktan alınan, italik
+  = türetilmiş, mor kalın = yeni.
+- **Yeni gelişmeler şeridi** (en çok 3 satır) ve **Bildirim geçmişi** sekmesi; açılır pencere
+  genel bir cümledir (ayrıntı yok).
+- **Etkinlik günlüğü:** satır yüksekliği yazı tipine göre, renkli satırlar.
+- **Görünüm:** Windows'un kendi renkleri/yazı tipi (`pc/theme.py`); simge yerel dosyadır
+  (`pc/assets/local/`, git'e girmez), yoksa depodaki yedek simge kullanılır.

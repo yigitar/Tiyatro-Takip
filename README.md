@@ -156,35 +156,40 @@ gün, saat ve kişi sayısına göre daraltmak istersen hedef eklersin.
 ## Başiskele rezervasyon portalı
 
 Uygulama, Başiskele Belediyesi'nin ücretsiz rezervasyon sayfasını
-(`https://rezervasyon.basiskele.bel.tr/etkinlikler`) de izler. Bu sayfa yalnızca
-rezervasyonu **şu anda açık** olan etkinlikleri listeler; çoğu zaman liste boştur.
+(`https://rezervasyon.basiskele.bel.tr/etkinlikler`) kart kart okur. Her kartta başlık,
+tarih, saat, mekân, toplam koltuk, rezerve koltuk ve etkinlik sayfası bağlantısı vardır;
+boş koltuk = toplam - rezerve. Sayfada koltuk haritası yoktur, "dolu" kararı yalnızca kart
+sayaçlarından çıkar.
 
-- **Ne yapar:** Her normal taramada (5 dk) sayfayı okur. Liste boştan doluya geçerse
-  "etkinlik açıldı", doluyken içeriği değişirse "güncellendi" bildirimi gelir (etkinlik
-  adları ve bağlantıları ile). Sayfa üst üste 3 kez okunamazsa "okunamıyor" uyarısı gelir.
-  İlk bakışta liste boşsa sessizce başlangıç olarak kaydedilir. PC uygulamasında portal
-  bilgisi Başiskele kaynak satırına eklenir ("rezervasyon portalı: boş / N etkinlik açık")
-  ve satırda belediyenin rezervasyon sayfasını tarayıcıda açan "Portalı aç" düğmesi
-  bulunur; Telegram ana menüsünde ile "Yaklaşan açılışlar"
-  ekranında bir durum satırı vardır. Duraklat bu bildirimleri de atar.
-- **Ne yapmaz:** Yalnızca ücretsiz rezervasyon etkinliklerini kapsar. Başiskele
-  salonlarında oynayan, Biletinial'dan biletle satılan Şehir Tiyatroları oyunları zaten
-  Biletinial taramasıyla izlenir. Belediyenin Instagram duyuruları izlenmez.
-- **Sınırlama:** Etkinlik listesi dolu olduğunda sayfanın nasıl göründüğü henüz
-  gözlemlenmedi; bu yüzden algılama, sayfanın tasarımına bağlı kalmayan genel bir
-  yöntemle yapılır (bağlantı/düğmeler ve boş olmayan metin satırları). Tasarım değişirse
-  yanlış "açıldı" ya da kaçan açılış olabilir; ilk gerçek açılışta sonuç kontrol edilmelidir.
-- **Doğrulama gecikmesi:** Boştan dolu görünen bir sayfa için "etkinlik açıldı"
-  bildirimi, aynı içeriğin bir sonraki taramada da görülmesiyle (en fazla bir tarama,
-  yaklaşık 5 dk gecikmeyle) gönderilir; tek seferlik bozuk/hatalı bir sayfa bildirim
-  üretmez. "Güncellendi" bildirimi portal başına en çok 6 saatte bir gelir; saat,
-  sayaç gibi değişken metinler ve bağlantı sırası dikkate alınmaz.
-- **Bilinen boşluk:** Bağlantısı olmayan ve tek satır düz metin olarak gösterilen bir
-  etkinlik "boş" sayılır (iki ve daha fazla düz metin satırı ya da bir bağlantı/düğme
-  olursa açık sayılır). Hata/bakım/çerez uyarısı gibi sayfalar "boş" sayılır.
-- **Ayar:** `config.json` içindeki `portals` listesi (en çok 5 portal; `id`, `name`,
-  `url` (https), `enabled`). Anahtar yoksa Başiskele portalı varsayılan olarak açıktır.
-  Telegram menüsü ve PC uygulaması bu listeye dokunmaz.
+- **Bildirim yalnızca somut geçişlerde gelir:** yeni etkinlik çıktı (haberdeki aynı
+  başlık+tarihli kayıtla eşleşirse sessiz), dolu iken yer açıldı, rezervasyon yeni açıldı.
+  Rezerve sayısının değişmesi, etkinliğin dolması ya da kapanması bildirim üretmez; yalnızca
+  satır durumunda ("açık · 350 boş", "doldu") ve bildirim geçmişinde görünür. Eski "portal
+  güncellendi" bildirimi kaldırıldı (neyin değiştiğini söylemiyordu).
+- **Bildirim biçimi:** etkinlik başına tek satır ve tek bağlantı; genel portal bağlantısı
+  en altta bir kez. Hiçbir mesajda aynı adres iki kez geçmez (testle korunur).
+- **Yedek:** Kart bulunamazsa eski genel izleyici çalışır (`PORTAL_OPENED`); daha önce
+  kart görülmüş bir sayfa içerik verip kart vermezse günde en çok bir "yapı değişmiş
+  olabilir" uyarısı gelir. Sayfa üst üste 3 kez okunamazsa "okunamıyor" uyarısı gelir.
+- **Ayar:** `config.json` içindeki `portals` listesi (en çok 5 portal; `id`, `name`, `url`
+  (https), `enabled`). Anahtar yoksa Başiskele portalı varsayılan olarak açıktır.
+- **Sınırlama:** "Rezervasyon düğmesi gizli = henüz açık değil" kuralı gerçek sayfada hiç
+  gözlenmedi (yalnızca yapay örnekle test edildi).
+
+## Bildirim ilkesi ve geçmiş
+
+- **Bildirim gelir:** yeni oyun/etkinlik bulundu, rezervasyon/satış açıldı, bilet ya da
+  koltuk açıldı (iade dahil). **Gelmez:** dolu/tükendi geçişleri (yalnızca satırda ve
+  geçmişte).
+- **Bildirim geçmişi:** tarayıcı her değişikliği `state.json` içindeki `history` listesine
+  (son 200 kayıt, tam cümleyle: "KEDİLER SOKAĞI (20 Kas 15:00) — yer açıldı: 3 boş")
+  yazar; PC uygulamasındaki "Bildirim geçmişi" sekmesi ve Telegram "📜 Geçmiş" ekranı
+  oradan okur. Geçmiş, PC uygulaması kapalıyken olanları da içerir.
+- **PC açılır penceresi** yalnızca genel bir cümle gösterir (ad/tarih/bağlantı yok; toplantıda
+  ekran paylaşımı için); ayrıntı uygulamadaki "Yeni gelişmeler" şeridinde ve geçmişte.
+- **"Son N Bilet" rozeti:** Biletinial bazen seans için "Son N Bilet" yazar ama koltuk
+  haritası dolu çıkabilir (harita bot korumalı bir istek arkasındadır, okunamaz). Uyarı
+  bastırılmaz; bildirimde rozet bilgi olarak yazılır.
 
 ## Testleri çalıştırma
 
