@@ -4,8 +4,8 @@
  "claimed_by": "pc",
  "key": "FETCH_FAILING:2026-11-20T09:39:51.841649+03:00",
  "lease_until": "2026-11-20T09:51:38+03:00",
- "message_id": null,
+ "message_id": 130,
  "note": null,
- "sent_at": null,
- "status": "claimed"
+ "sent_at": "2026-11-20T09:50:55+03:00",
+ "status": "sent"
 }
