@@ -4,8 +4,8 @@
  "claimed_by": "github",
  "key": "PORTAL_SEATS:basiskele:1083",
  "lease_until": "2026-11-20T11:52:02+03:00",
- "message_id": null,
+ "message_id": 135,
  "note": null,
- "sent_at": null,
- "status": "claimed"
+ "sent_at": "2026-11-20T11:51:19+03:00",
+ "status": "sent"
 }
