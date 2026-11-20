@@ -1,0 +1,11 @@
+{
+ "attempts": 1,
+ "claimed_at": "2026-11-20T09:50:53+03:00",
+ "claimed_by": "pc",
+ "key": "FETCH_FAILING:2026-11-20T09:39:51.841649+03:00",
+ "lease_until": "2026-11-20T09:51:38+03:00",
+ "message_id": null,
+ "note": null,
+ "sent_at": null,
+ "status": "claimed"
+}
