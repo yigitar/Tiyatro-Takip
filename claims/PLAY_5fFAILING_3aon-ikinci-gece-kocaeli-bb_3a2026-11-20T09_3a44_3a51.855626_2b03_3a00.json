@@ -4,8 +4,8 @@
  "claimed_by": "pc",
  "key": "PLAY_FAILING:on-ikinci-gece-kocaeli-bb:2026-11-20T09:44:51.855626+03:00",
  "lease_until": "2026-11-20T09:56:38+03:00",
- "message_id": null,
+ "message_id": 131,
  "note": null,
- "sent_at": null,
- "status": "claimed"
+ "sent_at": "2026-11-20T09:55:55+03:00",
+ "status": "sent"
 }
