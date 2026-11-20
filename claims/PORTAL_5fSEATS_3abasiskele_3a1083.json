@@ -1,11 +1,11 @@
 {
- "attempts": 5,
- "claimed_at": "2026-11-20T11:51:17+03:00",
+ "attempts": 6,
+ "claimed_at": "2026-11-20T12:46:12+03:00",
  "claimed_by": "github",
  "key": "PORTAL_SEATS:basiskele:1083",
- "lease_until": "2026-11-20T11:52:02+03:00",
- "message_id": 135,
+ "lease_until": "2026-11-20T12:46:57+03:00",
+ "message_id": null,
  "note": null,
- "sent_at": "2026-11-20T11:51:19+03:00",
- "status": "sent"
+ "sent_at": null,
+ "status": "claimed"
 }
