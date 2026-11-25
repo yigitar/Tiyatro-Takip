@@ -1,0 +1,11 @@
+{
+ "attempts": 1,
+ "claimed_at": "2026-11-25T20:01:27+03:00",
+ "claimed_by": "github",
+ "key": "SRC_PROGRAM_MISSING:basiskele:2026-11",
+ "lease_until": "2026-11-25T20:02:12+03:00",
+ "message_id": null,
+ "note": null,
+ "sent_at": null,
+ "status": "claimed"
+}
