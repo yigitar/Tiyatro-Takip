@@ -987,7 +987,7 @@
    "version": 1
   },
   "fetch_fail_since": "2026-11-20T09:50:53.423296+03:00",
-  "fetch_fail_streak": 1539,
+  "fetch_fail_streak": 1540,
   "last_daily": "2026-11-19",
   "last_daily_at": "2026-11-19T12:21:24.836744+03:00",
   "last_scan": "2026-11-25T16:35:53.487245+03:00"
@@ -1566,7 +1566,7 @@
    "items": [],
    "last_change": "2026-11-22T10:00:53.258190+03:00",
    "last_changed_alert": "2026-11-18T15:50:53.965287+03:00",
-   "last_check": "2026-11-25T16:35:53.487245+03:00",
+   "last_check": "2026-11-25T16:41:00.332844+03:00",
    "lines": [],
    "mode": "structured",
    "name": "Başiskele Belediyesi rezervasyon",
@@ -1585,8 +1585,8 @@
    "info": {},
    "info_hash": "bf21a9e8fbc5a384",
    "kind": "",
-   "last_detail_at": "2026-11-25T16:35:53.487245+03:00",
-   "last_seen": "2026-11-25T16:35:53.487245+03:00",
+   "last_detail_at": "2026-11-25T16:41:00.332844+03:00",
+   "last_seen": "2026-11-25T16:41:00.332844+03:00",
    "opens_at": null,
    "opens_pending": null,
    "source": "basiskele",
@@ -1626,31 +1626,31 @@
    "error": null,
    "items_count": 9,
    "last_change_at": "2026-11-17T17:32:54.435475+03:00",
-   "last_check_at": "2026-11-25T16:35:53.487245+03:00",
-   "last_ok_at": "2026-11-25T16:35:53.487245+03:00",
+   "last_check_at": "2026-11-25T16:41:00.332844+03:00",
+   "last_ok_at": "2026-11-25T16:41:00.332844+03:00",
    "name": "Başiskele Belediyesi",
    "ok": true,
    "warning": null
   },
   "biletinial": {
    "content_hash": "76db1208dd335439cd2a62d23b24d22c3b503959",
-   "error": "PlayPagesFailing 9/9",
+   "error": "FetchError",
    "items_count": 5,
    "last_change_at": "2026-11-20T00:10:54.392953+03:00",
-   "last_check_at": "2026-11-25T16:35:53.487245+03:00",
+   "last_check_at": "2026-11-25T16:41:00.332844+03:00",
    "last_ok_at": "2026-11-20T09:45:53.148374+03:00",
    "name": "Biletinial",
    "ok": false
   },
   "vkv": {
    "content_hash": "73f7fa996e225b6570746949fa4be06526e7e4b3",
-   "error": null,
+   "error": "FetchError",
    "items_count": 1,
    "last_change_at": "2026-11-18T12:20:54.705816+03:00",
-   "last_check_at": "2026-11-25T16:35:53.487245+03:00",
+   "last_check_at": "2026-11-25T16:41:00.332844+03:00",
    "last_ok_at": "2026-11-25T16:35:53.487245+03:00",
    "name": "VKV Ford Otosan Gölcük",
-   "ok": true
+   "ok": false
   }
  },
  "src_cache": {
