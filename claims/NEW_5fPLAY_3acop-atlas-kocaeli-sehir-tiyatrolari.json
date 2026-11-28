@@ -1,0 +1,11 @@
+{
+ "attempts": 1,
+ "claimed_at": "2026-11-28T13:39:44+03:00",
+ "claimed_by": "pc",
+ "key": "NEW_PLAY:cop-atlas-kocaeli-sehir-tiyatrolari",
+ "lease_until": "2026-11-28T13:40:29+03:00",
+ "message_id": null,
+ "note": null,
+ "sent_at": null,
+ "status": "claimed"
+}
