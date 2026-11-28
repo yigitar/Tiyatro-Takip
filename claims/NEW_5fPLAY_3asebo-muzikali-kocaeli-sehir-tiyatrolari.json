@@ -4,8 +4,8 @@
  "claimed_by": "pc",
  "key": "NEW_PLAY:sebo-muzikali-kocaeli-sehir-tiyatrolari",
  "lease_until": "2026-11-28T13:40:32+03:00",
- "message_id": null,
+ "message_id": 149,
  "note": null,
- "sent_at": null,
- "status": "claimed"
+ "sent_at": "2026-11-28T13:39:48+03:00",
+ "status": "sent"
 }
