@@ -18,19 +18,18 @@
    "tag_overrides": {},
    "targets": [
     {
+     "allow_scattered": false,
      "id": "y",
      "name": "Yetişkin",
      "people": 2,
      "rule": {
-      "days": [
-       5,
-       6
-      ],
+      "days": null,
       "exclude_dates": [],
       "from_time": null,
       "overrides": {},
       "to_time": null
-     }
+     },
+     "seat_hold_timeout": 120
     }
    ]
   }
